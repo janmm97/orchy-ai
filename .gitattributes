@@ -1,0 +1,12 @@
+# Line endings: LF everywhere, except Windows batch files, which cmd.exe reads best with CRLF
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.command text eol=lf
+*.sh text eol=lf
+
+# Binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary

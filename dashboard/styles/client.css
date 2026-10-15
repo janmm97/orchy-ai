@@ -1,0 +1,113 @@
+/* Orchy · client page (portal.mjs): one column, phone first. Tokens in tokens.css; buttons, plates,
+   inputs, feed rows and Markdown come from app.css. each workspace wears its own ink. */
+
+body.client { overflow: auto; min-height: 100dvh; }
+.cbar { position: sticky; top: 0; height: 64px; }
+.cbar .readout { margin-left: auto; grid-auto-flow: column; align-items: center; gap: var(--s2); }
+.cbar .readout b { font-size: var(--px); }
+.cbar .readout .lbl { display: inline; }
+.cbar .brand .name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#task-needs { display: grid; gap: var(--s3); }
+#task-needs:empty { display: none; }
+.cmain { width: min(760px, 100%); margin: 0 auto; padding: var(--s5) var(--s4) var(--s7); display: grid; gap: var(--s6); }
+.cmain > section { display: grid; gap: var(--s3); }
+.cmain h2 { margin: 0; font: 400 var(--px)/1 var(--f-px); text-transform: uppercase; display: flex; align-items: center; gap: var(--s2); }
+.cmain h2 .count { opacity: .6; font-variant-numeric: tabular-nums; }
+.loading { padding: var(--s6) 0; }
+
+/* greeting */
+.hello { display: grid; gap: var(--s2); }
+.hello h1 { margin: 0; font: 400 var(--px2)/1.05 var(--f-px); text-transform: uppercase; overflow-wrap: anywhere; }
+.hello p { margin: 0; max-width: 60ch; }
+.closed { padding: var(--s3); border: var(--rule) dashed var(--ink); }
+
+/* pick an agent */
+.picker { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--s2); }
+.pick { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: var(--s3); align-items: center; padding: var(--s3); text-align: left; border: var(--rule) solid var(--ink); background: var(--paper); }
+.pick .sprite { width: 48px; height: 48px; }
+.pick .sprite svg { width: 48px; height: 48px; }
+.pick b { display: block; font-weight: 600; font-size: 16px; line-height: 1.25; }
+.pick small { display: block; font-size: var(--read-sm); line-height: 1.35; opacity: .8; }
+.pick:hover { box-shadow: inset 0 0 0 2px var(--ink); }
+.pick[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.pick[aria-pressed="true"] .sprite svg { outline: var(--rule) solid var(--paper); }
+
+.ask { display: grid; gap: var(--s2); }
+.ask .about { margin: 0; font-size: var(--read-sm); line-height: 1.45; opacity: .8; }
+.ask .row { display: flex; justify-content: space-between; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+.textarea.task { min-height: 112px; font-size: 16px; }
+
+/* waiting on the client: decide-yellow, like the owner's pop-ups */
+.needs { display: grid; gap: var(--s3); padding: var(--s4); background: var(--decide); color: var(--on-decide); border: var(--rule) solid var(--ink); }
+.needs .from { display: flex; align-items: center; gap: var(--s2); font: 400 var(--px)/1 var(--f-px); text-transform: uppercase; }
+.needs .from .sprite { width: 28px; height: 28px; }
+.needs .from .sprite svg { width: 28px; height: 28px; }
+.needs .q { margin: 0; font: 500 18px/1.4 var(--f-read); overflow-wrap: anywhere; }
+.needs .ctx { margin: 0; font-size: var(--read-sm); line-height: 1.45; }
+.needs .opts { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.needs .input, .needs .textarea { background: var(--paper); color: var(--ink); border-color: var(--ink); }
+.needs .btn { border-color: var(--ink); }
+.needs details { font-size: var(--read-sm); }
+.needs summary { cursor: pointer; font: 400 var(--px)/1 var(--f-px); text-transform: uppercase; }
+.needs details pre.cmd { margin-top: var(--s2); }
+.waiting-owner { display: flex; align-items: center; gap: var(--s2); padding: var(--s3); border: var(--rule) dashed var(--ink); font-size: var(--read-sm); }
+
+/* tasks */
+.tasks { display: grid; border: var(--rule) solid var(--ink); }
+.trow { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: var(--s3); align-items: center; padding: 10px var(--s3); text-align: left; background: var(--paper); }
+.trow + .trow { border-top: var(--rule-fine) solid var(--ink); }
+.trow:hover { background: var(--ink); color: var(--paper); }
+.trow:hover .plate { background: var(--paper); color: var(--ink); }
+.trow .sprite { width: 36px; height: 36px; }
+.trow .sprite svg { width: 36px; height: 36px; }
+.trow b { display: block; font-weight: 600; }
+.trow .what { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: var(--read-sm); line-height: 1.35; overflow-wrap: anywhere; }
+.trow .when { display: grid; justify-items: end; gap: 6px; font: 400 var(--px)/1 var(--f-px); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plate.ok { background: var(--paper); color: var(--ink); box-shadow: inset 0 0 0 var(--rule-fine) var(--ink); }
+.plate.bad { text-decoration: line-through; text-decoration-thickness: 2px; }
+
+/* one task */
+.back { justify-self: start; }
+.thead { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: var(--s3); align-items: center; }
+.thead .sprite svg { width: 56px; height: 56px; }
+.thead b { display: block; font-weight: 600; font-size: 17px; line-height: 1.25; }
+.thead small { display: block; font-size: var(--read-sm); opacity: .8; }
+.said { margin: 0; padding: var(--s3); border: var(--rule) solid var(--ink); font-size: var(--read); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.client .feed { max-height: min(56vh, 620px); }
+/* while a shared agent works: one playful word, never its steps */
+.client .busyword { display: flex; align-items: center; gap: var(--s2); margin-top: var(--s3); font: 400 var(--px)/1.4 var(--f-px); text-transform: uppercase; }
+.client .busyword .ico { width: 16px; height: 16px; animation: blink 1s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) { .client .busyword .ico { animation: none; } }
+.client .report { gap: var(--s3); }
+.outs { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: var(--read-sm); }
+.outs li { overflow-wrap: anywhere; }
+.followup { display: grid; gap: var(--s2); }
+.note { margin: 0; font-size: var(--read-sm); opacity: .72; }
+.foot { font-size: var(--read-sm); opacity: .72; border-top: var(--rule-fine) solid var(--ink); padding-top: var(--s3); margin: 0; }
+
+/* link not working / not open yet */
+.gone { width: min(560px, 100% - 32px); margin: 15vh auto; display: grid; gap: var(--s3); font: 400 var(--read)/1.5 var(--f-read); color: var(--ink); }
+.gone h1 { margin: 0; font: 400 var(--px2)/1.05 var(--f-px); text-transform: uppercase; }
+.gone p { margin: 0; }
+html:has(.gone) { background: var(--paper); }
+
+@media (max-width: 720px) {
+  .cbar { height: 56px; padding: 0 var(--s3); }
+  .cbar .brand .co { display: none; }
+  .cbar .readout .lbl { white-space: nowrap; }
+  .cmain { padding: var(--s4) var(--s4) var(--s6); gap: var(--s5); }
+  .hello h1 { font-size: var(--px); line-height: 1.2; }
+  .trow { grid-template-columns: 28px minmax(0, 1fr) auto; }
+  .trow .sprite, .trow .sprite svg { width: 28px; height: 28px; }
+  .thead { grid-template-columns: 40px minmax(0, 1fr); }
+  .thead .sprite svg { width: 40px; height: 40px; }
+  .thead .plate { grid-column: 2; justify-self: start; }
+}
+
+/* files: what the client attached and what the agent made, each a download */
+.said .by { font-weight: 600; }
+.ask .btnrow { display: flex; gap: var(--s2); flex-wrap: wrap; }
+.outs.files li { display: flex; align-items: center; gap: var(--s2); }
+.outs.files a { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; overflow-wrap: anywhere; }
+.outs.files .sz { font: 400 var(--px)/1 var(--f-px); text-transform: uppercase; white-space: nowrap; opacity: .64; }
+.tfiles { display: grid; gap: var(--s2); }

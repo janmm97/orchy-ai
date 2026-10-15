@@ -1,0 +1,31 @@
+{
+  "owner": {
+    "name": "",
+    "timezone": "America/New_York"
+  },
+  "timezone": "America/New_York",
+  "workHours": { "days": [1, 2, 3, 4, 5], "start": "09:00", "end": "17:00" },
+  "orchy": {
+    "name": "Orchy",
+    "chatModel": "haiku",
+    "summaryModel": "haiku",
+    "claudeAccount": null,
+    "claudeConfigDir": null
+  },
+  "routing": {
+    "autoDispatchSeconds": 5,
+    "minConfidenceForAutoDispatch": 0.7,
+    "modelTiers": ["haiku", "sonnet", "opus"]
+  },
+  "runtimes": {
+    "claude": { "label": "Claude Code", "models": ["haiku", "sonnet", "opus"] },
+    "codex": { "label": "Codex", "models": ["gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra"] },
+    "opencode": { "label": "OpenCode", "models": ["default", "default", "default"] },
+    "hermes": { "label": "Hermes", "models": ["default", "default", "default"] },
+    "deepseek": { "label": "DeepSeek Harness", "models": ["default", "default", "default"] }
+  },
+  "workspaces": [],
+  "clients": [],
+  "retired": [],
+  "purgedIds": []
+}

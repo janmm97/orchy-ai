@@ -1,0 +1,15 @@
+Orchy
+Copyright 2026 The Orchy contributors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party components, each under its own license:
+- ElevenLabs web client 1.25.0 (MIT), vendored in dashboard/vendor/elevenlabs/, with the code bundled
+  into it: livekit-client, @livekit/protocol, @livekit/mutex, @bufbuild/protobuf (Apache-2.0),
+  webrtc-adapter (BSD-3-Clause), sdp, sdp-transform, loglevel, events, machina, wavefile (MIT) and
+  tslib (0BSD). License texts: dashboard/vendor/elevenlabs/LICENSE-elevenlabs-client.txt and
+  dashboard/vendor/elevenlabs/THIRD_PARTY_NOTICES.txt
+- libsamplerate-js 2.1.2 (MIT and BSD-2-Clause), dashboard/vendor/elevenlabs/LICENSE-libsamplerate-js.txt
+- Silkscreen, Atkinson Hyperlegible Next and Atkinson Hyperlegible Mono typefaces (SIL Open Font
+  License 1.1), dashboard/fonts/. License texts: dashboard/fonts/OFL-*.txt
+- marked (MIT) and yaml (ISC), installed with npm

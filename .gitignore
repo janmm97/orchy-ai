@@ -1,0 +1,22 @@
+# Secrets and machine state: never commit
+.env
+node_modules/
+*.log
+
+# Everything Orchy writes while it runs
+orchestrator/data/
+orchestrator/config.json
+orchestrator/voice-agents.json
+workspaces/
+LOGS.md
+Uploads/
+Reports/
+Retired/
+.clients/
+.jos/mcp.json
+*/.jos/mcp.json
+
+# Local tooling
+.claude/settings.local.json
+.DS_Store
+Thumbs.db

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Your agents · Orchy</title>
+  <link rel="icon" type="image/svg+xml" href="/assets/images/lilorchy_svg.svg">
+  <link rel="preload" href="/fonts/Silkscreen-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/AtkinsonHyperlegibleNext.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/styles/tokens.css">
+  <link rel="stylesheet" href="/styles/app.css">
+  <link rel="stylesheet" href="/styles/client.css">
+  <script type="module" src="/js/client.mjs"></script>
+</head>
+<body class="client">
+  <a class="skip" href="#task">Skip to the task box</a>
+  <header class="topbar cbar">
+    <div class="brand">
+      <span class="mark" id="mark" aria-hidden="true"></span>
+      <span class="name" id="who">Orchy</span>
+    </div>
+    <button class="readout" type="button" id="needs" hidden><span class="lbl">Needs you</span><b id="needs-n">0</b></button>
+  </header>
+  <main class="cmain" id="main" aria-busy="true">
+    <p class="hint loading">Loading…</p>
+  </main>
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+</body>
+</html>

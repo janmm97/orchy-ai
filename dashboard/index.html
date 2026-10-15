@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en" data-theme="auto" data-ui="desk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Orchy</title>
+  <meta name="description" content="Orchy — run your AI agents from one dashboard.">
+  <link rel="icon" type="image/svg+xml" href="/assets/images/lilorchy_svg.svg">
+  <link rel="preload" href="/fonts/Silkscreen-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/AtkinsonHyperlegibleNext.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/styles/tokens.css">
+  <link rel="stylesheet" href="/styles/app.css">
+  <script src="/js/theme.js"></script>
+  <script type="module" src="/js/app.mjs"></script>
+</head>
+<body data-view="home">
+  <a class="skip" href="#command">Skip to the chat box</a>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark" id="brandmark" aria-hidden="true"></span>
+      <span class="name">Orchy</span>
+    </div>
+    <div class="readouts">
+      <button class="readout" type="button" id="waiting" aria-label="Decisions waiting on you"><span class="lbl">Waiting on you</span><b id="waiting-n">0</b></button>
+      <button class="readout run" type="button" id="running" aria-label="Show what's running"><span class="lbl">Running</span><b id="running-n">0</b></button>
+      <span class="readout clock"><span class="lbl shift" id="shift">--</span><b id="clock">--:--</b></span>
+    </div>
+    <nav class="tools" aria-label="Windows">
+      <button class="tbtn" type="button" data-open="agents"><span class="i"></span><span>Workspace</span></button>
+      <button class="tbtn" type="button" data-open="huddles" aria-label="Huddles" title="Huddles: two agents talk a task through and write up what they agree"><span class="i"></span><span>Huddle</span></button>
+      <button class="tbtn" type="button" data-open="impact" title="What the agents did, and what it would have cost with people"><span class="i"></span><span>Impact</span></button>
+      <button class="tbtn" type="button" data-open="logs"><span class="i"></span><span>Logs</span></button>
+      <button class="tbtn" type="button" data-open="connections"><span class="i"></span><span>Connect</span></button>
+      <button class="tbtn" type="button" data-open="settings"><span class="i"></span><span>Settings</span></button>
+    </nav>
+  </header>
+
+  <div class="mtabs" role="tablist" aria-label="Panels"></div>
+
+  <main class="desk" id="stage">
+    <section class="pane spine" id="spine" aria-label="Orchy">
+      <div class="orchy-home" id="home">
+        <div class="hero">
+          <button class="big-orchy" id="orchy" type="button" aria-label="Orchy. Click to talk."></button>
+          <div class="bubble-wrap" id="bubble" aria-live="polite"></div>
+        </div>
+      </div>
+      <div class="orchy-head" id="orchy-head">
+        <button class="mini-orchy" id="orchy-mini" type="button" aria-label="Orchy. Click to talk."></button>
+        <div class="doing">
+          <span class="name"><span class="nm">Orchy</span> <span class="status" id="orchy-status" data-state="idle"><i></i><span>ready</span></span></span>
+          <span class="line" id="orchy-doing" aria-live="polite">Ready.</span>
+        </div>
+        <button class="btn sm" type="button" id="go-home" aria-label="Home"><span class="i"></span><span class="t">Home</span></button>
+      </div>
+      <nav class="sessions" aria-label="Sessions">
+        <button class="sarrow" type="button" data-stabs-scroll="-1" aria-label="Earlier sessions" title="Earlier sessions" hidden><span class="i"></span></button>
+        <div class="stabs" id="sessions-tabs"></div>
+        <button class="sarrow" type="button" data-stabs-scroll="1" aria-label="More sessions" title="More sessions" hidden><span class="i"></span></button>
+        <button class="sbtn" type="button" data-session-new aria-label="New session" title="Start a new session. The others keep running."><span class="i"></span><span class="t">New</span></button>
+        <button class="sbtn" type="button" data-open="history" aria-label="All sessions" title="All sessions, open and closed"><span class="i"></span><span class="t">History</span></button>
+      </nav>
+      <div class="convo" id="convo" aria-live="polite" aria-relevant="additions"></div>
+      <div class="composer-slot" id="composer-slot">
+        <form class="composer" id="command-form" autocomplete="off">
+          <label class="sr-only" for="command">Tell Orchy what to do</label>
+          <input id="command" name="command" placeholder="Tell Orchy what to do…" enterkeyhint="send">
+          <input type="file" id="attach-input" multiple hidden>
+          <button class="cbtn attach" type="button" id="attach" aria-label="Give Orchy files to review" title="Give Orchy files: documents, PDFs, images, spreadsheets. They're saved in Uploads. You can also drop or paste them here."><span class="i"></span><span class="t">Files</span></button>
+          <button class="cbtn call" type="button" id="call" data-call="orchy" aria-pressed="false" aria-label="Call Orchy (live voice, Ctrl+Space)" title="Call Orchy: talk live, ask for anyone by name"><span class="i"></span><span class="t">Call</span></button>
+          <button class="cbtn send" type="submit" id="send" aria-label="Send to Orchy"><span class="i"></span><span class="t">Send</span></button>
+        </form>
+        <div class="jevline" id="jevline" aria-live="polite" hidden></div>
+        <div class="attachments" id="attachments" aria-live="polite"></div>
+        <div class="resume" id="resume"></div>
+        <div class="composer-under" id="composer-under"></div>
+      </div>
+    </section>
+    <!-- a pane per workspace (one per workspace you add) is created by app.mjs -->
+  </main>
+
+  <div id="windows" class="windows"></div>
+  <div id="dock" class="dock" aria-label="Minimized windows"></div>
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+</body>
+</html>

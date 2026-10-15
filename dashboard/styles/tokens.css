@@ -1,0 +1,140 @@
+/* ─────────────────────────────────────────────────────────────
+   1-Bit Orchy design tokens
+   The dashboard is drawn the way Orchy is drawn: ink + paper,
+   greys only as dither, colour only where it does a job.
+   Change the look of the whole app from this one file.
+   ───────────────────────────────────────────────────────────── */
+
+@font-face {
+  font-family: "Silkscreen";
+  src: url("../fonts/Silkscreen-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  src: url("../fonts/AtkinsonHyperlegibleNext.woff2") format("woff2");
+  font-weight: 200 800;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Atkinson Hyperlegible Mono";
+  src: url("../fonts/AtkinsonHyperlegibleMono.woff2") format("woff2");
+  font-weight: 200 800;
+  font-display: swap;
+}
+
+:root {
+  /* Inks — day (paper) theme */
+  --ink: #0a0a0a;
+  --paper: #ffffff;
+  --decide: #ffd23f;       /* anything waiting on you */
+  --on-decide: #0a0a0a;
+  --shell: #0a0a0a;        /* Orchy's tile: top bar, title bars, Chief cards. Never inverts. */
+  --on-shell: #ffffff;
+  /* Workspace inks: every workspace wears one of these (config.json `color`, given in this order),
+     then hues util.mjs draws itself. None sits near cobalt, tomato or decision yellow. */
+  --tint-cobalt: #2f5bff;  --on-tint-cobalt: #ffffff;
+  --tint-tomato: #ff5a36;  --on-tint-tomato: #0a0a0a;
+  --tint-jade: #0a7d50;    --on-tint-jade: #ffffff;
+  --tint-violet: #6d3ae0;  --on-tint-violet: #ffffff;
+  --tint-magenta: #b8177a; --on-tint-magenta: #ffffff;
+  --tint-teal: #00747d;    --on-tint-teal: #ffffff;
+  --tint-olive: #5a6e00;   --on-tint-olive: #ffffff;
+  --tint-brown: #7a4a1e;   --on-tint-brown: #ffffff;
+
+  /* Dither masks (1 = ink pixel). Used with mask-image over a var(--ink) fill. */
+  --d25: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' shape-rendering='crispEdges'%3E%3Crect width='2' height='2'/%3E%3C/svg%3E");
+  --d50: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' shape-rendering='crispEdges'%3E%3Crect width='2' height='2'/%3E%3Crect x='2' y='2' width='2' height='2'/%3E%3C/svg%3E");
+  --d75: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' shape-rendering='crispEdges'%3E%3Crect width='4' height='2'/%3E%3Crect y='2' width='2' height='2'/%3E%3C/svg%3E");
+  --d12: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' shape-rendering='crispEdges'%3E%3Crect width='2' height='2'/%3E%3Crect x='4' y='4' width='2' height='2'/%3E%3C/svg%3E");
+
+  /* Type: one pixel face at one size and its 2x; one reading face; one data face */
+  --f-px: "Silkscreen", ui-monospace, monospace;
+  --f-read: "Atkinson Hyperlegible Next", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-data: "Atkinson Hyperlegible Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --px: 16px;              /* the pixel size */
+  --px2: 32px;             /* its 2x */
+  --read: 15px;
+  --read-sm: 13px;
+  --data: 12.5px;
+  --lh: 1.5;
+
+  /* Space: 4px grid */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
+
+  /* Bars: the top bar and the dock lane */
+  --bar: 76px;
+  --dock: 48px;
+
+  /* Rules & depth */
+  --rule: 2px;
+  --rule-fine: 1px;
+  --shadow-offset: 6px;    /* dithered drop shadow, the 1-bit way to show depth */
+
+  /* Motion: stepped, like a sprite */
+  --step-fast: 120ms;
+  --step: 240ms;
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+
+  color-scheme: light;
+}
+
+/* Night: the whole field snaps to its negative */
+:root[data-theme="night"] {
+  --ink: #f4f4ef;
+  --paper: #0b0b0c;
+  --decide: #ffd84f;
+  --on-decide: #0b0b0c;
+  --shell: #0a0a0a;
+  --on-shell: #f4f4ef;
+  --tint-cobalt: #7d97ff;  --on-tint-cobalt: #0b0b0c;
+  --tint-tomato: #ff7650;  --on-tint-tomato: #0b0b0c;
+  --tint-jade: #4fd18f;    --on-tint-jade: #0b0b0c;
+  --tint-violet: #b49aff;  --on-tint-violet: #0b0b0c;
+  --tint-magenta: #ff7ac8; --on-tint-magenta: #0b0b0c;
+  --tint-teal: #3ccfd6;    --on-tint-teal: #0b0b0c;
+  --tint-olive: #b3d64a;   --on-tint-olive: #0b0b0c;
+  --tint-brown: #d29a62;   --on-tint-brown: #0b0b0c;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    --ink: #f4f4ef;
+    --paper: #0b0b0c;
+    --decide: #ffd84f;
+    --on-decide: #0b0b0c;
+    --shell: #0a0a0a;
+    --on-shell: #f4f4ef;
+    --tint-cobalt: #7d97ff;  --on-tint-cobalt: #0b0b0c;
+    --tint-tomato: #ff7650;  --on-tint-tomato: #0b0b0c;
+    --tint-jade: #4fd18f;    --on-tint-jade: #0b0b0c;
+    --tint-violet: #b49aff;  --on-tint-violet: #0b0b0c;
+    --tint-magenta: #ff7ac8; --on-tint-magenta: #0b0b0c;
+    --tint-teal: #3ccfd6;    --on-tint-teal: #0b0b0c;
+    --tint-olive: #b3d64a;   --on-tint-olive: #0b0b0c;
+    --tint-brown: #d29a62;   --on-tint-brown: #0b0b0c;
+    color-scheme: dark;
+  }
+}
+
+/* Desktop density: the owner reads the desk all day at arm's length, so desktop runs at about
+   70% of the full sizes (phones keep them for touch). The pixel face keeps one size and its 2x (12 / 24 here).
+   Component sizes that don't come from a token are in app.css → DESKTOP DENSITY.
+   Only the owner's desk (index.html, popout.html carry data-ui="desk"); client pages keep full size. */
+@media (min-width: 901px) {
+  :root[data-ui="desk"] {
+    --px: 12px;
+    --px2: 24px;
+    --read: 13px;
+    --read-sm: 12px;
+    --data: 11.5px;
+    --s2: 6px; --s3: 8px; --s4: 12px; --s5: 16px; --s6: 24px; --s7: 32px;
+    --bar: 52px;
+    --dock: 36px;
+    --shadow-offset: 4px;
+  }
+}
+@media (max-width: 900px) {
+  :root { --bar: 60px; --shadow-offset: 4px; }
+}

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en" data-theme="auto" data-ui="desk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orchy</title>
+  <link rel="icon" type="image/svg+xml" href="/assets/images/lilorchy_svg.svg">
+  <link rel="stylesheet" href="/styles/tokens.css">
+  <link rel="stylesheet" href="/styles/app.css">
+  <script src="/js/theme.js"></script>
+</head>
+<!-- A window dragged out of the dashboard lives here. The dashboard tab moves the window into
+     #host and keeps running it, so this page has no script of its own. Closing it parks the
+     window back in the dashboard. -->
+<body class="popout-body">
+  <main id="host" class="popout-host">
+    <p class="popout-wait">Opening…</p>
+  </main>
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{
+  "name": "orchy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first orchestrator for AI agents across separate workspaces",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/janmm97/orchy-ai.git"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node orchestrator/server.mjs",
+    "dev": "node --watch-path=orchestrator orchestrator/server.mjs",
+    "setup": "node scripts/setup.mjs",
+    "check": "node orchestrator/scripts/doctor.mjs",
+    "test": "node orchestrator/scripts/test-policy.mjs && node orchestrator/scripts/test-routing.mjs && node orchestrator/scripts/test-jev-routing.mjs && node orchestrator/scripts/test-jev-openrouter.mjs && node orchestrator/scripts/test-jev-providers.mjs && node orchestrator/scripts/test-setup.mjs && node orchestrator/scripts/test-livejev.mjs && node orchestrator/scripts/test-actionplan.mjs && node orchestrator/scripts/test-huddle.mjs && node orchestrator/scripts/test-engines.mjs && node orchestrator/scripts/test-engine-opencode.mjs && node orchestrator/scripts/test-engine-acp.mjs && node orchestrator/scripts/test-cfaccess.mjs && node orchestrator/scripts/test-store.mjs && node orchestrator/scripts/test-mcp-hide.mjs && node orchestrator/scripts/test-owner.mjs"
+  },
+  "dependencies": {
+    "marked": "^14.1.0",
+    "yaml": "^2.5.0"
+  }
+}
