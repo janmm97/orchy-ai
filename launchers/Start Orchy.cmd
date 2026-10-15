@@ -1,6 +1,8 @@
 @echo off
 rem Double-click to start Orchy. The dashboard opens at http://localhost:8008 (PORT in .env).
 cd /d "%~dp0"
+rem Run from the launchers folder (before the first setup) or from the Orchy folder (the copy setup puts there)
+if not exist package.json cd ..
 title Orchy
 where node >nul 2>nul
 if errorlevel 1 (

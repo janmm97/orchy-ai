@@ -1,8 +1,10 @@
 #!/bin/sh
-# Start Orchy on Linux: ./"Start Orchy.sh" in a terminal (or open it from your file manager with "Run in terminal").
+# Start Orchy on Linux: ./launchers/"Start Orchy.sh" in a terminal the first time, then ./"Start Orchy.sh" (setup puts a copy in the Orchy folder).
 # The dashboard opens at http://localhost:8008 (PORT in .env). If it says "permission denied", run once:
-#   chmod +x "Start Orchy.sh"
+#   chmod +x launchers/"Start Orchy.sh"
 cd "$(dirname "$0")" || exit 1
+# Run from the launchers folder (before the first setup) or from the Orchy folder (the copy setup puts there)
+[ -f package.json ] || cd ..
 export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.claude/local:$PATH"
 if ! command -v node >/dev/null 2>&1; then
   echo

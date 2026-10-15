@@ -1,10 +1,12 @@
 #!/bin/bash
 # Double-click to start Orchy on macOS. The dashboard opens at http://localhost:8008 (PORT in .env).
 # If double-clicking says "permission denied" (a git clone can lose the executable bit), run once:
-#   chmod +x "Start Orchy.command"
+#   chmod +x launchers/"Start Orchy.command"
 # Finder launches have a minimal PATH, so the Homebrew (/opt/homebrew/bin, /usr/local/bin) and
 # npm-global folders are added below before looking for node.
 cd "$(dirname "$0")" || exit 1
+# Run from the launchers folder (before the first setup) or from the Orchy folder (the copy setup puts there)
+[ -f package.json ] || cd ..
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.claude/local:$PATH"
 if ! command -v node >/dev/null 2>&1; then
   echo

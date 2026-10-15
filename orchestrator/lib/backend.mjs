@@ -21,9 +21,9 @@ const RESULT_FILE = path.join(DATA_DIR, 'restart-result.json');  // how it went,
 const KEEP = 15; // snapshots kept (the oldest go)
 
 // ── what counts as Orchy's code: text files only (fonts, vendored libraries and Orchy's data stay out) ──
-const TREES = [['orchestrator', /^(data|node_modules)(\/|$)|^voice-agents\.json$/], ['dashboard', /^(vendor|fonts)(\/|$)/], ['scripts', null]];
-const ROOT_FILES = ['package.json', 'CLAUDE.md', 'README.md', 'PRODUCT.md', 'DESIGN.md', 'Start Orchy.cmd'];
-const TEXT = /\.(mjs|cjs|js|json|html|css|md|ps1|cmd|txt|svg)$/i;
+const TREES = [['orchestrator', /^(data|node_modules)(\/|$)|^voice-agents\.json$/], ['dashboard', /^(vendor|fonts)(\/|$)/], ['scripts', null], ['launchers', null]];
+const ROOT_FILES = ['package.json', 'CLAUDE.md', 'README.md', 'PRODUCT.md', 'DESIGN.md'];
+const TEXT = /\.(mjs|cjs|js|json|html|css|md|ps1|cmd|command|sh|txt|svg)$/i;
 
 function walk(rel, skip, out) {
   let entries;

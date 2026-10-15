@@ -1366,7 +1366,7 @@ const BACKEND_CHECK = /^(?:node(?:\.exe)?\s+(?:--check|-c)\s+[^\s;|&<>`$]+|node(
 const backendCheck = seg => BACKEND_CHECK.test(seg) && !/--live\b/.test(seg); // --live asks real Jev and One
 const STOPS_ORCHY = s => /^(taskkill|stop-process|spps|kill|pkill|killall)\b/i.test(s)
   || (/^(node|npm|npx)\b/i.test(s) && /server\.mjs|\bnpm\s+(run\s+)?(start|dev)\b/i.test(s) && !/\s--check\b/.test(s))
-  || /(start|stop)-jos\.ps1|Start Orchy\.cmd/i.test(s);
+  || /(start|stop)-jos\.ps1|Start Orchy\.(cmd|command|sh)/i.test(s);
 const lockCount = s => (String(s ?? '').match(new RegExp(LOCK_MARKERS.source, 'gi')) || []).length;
 
 /** Does an edit to Orchy's server code take out text naming one of his locks (fewer mentions after than before)? */

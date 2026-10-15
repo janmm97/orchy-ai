@@ -48,7 +48,7 @@ Setup checks your tools, then asks three things:
 
 Each key is checked once with its service and saved in `.env` on your PC. Keys are hidden as you type. Then Orchy starts and your browser opens the dashboard, where the setup guide walks you through adding a workspace, connecting apps and making your first agent. Run `npm run setup` again any time to change your answers, and `npm start` to start Orchy after that.
 
-Double-click instead: `Start Orchy.cmd` on Windows, `Start Orchy.command` on macOS, `./"Start Orchy.sh"` on Linux.
+Setup also puts one launcher in the Orchy folder, the one for your computer: `Start Orchy.cmd` on Windows, `Start Orchy.command` on macOS, `Start Orchy.sh` on Linux. From then on, double-click it to start Orchy. Rather not use a terminal the first time? Open the `launchers` folder and double-click the one for your computer instead: it runs setup too.
 
 ### Prerequisites
 
@@ -178,8 +178,8 @@ This health check tests each workspace's accounts, the One CLI, Jev, voice, agen
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Run `npm test` first, and keep personal data out. Report security problems privately: see [SECURITY.md](SECURITY.md).
+See [CONTRIBUTING.md](docs/CONTRIBUTING.md). Run `npm test` first, and keep personal data out. Report security problems privately: see [SECURITY.md](docs/SECURITY.md).
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Apache-2.0. See [LICENSE](docs/LICENSE) and [NOTICE](docs/NOTICE).

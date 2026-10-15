@@ -3,6 +3,7 @@
 // about Voice, Jev and scripts, checks each key once with its service, then starts Orchy (the browser opens).
 //   --yes       ask nothing and keep .env as it is (scripts, CI)
 //   --no-start  don't start Orchy at the end (the Start Orchy launchers start it themselves)
+// It also copies this computer's launcher from launchers/ into the Orchy folder (placeLauncher).
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
@@ -185,6 +186,22 @@ export async function oneStep({ version, interactive, yesNo, install, log = cons
   return found;
 }
 
+export const LAUNCHERS = { win32: 'Start Orchy.cmd', darwin: 'Start Orchy.command' }; // anything else: Start Orchy.sh
+
+/** Put this computer's launcher (from launchers/) in the Orchy folder, so there's one "Start Orchy" to double-click.
+ *  The copy is git-ignored and refreshed when launchers/ changes. Returns 'made' | 'updated' | 'same' | 'missing'. */
+export function placeLauncher(root, platform = process.platform) {
+  const name = LAUNCHERS[platform] || 'Start Orchy.sh';
+  const src = path.join(root, 'launchers', name), dest = path.join(root, name);
+  if (!fs.existsSync(src)) return 'missing';
+  let text = fs.readFileSync(src, 'utf8');
+  if (name.endsWith('.cmd')) text = text.replace(/\r?\n/g, '\r\n'); // cmd.exe reads CRLF best
+  const had = fs.existsSync(dest) ? fs.readFileSync(dest, 'utf8') : null;
+  if (had !== text) fs.writeFileSync(dest, text);
+  if (platform !== 'win32') fs.chmodSync(dest, 0o755);
+  return had === null ? 'made' : had === text ? 'same' : 'updated';
+}
+
 async function main() {
   console.log('\n  Orchy setup\n');
 
@@ -211,6 +228,13 @@ async function main() {
   if (fs.existsSync(envFile)) console.log(`  ${OK} .env found`);
   else if (fs.existsSync(example)) { fs.copyFileSync(example, envFile); console.log(`  ${OK} .env created from .env.example`); }
   else console.log('  - no .env.example to copy; Orchy still starts without a .env');
+
+  // 3b. the one launcher for this computer, in the Orchy folder
+  const launcher = LAUNCHERS[process.platform] || 'Start Orchy.sh';
+  try {
+    const placed = placeLauncher(ROOT);
+    if (placed !== 'missing') console.log(`  ${OK} "${launcher}" ${placed === 'same' ? 'is' : 'is now'} in the Orchy folder: double-click it to start Orchy from now on`);
+  } catch (e) { console.log(`  - couldn't put "${launcher}" in the Orchy folder (${e.message}); use launchers/${launcher} instead`); }
 
   // 4. Tools: every harness the engine registry knows (found / version / install / gated), plus the One CLI.
   //    None is fatal: a tester may have one harness (or none yet) and no One CLI. Orchy starts and says what's missing.
