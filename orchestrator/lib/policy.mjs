@@ -696,6 +696,7 @@ function cdResolve(piece, cwd, shell) {
   }
   if (tgt == null || tgt === '' || tgt === '-') return ELSEWHERE;
   if (ps && (PS_DRIVE.test(tgt) || PS_PROVIDER.test(tgt))) return ELSEWHERE;
+  if (/^[\\/]{2}/.test(tgt)) return ELSEWHERE; // a network or device path is never the agent's folder (as in off())
   return realPath(tgt, cwd);
 }
 // programs that copy or move into a destination (so <dest>/<source-basename> is what they touch) beyond WRITE_HEADS

@@ -53,6 +53,7 @@ Double-click instead: `Start Orchy.cmd` on Windows, `Start Orchy.command` on mac
 ### Prerequisites
 
 - Node.js 20 or newer.
+- Git, to clone the repository. The repository is private for now: the owner invites you on GitHub, and the first clone asks you to sign in.
 - At least one harness CLI installed and signed in. Claude Code is recommended (see "Supported harnesses").
 - The One CLI (`one`), so agents can use your apps. Setup offers to install it. See [docs/ONE.md](docs/ONE.md).
 

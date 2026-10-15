@@ -61,7 +61,7 @@ function backendProtocol(run) {
 ${ownerName()} runs Orchy, their AI agent orchestrator, from its dashboard. Something is wrong with Orchy (or ${ownerName()} wants Orchy changed), and instead of opening VS Code they told Orchy in the chat. You are that fix: a headless Claude Code run in the Orchy folder, Orchy's own folder. ${ownerName()} can't see your terminal; he watches your steps in the run window and reads your report in the chat.
 
 ## Find out what's really wrong first
-- CLAUDE.md (loaded) maps the code; README.md, PRODUCT.md and DESIGN.md (+ \`.impeccable/\`) are the product and design truth. Read the code involved before changing it.
+- CLAUDE.md (loaded) maps the code; README.md is the product truth (and PRODUCT.md, DESIGN.md if the owner keeps them). Read the code involved before changing it.
 - Evidence: \`orchestrator/data/server.err.log\` and \`server.log\` (the running server's output), \`orchestrator/data/runs/<runId>.jsonl\` (a run's events), \`orchestrator/data/state.json\` (runs, sessions, chat, inbox, settings), \`orchestrator/data/jev-calls.jsonl\`, LOGS.md. Read them; never write them (the server keeps state in memory and overwrites state.json; settings and workspaces change through the dashboard).
 - See the dashboard yourself: \`node orchestrator/scripts/cdp.mjs "http://localhost:8008/?still&theme=day" 1440x900 <png in your temp folder>\` (CLAUDE.md lists the \`&open=…\` views; \`390x844\` for phone), then Read the png. Dashboard files are served straight from disk, so a screenshot shows your dashboard edits at once.
 - If ${ownerName()}'s description doesn't pin the problem down and the evidence doesn't either, ask them (ask_user) before changing code.
