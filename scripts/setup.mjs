@@ -197,7 +197,9 @@ async function main() {
   console.log(`  ${OK} Node ${process.version}`);
 
   // 2. packages
-  if (!fs.existsSync(path.join(ROOT, 'node_modules'))) {
+  // every dependency, not just the folder: an interrupted install or a pull that adds a package leaves it short
+  const deps = Object.keys(JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).dependencies || {});
+  if (deps.some(d => !fs.existsSync(path.join(ROOT, 'node_modules', d, 'package.json')))) {
     console.log('\n  Installing packages (once)...');
     const r = sh('npm', ['install', '--no-fund', '--no-audit']);
     if (r.status !== 0) { console.log(`  ${NO} npm install failed. Check your connection and run: npm install`); process.exit(1); }

@@ -4,6 +4,8 @@
 
 Please report security problems privately, not in a public issue. Use GitHub's private reporting: the repository's **Security** tab, then **Report a vulnerability**. Include what you found, how to reproduce it, and what it lets someone do.
 
+While the repository is private, GitHub doesn't offer private reporting: tell the maintainer directly, through the contact you were given when you were invited, not in an issue.
+
 You should get a first answer within a week. Fixes go to the `main` branch; there are no separate release branches yet.
 
 ## How Orchy is meant to be safe

@@ -3,6 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { decide as decideNative, DECISIONS } from '../lib/policy.mjs';
+import { env } from '../lib/env.mjs';
+// Orchy's own port, as the policy reads it (a user's .env may move it off 8008)
+const PORT = Number(env('PORT', '8008'));
 
 // The cases are written with Windows paths. On macOS and Linux, each drive path (C:/x, C:\x, 'C:\\x' inside code)
 // becomes the same absolute POSIX path (/x), so every boundary is tested with the native path rules.
@@ -866,7 +869,7 @@ for (const [tool, input, want, extra] of cases) {
   w('jos-s-one-send.js', "require('child_process').execSync('one --agent actions execute gmail conn_mod_def::G::send live::gmail::default::SUPPORT -d {}');");
   w('jos-s-render.sh', "ffmpeg -i in.mp4 out.mp4\ncurl -s https://cdn.example/logo.svg -o logo.svg\n");
   w('jos-s-invite.sh', "curl -X POST https://api.calendly.com/scheduled_events -d @e.json\n");
-  w('jos-s-orchy.js', "fetch('http://127.0.0.1:8008/api/inbox/i1/answer',{method:'POST',body:'{}'});");
+  w('jos-s-orchy.js', `fetch('http://127.0.0.1:${PORT}/api/inbox/i1/answer',{method:'POST',body:'{}'});`);
   const S = { ...D, scriptsFree: true };
   const ids = { 'conn_mod_def::P::page': { method: 'PATCH', title: 'Update Page Properties', platform: 'notion' }, 'conn_mod_def::G::send': { method: 'POST', title: 'Send Email', platform: 'gmail' } };
   const sctx = { ...ctx, resolveAction: async id => ids[id] || actions[id] || { method: null } };
@@ -888,7 +891,7 @@ for (const [tool, input, want, extra] of cases) {
     ['cd /tmp && bash jos-s-render.sh', 'allow', S],
     ['cd /tmp && bash jos-s-invite.sh', 'ask', S],
     ['cd /tmp && node jos-s-orchy.js', 'ask', S], // talks to Orchy's own dashboard
-    ["python - <<'EOF'\nimport requests\nrequests.post('http://localhost:8008/api/settings', json={})\nEOF", 'ask', S],
+    [`python - <<'EOF'\nimport requests\nrequests.post('http://localhost:${PORT}/api/settings', json={})\nEOF`, 'ask', S],
     ["python - <<'EOF'\nimport requests, json\njson.dump(requests.get('https://api.example/x').json(), open('x.json','w'))\nEOF", 'allow', S],
     ["python - <<'EOF'\nimport smtplib\nsmtplib.SMTP('smtp.example').sendmail('a','b','hi')\nEOF", 'ask', S],
     ['cd /tmp && node jos-s-weather.js', 'ask', D], // Scripts switched off: it asks as before

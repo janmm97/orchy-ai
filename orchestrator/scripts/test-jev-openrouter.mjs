@@ -3,7 +3,8 @@
 // A .env value wins over process.env, so the owner's own Jev keys are set aside here (in memory; .env is untouched).
 const { reloadEnv } = await import('../lib/env.mjs');
 const fileEnv = reloadEnv();
-for (const k of ['TYPESAFE_API_KEY', 'OPENROUTER_API_KEY', 'TYPESAFE_MODEL']) delete fileEnv[k];
+for (const k of ['JEV_PROVIDER', 'TYPESAFE_API_KEY', 'OPENROUTER_API_KEY', 'TYPESAFE_MODEL', 'AI_GATEWAY_API_KEY', 'OPENCODE_API_KEY']) delete fileEnv[k];
+process.env.JEV_PROVIDER = '';
 process.env.TYPESAFE_API_KEY = '';
 process.env.OPENROUTER_API_KEY = 'sk-or-test';
 process.env.TYPESAFE_MODEL = '';

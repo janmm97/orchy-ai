@@ -92,7 +92,7 @@ fs.writeFileSync(file, JSON.stringify({ servers: saved }));
   const servers = {
     mysql: saved.mysql,
     odd: { type: { t: 'listVal1' }, command: 'node', enabled: 'listVal2', description: { k: 'listVal3' }, token: 'listVal4' },
-    long: { type: 'sk_live_listVal5abcdefghijklmnopqrstuvwxyz', url: 'https://u:listVal6@h.example.com/', enabled: 0 },
+    long: { type: 'fake_key_listVal5abcdefghijklmnopqrstuvwxyz', url: 'https://u:listVal6@h.example.com/', enabled: 0 },
     bare: { command: 'node' },
     str: 'npx odd-server --token listVal7',
     nul: null,
