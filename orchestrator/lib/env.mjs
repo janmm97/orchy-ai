@@ -22,7 +22,9 @@ export const readJson = file => JSON.parse(readText(file));
  * overwrites it. Returns where it went, or null when it could be neither moved nor copied.
  */
 export function setAside(file, why) {
-  const to = `${file}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  const stamp = `${file}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  let to = stamp;
+  for (let n = 2; fs.existsSync(to); n++) to = `${stamp}-${n}`; // two in the same millisecond: never one over the other
   try { fs.renameSync(file, to); } catch { try { fs.copyFileSync(file, to); } catch { return null; } }
   console.warn(`\n  ! ${path.basename(file)} couldn't be read (${String(why || 'unknown error').slice(0, 200)}).\n    Kept it as ${to} and started fresh.\n`);
   return to;

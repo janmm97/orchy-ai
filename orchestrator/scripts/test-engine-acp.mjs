@@ -24,7 +24,8 @@ const ok = (cond, label, extra = '') => { console.log(`${cond ? 'ok  ' : 'FAIL'}
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-acp-agent.mjs');
-const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'orchy-acp-test-'));
+// the real path: macOS's temp folder is /var/… by one name and /private/var/… (what the agent reports) by the other
+const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'orchy-acp-test-')));
 const CWD = path.join(TMP, 'workspaces', 'Alpha');
 fs.mkdirSync(CWD, { recursive: true });
 process.on('exit', () => { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {} });
