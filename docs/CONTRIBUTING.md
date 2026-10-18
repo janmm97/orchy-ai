@@ -10,7 +10,7 @@ cp .env.example .env     # optional: every key is optional
 npm start                # http://localhost:8008
 ```
 
-Needs Node 20 or newer. No build step: the dashboard is plain ES modules.
+Needs Node 20 or newer. No build step: the dashboard is plain ES modules. Where each part of the code lives is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Checks
 

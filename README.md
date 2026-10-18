@@ -27,25 +27,11 @@ Orchy is a local AI-agent orchestrator. You tell Orchy what you need, by text or
   <sub>The Live view, with the dashboard's built-in sample data (<code>?open=live&amp;preview=live</code>). Nothing in it is real.</sub>
 </p>
 
-## If you are an AI agent setting this up or working in this repo: read this first
-
-> [!IMPORTANT]
-> This applies to Claude Code, Codex, OpenCode, Hermes, Antigravity and any other agent. Read this whole README before you change anything.
->
-> - **Never mix accounts.** Each workspace runs under exactly one login per harness (`claudeAccount`, `codexAccount` and so on in `orchestrator/config.json`). `accountCheck` in `orchestrator/lib/workspaces.mjs` checks it before every run. Do not weaken it.
-> - **One login per workspace.** Each workspace has its own One login (`one init --auth browser --project`, run inside that workspace folder). Never run a `one` action for one workspace from another workspace's folder. A workspace without its own login must not run `one`.
-> - **Workspaces live in `workspaces/`** (git-ignored). Each has its own CLAUDE.md / AGENTS.md. Read the one in the workspace you work in.
-> - **Do not weaken the safety files:** `orchestrator/lib/policy.mjs`, `orchestrator/lib/gate.mjs`, the cross-site / Host / Origin check in `orchestrator/server.mjs`, the paired-browser check (`orchestrator/lib/owner.mjs`, and `ownerOnly` and `FILE_READS` in `orchestrator/server.mjs`), the artifact path guard (`resolveFile` in `orchestrator/lib/artifacts.mjs`), the automatic retry gate (`retryGate` in `orchestrator/lib/recover.mjs`), the Cloudflare refusals and the Access token check in `orchestrator/portal.mjs` and `orchestrator/lib/cfaccess.mjs`, and the client sandbox (`orchestrator/lib/clientspace.mjs`, `orchestrator/lib/clients.mjs`).
-> - **Never commit secrets or machine state:** `.env`, `orchestrator/config.json`, `orchestrator/voice-agents.json`, `orchestrator/data/`.
-> - **The dashboard API has no password login.** It only answers its own origin on 127.0.0.1, and changes are only taken from a browser the owner paired. Keep it that way. Never bind it to another interface or put it behind a tunnel.
-> - **Ask the owner before anything outward-facing:** sending, posting, deleting, charging, sharing.
-> - **One task, one folder.** Files a task makes go in their own folder under the `Tasks/` of the agent's home (`<Department>/<call name>/Tasks/`), or the workspace's `Tasks/` in a workspace without departments.
-
 ## ✨ Highlights
 
 - 💬 **Text or voice.** Type a task, or talk to Orchy and call your agents. Voice is optional and off until you switch it on (ElevenLabs or Deepgram).
 - 🧭 **Smart routing, optional.** Jev picks the workspace, agent and model, and shows you its pick first. Without it, Orchy matches each message by its words.
-- 🧰 **Bring your own harness.** Claude Code, Codex, OpenCode, Hermes or Antigravity, each signed in with the workspace's own account.
+- 🧰 **Bring your own harness.** Claude Code, Codex, OpenCode, Hermes or Antigravity, each signed in with the workspace's own account and every one held behind your approvals.
 - 🔌 **Your real apps.** Gmail, Slack, Notion, Stripe and 750+ more through the [One CLI](https://withone.ai).
 - ✋ **Asks before it acts.** Money, sending, calendar changes, deleting and sharing wait for your OK in the dashboard.
 - 🗂️ **Workspaces that never mix.** One folder per business or client, with its own logins, agents and instructions.
@@ -56,6 +42,7 @@ Orchy is a local AI-agent orchestrator. You tell Orchy what you need, by text or
 ## 📖 Contents
 
 - [Quick start](#quick-start)
+- [If you are an AI agent](#if-you-are-an-ai-agent-setting-this-up-or-working-in-this-repo-read-this-first)
 - [How it works](#how-it-works)
 - [What leaves your machine](#what-leaves-your-machine)
 - [Security](#security)
@@ -94,7 +81,7 @@ Each key is checked once with its service and saved in `.env` on your PC. Keys a
 ### Prerequisites
 
 - Node.js 20 or newer.
-- Git, to clone the repository. The repository is private for now: the owner invites you on GitHub, and the first clone asks you to sign in.
+- Git, to clone the repository.
 - At least one harness CLI installed and signed in. Claude Code is recommended (see [Supported harnesses](#supported-harnesses)).
 - The One CLI (`one`), so agents can use your apps. Setup offers to install it. See [docs/ONE.md](docs/ONE.md).
 - Optional: ffmpeg (with ffprobe), for thumbnails, video posters and playable copies in the file viewer. Without it every file still opens as is. Orchy finds it on your PATH, in the usual install folders (Homebrew, winget), or at `FFMPEG_PATH` in `.env`.
@@ -110,37 +97,52 @@ Each key is checked once with its service and saved in `.env` on your PC. Keys a
 | `AI_GATEWAY_API_KEY` | Jev through Vercel AI Gateway, as `typesafe-ai/jev` (native) | As above |
 | `OPENCODE_API_KEY` | Jev through OpenCode Zen, as `jev-1.13` (a chat model). OpenCode's free tier only works inside the OpenCode app | As above |
 | `ELEVENLABS_API_KEY` | Orchy's spoken replies and voice calls with agents | The browser's voice |
-| `DEEPGRAM_API_KEY` | A backup voice for Orchy's spoken replies | The browser's voice |
+| `DEEPGRAM_API_KEY` | Orchy's spoken replies with Deepgram (or the backup voice when both keys are set) | The browser's voice |
+| `VOICE_PROVIDER` | Which service speaks: `elevenlabs` or `deepgram` | ElevenLabs first, Deepgram as backup |
 
 `JEV_PROVIDER` picks one provider when several keys are set (`typesafe`, `openrouter`, `vercel`, `opencode`, or `off`). `VOICE_ENABLED=0` switches voice off: nothing speaks, nothing rings, and nothing goes to ElevenLabs or Deepgram.
+
+## If you are an AI agent setting this up or working in this repo: read this first
+
+> [!IMPORTANT]
+> This applies to Claude Code, Codex, OpenCode, Hermes, Antigravity and any other agent. Read this whole README before you change anything.
+>
+> - **Never mix accounts.** Each workspace runs under exactly one login per harness (`claudeAccount`, `codexAccount` and so on in `orchestrator/config.json`). `accountCheck` in `orchestrator/lib/workspaces.mjs` checks it before every run. Do not weaken it.
+> - **One login per workspace.** Each workspace has its own One login (`one init --auth browser --project`, run inside that workspace folder). Never run a `one` action for one workspace from another workspace's folder. A workspace without its own login must not run `one`.
+> - **Workspaces live in `workspaces/`** (git-ignored). Each has its own CLAUDE.md / AGENTS.md. Read the one in the workspace you work in.
+> - **Do not weaken the safety files:** `orchestrator/lib/policy.mjs`, `orchestrator/lib/gate.mjs`, the cross-site / Host / Origin check in `orchestrator/server.mjs`, the paired-browser check (`orchestrator/lib/owner.mjs`, and `ownerOnly` and `FILE_READS` in `orchestrator/server.mjs`), the artifact path guard (`resolveFile` in `orchestrator/lib/artifacts.mjs`), the automatic retry gate (`retryGate` in `orchestrator/lib/recover.mjs`), the Cloudflare refusals and the Access token check in `orchestrator/portal.mjs` and `orchestrator/lib/cfaccess.mjs`, and the client sandbox (`orchestrator/lib/clientspace.mjs`, `orchestrator/lib/clients.mjs`).
+> - **Never commit secrets or machine state:** `.env`, `orchestrator/config.json`, `orchestrator/voice-agents.json`, `orchestrator/data/`.
+> - **The dashboard API has no password login.** It only answers its own origin on 127.0.0.1, and changes are only taken from a browser the owner paired. Keep it that way. Never bind it to another interface or put it behind a tunnel.
+> - **Ask the owner before anything outward-facing:** sending, posting, deleting, charging, sharing.
+> - **One task, one folder.** Files a task makes go in their own folder under the `Tasks/` of the agent's home (`<Department>/<call name>/Tasks/`), or the workspace's `Tasks/` in a workspace without departments.
 
 ## How it works
 
 ```mermaid
 flowchart TD
-    you(["You: text or voice"]) --> orchy["Orchy<br/>orchestrator/server.mjs, :8008"]
-    orchy -- "Jev: intent, workspace, agent, model" --> harness["A harness CLI, started in the workspace folder<br/>with that workspace's own account / config dir"]
-    harness -- "MCP bridge #quot;jos#quot;: ask_user, approval, report_done, note<br/>(+ delegate for department heads;<br/>request_connections, jev_pick_tools, voice_agent for the Builder)" --> popups["Dashboard pop-ups"]
-    popups -- "wait for you; your answer goes back to the agent" --> harness
-    harness -- "report_done" --> done["LOGS.md + Orchy tells you (text, or voice)"]
+    you(["You: text or voice"]) --> jev["Jev picks the workspace, agent and model"]
+    jev --> agent["The agent works in that workspace,<br/>under the workspace's own account"]
+    agent --> ok["It stops for your OK on decisions:<br/>sending, posting, deleting, spending"]
+    ok --> done(["It reports back: LOGS.md,<br/>plus a message or voice"])
 ```
 
 <details>
 <summary>The same flow as plain text</summary>
 
 ```
-You --text/voice--> Orchy (orchestrator/server.mjs, :8008)
-                     | Jev: intent, workspace, agent, model
-                     v
-        a harness CLI, started in the workspace folder
-        with that workspace's own account / config dir
-                     | MCP bridge "jos": ask_user, approval, report_done, note
-                     |   (+ delegate for department heads;
-                     |    request_connections, jev_pick_tools, voice_agent for the Builder)
-                     v
-        dashboard pop-ups <-- wait for you --> your answer goes back to the agent
-                     |
-        report_done --> LOGS.md + Orchy tells you (text, or voice)
+You (text or voice)
+   |
+   v
+Jev picks the workspace, agent and model
+   |
+   v
+The agent works in that workspace, under the workspace's own account
+   |
+   v
+It stops for your OK on decisions: sending, posting, deleting, spending
+   |
+   v
+It reports back: LOGS.md, plus a message or voice
 ```
 
 </details>
@@ -175,7 +177,8 @@ Orchy runs on your PC, but these services see some of your data when you use the
 - **Paired browsers.** Only a paired browser can make changes in Orchy (send tasks, answer approvals, change settings). See Pairing under [First run](#first-run).
 - **An approval gate on every harness.** Agents do routine work alone and stop for decisions: money, sending, calendar changes, deleting, sharing. The full rules are under [Approval gate and policy](docs/CONCEPTS.md#approval-gate-and-policy).
 - **Accounts never mix.** Every run is checked against the workspace's own harness login before it starts, and each workspace has its own One login.
-- **Ungated harnesses are refused by default.** See [Supported harnesses](#supported-harnesses).
+- **Every harness asks first.** Claude Code, Codex and OpenCode send their own approval requests to Orchy, and Hermes and Antigravity go through a pre-tool hook Orchy writes into each run. See [Supported harnesses](#supported-harnesses).
+- **Never tunnel port 8008.** The dashboard refuses Cloudflare traffic. Only [client pages](#client-pages) (port 8009) go online, through a Cloudflare Tunnel with Cloudflare Access.
 
 Report security problems privately: see [SECURITY.md](docs/SECURITY.md).
 
@@ -186,8 +189,8 @@ The dashboard's setup guide has seven steps:
 1. **You.** Tell Orchy your name and time zone.
 2. **Tools.** Orchy checks that Node, a harness CLI and the One CLI are installed.
 3. **Keys.** Add the optional [keys](#keys), or skip them.
-4. **First workspace.** Workspace, then Add. Name it, say what it is for, pick its harness and account. Orchy creates the folder under `workspaces/`.
-5. **Sign in to One.** Workspace, open the workspace, "Sign in to One". See [docs/ONE.md](docs/ONE.md).
+4. **First workspace.** Workspaces, then Add. Name it, say what it is for, pick its harness and account. Orchy creates the folder under `workspaces/`.
+5. **Sign in to One.** Workspaces, open the workspace, "Sign in to One". See [docs/ONE.md](docs/ONE.md).
 6. **First app.** Connections, the workspace, "Add app".
 7. **First agent.** Ask the AI Agent Builder for an agent and choose which apps it gets.
 
@@ -212,7 +215,7 @@ One connects agents to third-party apps. Orchy uses its CLI for every app connec
 
 1. Create a One account at https://app.withone.ai/sign-in.
 2. Use one One organization per business or client. The organization switcher is at the top left of the One dashboard.
-3. In Orchy: Workspace, open the workspace, "Sign in to One". It runs `one init --auth browser --project` in that workspace folder. Choose the organization this workspace should use when One asks. The login is saved for that folder only.
+3. In Orchy: Workspaces, open the workspace, "Sign in to One". It runs `one init --auth browser --project` in that workspace folder. Choose the organization this workspace should use when One asks. The login is saved for that folder only.
 4. Connected apps are listed on the "Connected Apps" page in the One dashboard (left sidebar). "Add new app" connects one.
 5. In Orchy: Connections, the workspace, "Add app". It runs `one connection add <app>` and opens the app's sign-in page.
 6. If an app is not available, switch it on in the One dashboard: Developers (bottom left), "Embeddable Auth" tab, search the tool, turn on "Visible". Full steps are in [docs/ONE.md](docs/ONE.md).
@@ -249,16 +252,9 @@ The short version. Every detail is in **[docs/CONCEPTS.md](docs/CONCEPTS.md)**.
 
 ### Client pages
 
-Client pages are optional. You can share chosen agents with a client on their own page (second server, port 8009, `/c/<link>` only). Clients work in their own sandbox, approve app decisions, and never see the rest of Orchy. Anything touching your machine still asks you.
+Optional: share chosen agents with a client on their own page (port 8009), where they work in their own sandbox and never see the rest of Orchy.
 
-<details>
-<summary><b>Putting client pages online</b> (Cloudflare Tunnel + Access, and R2 for video)</summary>
-
-To put it online, use a Cloudflare Tunnel plus Cloudflare Access, and give Orchy the Access team and the application's AUD tag (Workspaces → Client access, or `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` in `.env`): Orchy checks the token Cloudflare signs on every visit, and keeps the page closed online until both are set. Other tunnels are refused. **Never tunnel port 8008: the dashboard refuses Cloudflare traffic.**
-
-Clients open the files their own tasks made in the same viewer as your dashboard (images, PDFs, documents, tables, web pages), and only those. Video and audio never go through the tunnel (Cloudflare's terms): they play from a private Cloudflare R2 bucket through links that last 15 minutes at most. To switch that on, turn on R2 in Cloudflare, make a private bucket with a lifecycle rule that deletes objects after 30 days and an R2 API token with Object Read & Write for that bucket only, then put `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET` in `.env` (no restart needed, no CORS rule needed). Without them clients see a video's poster and "Video playback isn't switched on yet".
-
-</details>
+Putting them online (Cloudflare Tunnel, Access, and R2 for video) is in [docs/CONCEPTS.md → Client pages](docs/CONCEPTS.md#client-pages-optional).
 
 <p align="center">
   <img src="assets/images/readme/live-phone.png" alt="The Live view on a phone, with its columns as tabs" width="260">
@@ -273,33 +269,14 @@ Clients open the files their own tasks made in the same viewer as your dashboard
 | **Claude Code** (recommended) | `npm install -g @anthropic-ai/claude-code` | ✅ yes |
 | **Codex** | `npm install -g @openai/codex` | ✅ yes |
 | **OpenCode** | `curl -fsSL https://opencode.ai/v2/install \| bash` | ✅ yes |
-| **Hermes** | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash` | ⚠️ no: refused unless the workspace allows it |
-| **Antigravity** (off by default) | Google's `agy` CLI (see antigravity.google), then `ORCHY_ANTIGRAVITY=1` in `.env` | ⚠️ no: refused unless the workspace allows it |
+| **Hermes** | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash` | ✅ yes |
+| **Antigravity** (off by default) | Google's `agy` CLI (see antigravity.google), then `ORCHY_ANTIGRAVITY=1` in `.env` | ✅ yes |
 
-"Gated" means every risky action asks Orchy first. The full status of each harness, including what has been tested, is below.
+"Gated" means every risky action asks Orchy first.
 
-<!-- HARNESS-STATUS:START -->
-| Harness | Install command | How Orchy gates its approvals | Status |
-|---|---|---|---|
-| Claude Code | `npm install -g @anthropic-ai/claude-code` | MCP permission tool `mcp__jos__approval` | gated: yes. Pending real-install test (see docs/HARNESSES.md) |
-| Codex | `npm install -g @openai/codex` | `codex app-server`, policy `untrusted`, every request to the gate | gated: yes. Pending real-install test (see docs/HARNESSES.md) |
-| OpenCode | `curl -fsSL https://opencode.ai/v2/install \| bash` | `opencode serve`, every tool set to `ask`, answered through its permissions endpoint | gated: yes. Implemented, unverified against the real binary (see docs/HARNESSES.md) |
-| Hermes | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash` | `hermes acp` over ACP with manual approvals forced, but it only asks about dangerous shell commands | gated: NO (file edits and MCP tools never ask). Implemented, unverified; refused unless the workspace sets `allowUngated` (see docs/HARNESSES.md) |
-| Antigravity | Google's `agy` CLI (see antigravity.google); off until `ORCHY_ANTIGRAVITY=1` in `.env` | `agy -p` with stream-json; it can't ask mid-run, so you approve each whole run first, then it runs inside deny rules Orchy writes (`--gemini_dir`) | gated: NO (commands aren't checked). Implemented, unverified against the real binary in this repo; off by default, refused unless the workspace sets `allowUngated` and has its own One login (see docs/HARNESSES.md) |
-<!-- HARNESS-STATUS:END -->
+Details, headless commands, config locations, the evidence behind each "gated" answer, [which instructions an agent run reads](docs/HARNESSES.md#which-instructions-an-agent-run-reads) and manual verification checklists are in [docs/HARNESSES.md](docs/HARNESSES.md).
 
-Every harness that can't hold every action behind the gate (gated: NO) also needs the workspace's own One login: Orchy can't see all of its commands, so it could otherwise reach another account's apps.
-
-<details>
-<summary><b>Which instructions an agent run reads</b></summary>
-
-Agent runs read only the workspace's own instructions, never the CLAUDE.md / AGENTS.md at the root of this repo (they are for coding agents working on Orchy): Claude Code runs exclude them (`claudeMdExcludes`), Codex starts with `project_root_markers=[]` so it reads AGENTS.md only in the workspace folder, and OpenCode stops at the first AGENTS.md (or CLAUDE.md) it finds walking up, the workspace's own (keep one in every workspace; new ones get both), and doesn't read your personal `~/.claude/CLAUDE.md`. Hermes and Antigravity are unverified on this point (docs/HARNESSES.md).
-
-</details>
-
-Ori Harness (`ori`) is a launcher, not a harness, and is not supported yet. Details, headless commands, config locations, the evidence behind each "gated" answer and manual verification checklists are in [docs/HARNESSES.md](docs/HARNESSES.md).
-
-**Platforms:** Windows, macOS and Linux. Windows is the most tested; on macOS and Linux, report what breaks.
+**Platforms:** Windows, macOS and Linux. Windows is the most tested (Hermes and Antigravity were checked on Windows only); on macOS and Linux, report what breaks.
 
 ## Troubleshooting
 
@@ -311,7 +288,7 @@ This health check tests each workspace's accounts, the One CLI, Jev, voice, agen
 
 | Problem | What to do |
 |---|---|
-| Orchy will not start | Read the error in the terminal window it was started from. After Orchy restarted himself, it is in `orchestrator/data/server.err.log`. |
+| Orchy will not start | Read the error in the terminal window it was started from. After Orchy restarted itself, it is in `orchestrator/data/server.err.log`. |
 | The dashboard says it can't make changes | The browser isn't paired: see Pairing under [First run](#first-run). |
 | A workspace says it is not signed in to One | Workspaces, the workspace, "Sign in to One". |
 | A run is refused for an account mismatch | The harness profile for that workspace is logged into the wrong account: sign in again with the right one. |
@@ -324,51 +301,12 @@ orchy-ai/
 ├── dashboard/      the UI: plain ES modules, no build step
 ├── scripts/        setup.mjs (npm run setup)
 ├── launchers/      double-click launchers for Windows, macOS and Linux
-├── docs/           ONE.md, HARNESSES.md, CONCEPTS.md, SECURITY.md, CONTRIBUTING.md, LICENSE, NOTICE
+├── docs/           ONE.md, HARNESSES.md, CONCEPTS.md, ARCHITECTURE.md, SECURITY.md, CONTRIBUTING.md, LICENSE, NOTICE
 ├── assets/         the logo and README images
 └── workspaces/     your workspaces (git-ignored)
 ```
 
-<details>
-<summary><b>Where the code lives (full file map)</b></summary>
-
-| Path | What it is |
-|---|---|
-| `orchestrator/server.mjs` | HTTP and SSE API on 127.0.0.1:8008, origin checks, hot-reloaded `.env` |
-| `orchestrator/portal.mjs` | Client pages server (port 8009) |
-| `orchestrator/lib/router.mjs`, `jev.mjs`, `livejev.mjs` | Jev routing, live reading as you type |
-| `orchestrator/lib/runner.mjs`, `claude.mjs`, `codex.mjs` | Starting runs on each harness, the per-account queue, usage-limit pauses |
-| `orchestrator/lib/engines/` | One adapter per harness (`index.mjs` is the registry: capabilities, opt-in engines); `antigravity.mjs` is Google's agy CLI (off by default, every run approved first) |
-| `orchestrator/lib/bus.mjs`, `activity.mjs` | The replayable event stream; what each run is doing, redaction, safe step summaries |
-| `orchestrator/lib/logs.mjs`, `usagereview.mjs` | LOGS.md, usage and cost, the weekly usage review |
-| `orchestrator/lib/artifacts.mjs`, `media.mjs` | The file registry and its path guard, previews (Office, CSV, JSON), research sources; ffmpeg thumbnails, posters and playable copies |
-| `orchestrator/lib/validate.mjs`, `recover.mjs` | Orchy's check of a finished run; failure classes, the safe automatic retry, recovery cards, stuck runs |
-| `orchestrator/mcp/cwd-hook.mjs` | Tells the gate where each Claude Code shell command runs |
-| `orchestrator/lib/gate.mjs`, `policy.mjs` | Approval gate and rules |
-| `orchestrator/lib/owner.mjs` | Paired browsers: only they can make changes |
-| `orchestrator/lib/cfaccess.mjs` | Cloudflare Access token check for client pages |
-| `orchestrator/lib/workspaces.mjs`, `scaffold.mjs` | Workspaces, accounts, One scope, "<Name> Workspace" names; what a new workspace starts with |
-| `orchestrator/lib/agents.mjs`, `tasks.mjs`, `resources.mjs` | Agent files, departments and homes (`homeOf`, `departmentOf`); task folders (`taskRootFor`); `Resources/` (skills linked, MCP copies without secrets, INDEX.md, homes made) |
-| `orchestrator/lib/mcpauth.mjs` | OAuth sign-in for remote MCP servers (tokens in `orchestrator/data/mcp-auth.json`) |
-| `orchestrator/lib/delegation.mjs`, `huddle.mjs` | Department heads, huddles |
-| `orchestrator/lib/huddlecoach.mjs`, `rules.mjs` | Orchy in huddles; your standing rules (what Orchy answers for you in a proposal) |
-| `orchestrator/lib/missions.mjs` | Missions: the plan under the workspace's own account and its checks, the card, the step supervisor, the ceiling, restarts |
-| `orchestrator/lib/scheduler.mjs`, `sessions.mjs` | Schedules, sessions |
-| `orchestrator/lib/backend.mjs` | Orchy fixing himself, guarded files |
-| `orchestrator/lib/clients.mjs`, `clientspace.mjs` | Client pages and sandbox |
-| `orchestrator/lib/clientview.mjs`, `r2.mjs` | What a client's page may open (their own files only, scrubbed); client video through short-lived Cloudflare R2 links |
-| `orchestrator/mcp/bridge.mjs` | MCP bridge given to each run |
-| `orchestrator/templates/` | What new workspaces and the Builder start from |
-| `orchestrator/scripts/` | `doctor.mjs` (npm run check), `organize.mjs` (lay an existing workspace out by department: plan, apply, rollback), test scripts |
-| `dashboard/` | The UI, plain ES modules, no build step |
-| `dashboard/js/windows.mjs` | Windows: one page and one item window at a time, Back, pop-outs |
-| `dashboard/js/live.mjs`, `live/` | The Live view: `model.mjs` (state and derivations), `activity.mjs`, `work.mjs`, `output.mjs`, `fixtures.mjs` (`?preview=live` samples) |
-| `dashboard/js/viewer.mjs`, `viewers/` | The file viewer; `media.mjs` (images, video, audio), `pdf.mjs` (pdf.js in `dashboard/vendor/pdfjs-6.3.289/`) |
-| `dashboard/js/missions.mjs` | Mission cards and steps (draw nothing until the server sends missions) |
-| `workspaces/` | Your workspaces (git-ignored) |
-| `orchestrator/data/` | Runtime state and transcripts (git-ignored) |
-
-</details>
+The full file map, with what each part does, is in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ## Contributing
 
