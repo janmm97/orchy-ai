@@ -24,8 +24,8 @@ process.on('exit', () => { config.workspaces = keep.workspaces; });
 
 // ── the registry ──
 ok(JSON.stringify(engineIds()) === JSON.stringify(['claude', 'codex', 'opencode', 'hermes', 'antigravity']), 'registry lists claude, codex, opencode, hermes, antigravity', JSON.stringify(engineIds()));
-ok('hermes' in config.runtimes && !!engine('hermes') && !engine('hermes').capabilities.gated && !engine('antigravity').capabilities.gated, 'hermes / antigravity are engines, registered as NOT gated (refused unless allowUngated)');
-ok(!!ungatedRefusal({ name: 'H' }, engine('hermes')) && ungatedRefusal({ name: 'H', allowUngated: true }, engine('hermes')) === null, 'hermes is refused by default and allowed once the workspace opts in');
+ok('hermes' in config.runtimes && !!engine('hermes') && engine('hermes').capabilities.gated && engine('antigravity').capabilities.gated, 'hermes / antigravity are engines, gated through their pre-tool hooks');
+ok(ungatedRefusal({ name: 'H' }, engine('hermes')) === null && ungatedRefusal({ name: 'A' }, engine('antigravity')) === null, 'hermes / antigravity need no allowUngated');
 ok(JSON.stringify(Object.keys(runtimes())) === JSON.stringify(engineIds()), 'runtimes() lists registered engines only', JSON.stringify(Object.keys(runtimes())));
 ok(Object.values(runtimes()).every(r => r.capabilities && r.label && r.models.length === 3 && r.accountModel), 'every runtime carries label, models, accountModel and capabilities');
 for (const e of engines()) {

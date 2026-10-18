@@ -1,14 +1,13 @@
 // Engine adapter: Google Antigravity's CLI (`agy`), headless: `agy -p --output-format stream-json`, the prompt on stdin.
-// Status: implemented, unverified against the real binary in this repo (fake-binary tests only; docs/HARNESSES.md).
+// Status: gated through agy's PreToolUse hook, checked against the real agy 1.4.2 on Windows (docs/HARNESSES.md).
 //
-// Off by default: an owner switches it on with ORCHY_ANTIGRAVITY=1 in .env (engineOffered in index.mjs). Not gated
-// (capabilities.gated = false): headless agy can't ask anyone and its hooks can only block, so
-//   1. the workspace must opt in (allowUngated, like every ungated engine),
-//   2. the owner approves every run up front (an approval card before agy starts; nothing is remembered), and
-//   3. agy then runs `always-proceed` inside deny rules Orchy writes into the agent's own agy folder (`--gemini_dir`)
-//      before each run: no writes to the workspace's setup, no reads of other workspaces, retired ones, Orchy's own
-//      files, .env, sign-in folders or other workspaces' agy folders. Its shell commands are NOT checked, so a
-//      workspace without its own One login never runs on it (runner.mjs refuses every ungated engine there).
+// Off by default: an owner switches it on with ORCHY_ANTIGRAVITY=1 in .env (engineOffered in index.mjs). Gated
+// (capabilities.gated = true): before every run Orchy writes a PreToolUse hook into the agent's own agy folder
+// (`--gemini_dir`, config/hooks.json) that runs mcp/tool-hook.mjs before EVERY tool call (files, commands, web, MCP) and
+// waits for Orchy's gate, the owner's pop-up included. agy honours a deny and blocks when the hook fails, crashes or
+// times out. agy itself runs `always-proceed` (it can't ask anyone headless), and the deny rules Orchy also writes into
+// that folder stay as a second fence: no writes to the workspace's setup, no reads of other workspaces, retired ones,
+// Orchy's own files, .env, sign-in folders or other workspaces' agy folders.
 // Its Google sign-in is one per computer, so every Antigravity workspace runs as the same account
 // (`antigravityAccount`, the same in every such workspace: workspaces.mjs checks it when one is added or changed, and
 // accountCheck compares it with who agy says it is signed in as before every run).
@@ -16,10 +15,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { env, expandPath, ROOT, DATA_DIR, LOGS_PATH } from '../env.mjs';
 import { findBinary, probeVersion } from '../claude.mjs';
 import { briefFor, textBuffer } from '../activity.mjs';
 import { psq, sq, killTree, scrubbedEnv } from './shared.mjs';
+import { agyTool } from './hookmap.mjs';
 
 export const ANTIGRAVITY = 'antigravity';
 const WIN = process.platform === 'win32';
@@ -137,10 +138,9 @@ const BUILDER_SETUP = ['.claude/settings.json', '.claude/settings.local.json', '
 const SIGN_INS = ['.one', '.gemini', '.codex', '.claude', '.claude.json', '.hermes', '.config/opencode', '.local/share/opencode', '.deepseek'];
 
 /**
- * The run's deny rules. Writes: its own workspace's setup. Reads (and so writes): every other workspace and its
- * profile folders, retired workspaces, Orchy's own code and data, .env, the owner's uploads, reports and LOGS.md, the
- * sign-in folders of every harness and of One, and other workspaces' agy folders. Commands aren't covered: the owner
- * approves each run knowing that.
+ * The run's deny rules (a second fence behind the hook). Writes: its own workspace's setup. Reads (and so writes): every
+ * other workspace and its profile folders, retired workspaces, Orchy's own code and data, .env, the owner's uploads,
+ * reports and LOGS.md, the sign-in folders of every harness and of One, and other workspaces' agy folders.
  */
 export function denyRules(ws, { isBuilder = false, others = [], profiles = [] } = {}) {
   const home = os.homedir();
@@ -158,11 +158,30 @@ export function denyRules(ws, { isBuilder = false, others = [], profiles = [] } 
   ];
 }
 
+// agy splits a hook's command on spaces and keeps quotes, and runs it in the hooks.json folder: so the command is a
+// launcher there, by its bare name, which loads Orchy's hook wherever Orchy lives (spaces in the path included)
+const HOOK_LAUNCHER = 'orchy-tool-hook.mjs';
+// hours: an owner may take a while to answer; past this agy blocks the call (it fails closed)
+const HOOK_TIMEOUT_S = 6 * 3600;
+
+/** The hook agy runs before every tool call: config/hooks.json plus its launcher. Replaces any hooks.json there. */
+export function writeAgyHook(dir, { script, credsFile }) {
+  fs.mkdirSync(path.join(dir, 'config'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'config', HOOK_LAUNCHER),
+    `// Written by Orchy before every run: agy runs this before each tool call, and Orchy's approval gate answers.\n`
+    + `process.argv.splice(2, 0, 'antigravity', ${JSON.stringify(credsFile)});\n`
+    + `await import(${JSON.stringify(pathToFileURL(script).href)});\n`);
+  const hooks = { hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: `node ${HOOK_LAUNCHER}`, timeout: HOOK_TIMEOUT_S }] }] } };
+  fs.writeFileSync(path.join(dir, 'config', 'hooks.json'), JSON.stringify(hooks, null, 2) + '\n');
+}
+
 /** Write the agent's agy folder for this run. Run-specific values (bridge token, run id) travel in the environment. */
-export function prepareHome(ws, slug, { bridge, servers = {}, allowed = null, isBuilder = false, others = [], profiles = [] }) {
+export function prepareHome(ws, slug, { bridge, servers = {}, allowed = null, isBuilder = false, others = [], profiles = [], hook }) {
   const dir = agyHome(ws, slug);
   fs.mkdirSync(path.join(dir, 'antigravity-cli'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'config'), { recursive: true });
+  if (!hook) throw new Error('Antigravity only runs with Orchy’s approval hook.');
+  writeAgyHook(dir, hook);
   const names = Object.entries(servers).filter(([n, s]) => n !== 'jos' && s && s.enabled !== false && s.type !== 'sse' && (!allowed || allowed.includes(n))).map(([n]) => n);
   const settingsFile = path.join(dir, 'antigravity-cli', 'settings.json');
   let settings = {};
@@ -170,7 +189,8 @@ export function prepareHome(ws, slug, { bridge, servers = {}, allowed = null, is
   Object.assign(settings, {
     toolPermission: 'always-proceed', artifactReviewPolicy: 'always-proceed', allowNonWorkspaceAccess: false,
     enableTelemetry: false, showFeedbackSurvey: false, notifications: false,
-    permissions: { allow: ['mcp(jos/*)', ...names.map(n => `mcp(${n}/*)`)], deny: denyRules(ws, { isBuilder, others, profiles }), ask: [] },
+    // its own hook and settings are off-limits too (the hook would refuse such a write anyway)
+    permissions: { allow: ['mcp(jos/*)', ...names.map(n => `mcp(${n}/*)`)], deny: [...denyRules(ws, { isBuilder, others, profiles }), `write_file(${slash(path.join(dir, 'config'))}/)`, `write_file(${slash(path.join(dir, 'antigravity-cli'))}/)`], ask: [] },
   });
   fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
   // the other servers never see Orchy's bridge token, which every MCP server would otherwise inherit from agy
@@ -205,17 +225,8 @@ export function spawnAgy({ home, cwd, model, effort, resume, prompt, logFile, en
   return child;
 }
 
-// agy's tool calls in the names Orchy's feed, policy words and describeTool know
-const TOOL_NAMES = { run_command: 'Bash', view_file: 'Read', write_to_file: 'Write', replace_file_content: 'Edit', multi_replace_file_content: 'Edit', sed_file: 'Edit', grep_search: 'Grep', find_by_name: 'Glob', list_dir: 'LS', read_url_content: 'WebFetch', search_web: 'WebSearch' };
-export function agyTool(info = {}) {
-  const p = info.parameters || {};
-  if (info.name === 'call_mcp_tool') return { tool: `mcp__${p.ServerName}__${p.ToolName}`, input: p.Arguments || {} };
-  const tool = TOOL_NAMES[info.name] || `AGY_${info.name || 'tool'}`;
-  const input = info.name === 'run_command' ? { command: p.CommandLine, cwd: p.Cwd }
-    : p.AbsolutePath || p.TargetFile ? { ...p, file_path: p.AbsolutePath || p.TargetFile }
-    : info.name === 'read_url_content' ? { ...p, url: p.Url || p.url } : p;
-  return { tool, input };
-}
+// agy's tool calls in the names Orchy's feed, policy words and describeTool know (shared with the hook: hookmap.mjs)
+export { agyTool };
 
 /**
  * One line of agy's stream-json, as what Orchy records. Returns
@@ -249,7 +260,7 @@ export default {
   id: ANTIGRAVITY,
   label: 'Antigravity',
   models: ['gemini-3.8-flash-medium', 'gemini-4-argon-medium', 'gemini-4-argon-high'],
-  blurb: 'Google’s Antigravity CLI. It can’t ask you anything once it starts, so you approve each run up front; its commands aren’t checked.',
+  blurb: 'Google’s Antigravity CLI. Every tool call it makes (files, commands, web, apps) waits for Orchy’s approvals first, through its own pre-tool hook.',
   fields: { account: 'antigravityAccount', profile: 'antigravityHome' },
   accountModel: 'email',
   // one Google sign-in per computer: every Antigravity workspace must name the same account (workspaces.mjs)
@@ -262,11 +273,11 @@ export default {
   defaultProfileLabel: '(~/.antigravity-orchy/<workspace>)',
   install: { cmd: 'See antigravity.google for the agy CLI', optional: true, note: 'Optional and off by default (ORCHY_ANTIGRAVITY=1 in .env): Google’s Antigravity CLI.' },
   capabilities: {
-    gated: false, mcp: true, resume: true, headless: true,
+    gated: true, mcp: true, resume: true, headless: true,
     clientSafe: false,
-    clientReason: 'Antigravity can’t be held behind Orchy’s approvals, so it is not offered to clients.',
+    clientReason: 'Antigravity hasn’t been checked with clients’ sandboxes yet, so it is not offered to clients.',
     huddles: false,
-    notes: 'agy -p with stream-json in and out. It can’t ask mid-run, so the owner approves every run first; it then runs always-proceed inside deny rules Orchy writes (--gemini_dir). Commands are not checked. Needs allowUngated and the workspace’s own One login.',
+    notes: 'agy -p with stream-json in and out. A PreToolUse hook Orchy writes into the agent’s agy folder (--gemini_dir) sends every tool call to the gate and waits; agy blocks if the hook denies, fails or times out. Deny rules in the same folder stay as a second fence.',
   },
   bin: () => agyBin(),
   version() {
@@ -289,28 +300,23 @@ export default {
   mcpConfig: ({ servers, allowed, bridge }) => ({ servers, allowed, bridge }),
   protocolNotes: ({ ownerName }) => `
 ## Working on Antigravity
-- ${ownerName} approved this whole run up front: Antigravity can't ask anything on the way, so nothing you do pauses for an OK. Hold back yourself. Your file tools can't touch this workspace's setup (.claude/, .agents/, Resources/, CLAUDE.md, AGENTS.md…), other workspaces, Orchy's files or sign-ins. Before sending, posting, spending, deleting, sharing, changing a calendar, using another folder or using a connection your definition doesn't list, ask ${ownerName} with ask_user and wait for an explicit yes.
+- Every tool call you make goes to Orchy's approvals first: routine work in this folder runs, and decisions (sending, posting, spending, deleting, sharing, calendar changes) wait for ${ownerName}'s OK, so a call may pause. Your file tools can't touch this workspace's setup (.claude/, .agents/, Resources/, CLAUDE.md, AGENTS.md…), other workspaces, Orchy's files or sign-ins.
 - The jos tools above are MCP tools on the \`jos\` server (call_mcp_tool with ServerName jos). Ask questions only with ask_user and finish with report_done: nobody reads your replies until the report.
 - Do the work yourself: no subagents, scheduled tasks, browser automation or image generation unless your instructions ask for them.
 - Skills in \`.claude/skills/<name>/\` are plain folders: when your instructions name one, read its \`SKILL.md\` and the files it points to, and follow them. Its Claude-only parts (the Skill tool, hooks, Claude subagents) don't run here: do those steps yourself.
-- If a tool is refused, don't try another way to do the same thing; say so in your report.
+- If a tool is refused, don't try another way to do the same thing; say so in your report. If Orchy says it is still waiting for ${ownerName}'s OK, wait a minute and make exactly the same call again.
 `,
   launch(run, ws, opts, rt) {
     const hooks = rt.hooks(run, ws);
     let child = null, stopped = false;
     rt.live.set(run.id, { fingerprint: opts.fingerprint, stop: () => { stopped = true; killTree(child); hooks.done({ code: null, status: 'interrupted' }); } });
     (async () => {
-      // headless agy can't ask: this one OK covers the whole task, every time (never remembered)
-      const ok = await hooks.approveRun({
-        title: `Run ${run.agentName} on Antigravity?`,
-        message: `Antigravity can't ask you anything once it starts, so this one OK covers the whole task: its commands, file changes in ${ws.name}, web and app tools run without further asks. Its file tools can't touch ${ws.name}'s setup, other workspaces, Orchy's files or sign-ins; its commands aren't checked.`,
-      });
-      if (stopped) return;
-      if (!ok) { hooks.record({ kind: 'denied', text: 'The Antigravity run was not approved.' }); return hooks.done({ code: 1, status: 'failed', error: 'Antigravity run was not approved.' }); }
       const { servers, allowed, bridge } = opts.mcp || {};
       const others = rt.deps.allWorkspaces ? rt.deps.allWorkspaces().filter(w => w.id !== ws.id) : [];
       const profiles = rt.deps.profileDirs ? rt.deps.profileDirs(ws, others, ANTIGRAVITY) : [];
-      const home = prepareHome(ws, run.agentSlug || 'general', { bridge, servers, allowed, isBuilder: !!run.isBuilder, others, profiles });
+      // from here every tool call agy makes waits for the gate (mcp/tool-hook.mjs → runner.mjs#toolHook)
+      const hook = hooks.useToolHook(ANTIGRAVITY);
+      const home = prepareHome(ws, run.agentSlug || 'general', { bridge, servers, allowed, isBuilder: !!run.isBuilder, others, profiles, hook });
       let text = '', stderr = '', buf = '', result = null;
       const said = textBuffer(t => hooks.record({ kind: 'text', text: t })); // one text event per agy message, not per delta
       child = spawnAgy({

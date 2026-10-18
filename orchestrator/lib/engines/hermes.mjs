@@ -1,8 +1,8 @@
 // Engine adapter: Hermes Agent (Nous Research), run as an ACP server (`hermes acp`) through the shared ACP client (acp.mjs).
-// Status: implemented, unverified against the real binary, and NOT gated (capabilities.gated = false): Hermes' ACP mode
-// bridges only dangerous terminal-command approvals to the client; file writes, patches, web and MCP tools never ask.
-// Reasons and the evidence that would flip it: docs/HARNESSES.md. The run therefore only starts in a workspace the owner
-// opted in with allowUngated.
+// Status: gated, checked against the real Hermes 0.21 on Windows (docs/HARNESSES.md). Hermes's ACP mode alone asks only
+// about file edits and dangerous terminal commands, so before every run Orchy writes its pre_tool_call hook into the
+// profile (hermes-config.mjs): Hermes runs mcp/tool-hook.mjs before EVERY tool call and blocks when it denies, fails or
+// times out. The ACP client runs strict: a tool that runs with neither an ACP request nor a hook OK stops the run.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -33,15 +33,18 @@ export function hermesEnv(profileDir, base = process.env) {
   return scrubbedEnv(profileDir ? { HERMES_HOME: profilePath(profileDir) } : {}, { HERMES_ACP_SKIP_CONFIGURED_MCP: '1' }, { dropPrefixes: ['HERMES_'], dropNames: HERMES_DROP }, base);
 }
 
-/** Write the forced approvals into the profile's config.yaml (keeping the owner's other keys). Returns the file. */
-export function writeHermesConfig(profileDir) {
+/** The hook's command line as Hermes splits it (quotes stripped per token, so paths with spaces are fine). */
+export const hermesHookCommand = ({ script, credsFile }, node = process.execPath) => [node, script, 'hermes', credsFile].map(a => `"${a}"`).join(' ');
+
+/** Write the forced approvals and Orchy's hook into the profile's config.yaml (keeping the owner's other keys). */
+export function writeHermesConfig(profileDir, { hookCommand = null } = {}) {
   const dir = profilePath(profileDir);
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'config.yaml');
   let cur = '';
   try { cur = fs.readFileSync(file, 'utf8'); } catch {}
-  const next = buildHermesConfigYaml(cur);
-  if (!hermesConfigLooksSafe(next)) throw new Error('Orchy could not build a safe Hermes config.');
+  const next = buildHermesConfigYaml(cur, { hookCommand });
+  if (!hermesConfigLooksSafe(next, { hookCommand })) throw new Error('Orchy could not build a safe Hermes config.');
   if (next !== cur) fs.writeFileSync(file, next, { mode: 0o600 });
   return file;
 }
@@ -58,11 +61,11 @@ export default {
   defaultProfileLabel: '(its own profile folder)',
   install: { cmd: 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash', shellNote: true, optional: true, note: 'Optional: Nous Research’s agent harness.' },
   capabilities: {
-    gated: false, mcp: true, resume: true, headless: true,
+    gated: true, mcp: true, resume: true, headless: true,
     clientSafe: false,
-    clientReason: 'Hermes cannot be held behind Orchy’s approvals, so it is not offered to clients.',
+    clientReason: 'Hermes hasn’t been checked with clients’ sandboxes yet, so it is not offered to clients.',
     huddles: false,
-    notes: 'hermes acp: only dangerous terminal commands are sent to the client for approval (session/request_permission); file writes, patches, web and MCP tools run without asking. Approvals are forced to manual and nothing is allowlisted. Needs allowUngated.',
+    notes: 'hermes acp with Orchy’s pre_tool_call hook (fail_closed) in the profile: every tool call goes to the gate first; file edits also ask over ACP (answered from the hook’s OK, never twice). Approvals forced to manual, nothing allowlisted. Hermes stops a hook after 5 minutes: a longer wait for the owner is "still waiting", and the same call tried again waits on the same pop-up.',
   },
   bin,
   version() {
@@ -87,19 +90,20 @@ export default {
   mcpConfig: ({ servers, allowed, bridge }) => toAcpMcp(servers, allowed, bridge),
   protocolNotes: ({ ownerName }) => `
 ## Working on Hermes
-- ${ownerName}'s approvals cover dangerous shell commands here; file edits and other tools run directly, so stay inside this folder and never touch anything outside it.
+- Every tool call you make goes to ${ownerName}'s approvals first: routine work in this folder runs, and decisions (sending, posting, spending, deleting, sharing, calendar changes) wait for an OK, so a call may pause. If a call is refused, don't try another way to do the same thing. If Orchy says it is still waiting for ${ownerName}'s OK, wait a minute and make exactly the same call again.
 - The jos tools above are MCP tools on the \`jos\` server. Call them like any other tool; ask ${ownerName} with \`ask_user\`.
 - Skills in \`.claude/skills/<name>/\` are plain folders: when your instructions name one, read its \`SKILL.md\` and the files it points to, and follow them.
 `,
   launch(run, ws, opts, rt) {
-    writeHermesConfig(ws.hermesProfile);
-    rt.record(run, { kind: 'system', text: 'Hermes only asks Orchy about dangerous shell commands. Its file edits and other tools run without approvals in this workspace (allowed by its owner).' });
+    const hooks = rt.hooks(run, ws);
+    // from here every tool call Hermes makes waits for the gate (mcp/tool-hook.mjs → runner.mjs#toolHook)
+    writeHermesConfig(ws.hermesProfile, { hookCommand: hermesHookCommand(hooks.useToolHook('hermes')) });
     const handle = launchAcpRun({
       cwd: ws.dir, bin: bin(), args: hermesArgs(), env: hermesEnv(ws.hermesProfile), label: 'Hermes',
       prompt: opts.prompt, system: rt.instructions(ws, run, opts.agentMarkdown, opts.planText),
       mcpServers: opts.mcp, resumeSessionId: opts.resume || null, requestedModel: run.model,
-      strict: false, // ungated by design: the owner opted in, so unasked actions are noted, not fatal
-    }, rt.hooks(run, ws));
+      strict: true, // every non-read tool must have asked: over ACP, or through the hook (hooks.takeHookAllow)
+    }, hooks);
     rt.live.set(run.id, { fingerprint: opts.fingerprint, stop: () => handle.stop() });
     run.pid = handle.pid;
   },

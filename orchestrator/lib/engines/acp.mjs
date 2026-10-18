@@ -1,7 +1,7 @@
 // Shared ACP client (Agent Client Protocol, https://agentclientprotocol.com): JSON-RPC 2.0 over stdio, one JSON
 // message per line, between Orchy (the client) and a coding-agent subprocess (`hermes acp`, `dsh --profile acp`…).
-// Used by the Hermes and DeepSeek adapters. Status: implemented against the protocol docs, tested only against a
-// fake ACP agent (scripts/test-engine-acp.mjs); not run against a real harness (docs/HARNESSES.md).
+// Used by the Hermes adapter. Checked against the real Hermes 0.21 (docs/HARNESSES.md) and a fake ACP agent
+// (scripts/test-engine-acp.mjs).
 //
 // Protocol (client → agent): initialize, session/new | session/load, session/prompt (returns a stopReason),
 // session/cancel (notification). Agent → client: session/update (notification: message chunks, tool_call,
@@ -16,13 +16,16 @@
 //    answer is the `cancelled` outcome (a refusal).
 //  - Safety net (`strict`, the default): a tool call of a kind other than read/search/think that reaches
 //    in_progress/completed without a permission request having been made for it aborts the run ("agent acted
-//    without asking"). `strict: false` (only for engines the owner opted into with allowUngated) keeps the run going
-//    and records the fact on the feed instead.
+//    without asking"). An engine with Orchy's pre-tool hook (Hermes) also counts an OK the hook got for the same kind
+//    of action (hooks.takeHookAllow, each used once), and an ACP edit request for a file the hook already cleared is
+//    answered from that OK. `strict: false` (only for engines the owner opted into with allowUngated) keeps the run
+//    going and records the fact on the feed instead.
 //  - Process exit, a broken pipe or a protocol error mid-run fails the run.
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { killTree } from './shared.mjs';
 import { briefFor } from '../activity.mjs';
+import { actionKind } from './hookmap.mjs';
 
 export const PROTOCOL_VERSION = 1;
 /** What Orchy tells the agent it can do for it: nothing. No fs reads/writes, no terminals. */
@@ -278,10 +281,11 @@ export function launchAcpRun(opts, hooks, io = {}) {
     }
     if (SAFE_KINDS.has(tc.kind || 'other')) return;
     if (asked.has(tc.toolCallId) || violationTimers.has(tc.toolCallId)) return;
+    if (hookAsked(tc)) return;
     // a permission request can be in flight right behind the status change
     violationTimers.set(tc.toolCallId, setTimeout(() => {
       violationTimers.delete(tc.toolCallId);
-      if (finished || asked.has(tc.toolCallId)) return;
+      if (finished || asked.has(tc.toolCallId) || hookAsked(tc)) return;
       const what = String(tc.title || tc.kind || 'a tool').slice(0, 120);
       if (strict) {
         hooks.record({ kind: 'denied', text: `${label} ran "${what}" without asking Orchy first.` });
@@ -291,6 +295,15 @@ export function launchAcpRun(opts, hooks, io = {}) {
         hooks.record({ kind: 'system', text: `${label} ran "${what}" without asking Orchy. This workspace is allowed to run it without approvals (allowUngated).` });
       }
     }, graceMs));
+  }
+
+  // an engine with Orchy's pre-tool hook (Hermes): the hook asked the gate before this tool ran (runner.mjs#toolHook)
+  function hookAsked(tc) {
+    if (!hooks.takeHookAllow) return false;
+    const c = gateCalls(tc, { cwd, serverNames })[0];
+    if (!hooks.takeHookAllow(actionKind(c.tool))) return false;
+    asked.add(tc.toolCallId);
+    return true;
   }
 
   function maybeRecord(tc) {
@@ -366,6 +379,9 @@ export function launchAcpRun(opts, hooks, io = {}) {
       const calls = gateCalls(tc || params.toolCall, { cwd, serverNames });
       allow = true;
       for (const c of calls) {
+        // the pre-tool hook already got the gate's OK for this very file: the owner is never asked twice. Kept, not used
+        // up: Hermes asks under another tool-call id than the tool's own, which then counts it (hookAsked)
+        if (c.input?.file_path && hooks.takeHookAllow?.(actionKind(c.tool), c.input.file_path, { keep: true })) continue;
         const verdict = await Promise.race([
           hooks.gate(c.tool, c.input),
           sleep(gateTimeoutMs).then(() => { throw new Error('the approval timed out'); }),

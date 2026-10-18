@@ -2,7 +2,7 @@
 
 A harness is the coding-agent CLI that does the work inside a workspace. Orchy starts it in the workspace folder, gives it the Orchy bridge (ask, approve, report) and answers its approval requests through the approval gate (`orchestrator/lib/gate.mjs`).
 
-Nothing here is marked as tested against a real install yet. Every status below is "pending" or "implemented, unverified" until the maintainer updates this file after testing. "Unverified" means the adapter is covered only by tests with a fake harness (`npm test`) and by reading the harness's public docs; nobody has run it against the real binary.
+Hermes and Antigravity were run against their real binaries (Windows, 2026-10-19); the others are still "pending" or "implemented, unverified" until the maintainer updates this file after testing. "Unverified" means the adapter is covered only by tests with a fake harness (`npm test`) and by reading the harness's public docs; nobody has run it against the real binary.
 
 ## Status
 
@@ -11,10 +11,10 @@ Nothing here is marked as tested against a real install yet. Every status below 
 | Claude Code | yes (permission-prompt MCP tool) | pending real-install test |
 | Codex | yes (`untrusted` policy, every approval request) | pending real-install test |
 | OpenCode | yes, by its own config: every tool set to `ask` | implemented, unverified against the real binary (fake-server tests only) |
-| Hermes | **no** | implemented, unverified against the real binary. Refused unless the workspace sets `allowUngated` |
-| Antigravity | **no** (it can't ask mid-run; the owner approves each whole run first) | implemented, unverified against the real binary in this repo (fake-binary tests only). Off by default (`ORCHY_ANTIGRAVITY=1` in `.env`), refused unless the workspace sets `allowUngated` |
+| Hermes | yes, through its `pre_tool_call` hook (every tool call asks Orchy first) | checked against the real binary (Hermes 0.21.7, Windows) |
+| Antigravity | yes, through its `PreToolUse` hook (every tool call asks Orchy first) | checked against the real binary (agy 1.4.2, Windows). Off by default (`ORCHY_ANTIGRAVITY=1` in `.env`) |
 
-"Gated: no" means Orchy cannot prove that the harness asks before every file change, command or tool call, so `startRun` refuses the workspace unless the owner sets `allowUngated: true` for it in `orchestrator/config.json` (Workspaces, the workspace, "allow it to run without approvals"). Hermes and Antigravity ship in that state on purpose. A workspace on any ungated harness also needs its own One login (`startRun` refuses it otherwise, code `ONE_SCOPE`): Orchy doesn't see every command such a harness runs, so the One CLI could fall back to another account. The README table carries the same statuses.
+Every harness shipped here is gated. An engine registered as not gated (one Orchy cannot prove asks before every file change, command or tool call) would be refused: `startRun` refuses the workspace unless the owner sets `allowUngated: true` for it in `orchestrator/config.json` (Workspaces, the workspace, "allow it to run without approvals"). A workspace on any ungated harness also needs its own One login (`startRun` refuses it otherwise, code `ONE_SCOPE`): Orchy doesn't see every command such a harness runs, so the One CLI could fall back to another account. The README table carries the same statuses.
 
 ## Which instructions a run reads
 
@@ -89,81 +89,82 @@ Changed because of the docs: `experimental.mcp_timeout` was removed (the docs do
 
 ## ACP (Agent Client Protocol) engines
 
-Hermes runs through the shared ACP client, `orchestrator/lib/engines/acp.mjs` (JSON-RPC 2.0 over stdio, one message per line, https://agentclientprotocol.com). What the client does:
+Hermes runs through Orchy's ACP client, `orchestrator/lib/engines/acp.mjs` (JSON-RPC 2.0 over stdio, one message per line, https://agentclientprotocol.com). What the client does:
 
 - `initialize` with `clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }`: Orchy gives the agent no file or terminal powers; any `fs/*` or `terminal/*` request that arrives anyway is answered "method not found".
 - The Orchy bridge (and the workspace's allowed stdio MCP servers) go in `session/new` `mcpServers` (stdio form: `name`, `command`, `args`, `env` as a list of `{ name, value }`). Remote MCP servers are not passed.
 - Every `session/request_permission` goes to the Orchy gate with the tool mapped to the names `policy.mjs` knows (`execute` to Bash, `edit`/`delete`/`move` to Edit with each path, `fetch` to WebFetch, `read` to Read, MCP names to `mcp__server__tool`; `other`, `switch_mode` and unknown kinds are an unrecognised tool, which always asks the owner). The answer is the agent's own `allow_once` or `reject_once` option, never an `*_always` option. A gate error, a timeout, a malformed request, a missing `*_once` option or a stop all answer `cancelled`.
-- Safety net: a tool of a kind other than `read`/`search`/`think` that starts running without a permission request for it, or that runs after Orchy refused it, aborts the run as failed ("agent acted without asking"). This is on for any engine registered as gated. For Hermes, which is ungated, it is switched off (the owner opted in) and the fact is written to the run feed instead.
+- Safety net (`strict`): a tool of a kind other than `read`/`search`/`think` that starts running without having asked, or that runs after Orchy refused it, aborts the run as failed ("agent acted without asking"). "Asked" means a `session/request_permission` for it, or, for an engine with Orchy's pre-tool hook (below), an OK the hook got from the gate for the same kind of action (each OK counts once). An ACP edit request for a file the hook already cleared is answered from that OK, so the owner is never asked twice.
 - Resume uses `session/load` only when the agent advertised `loadSession`; otherwise the run starts fresh and says so. `session/cancel` is sent on Stop; the process tree is killed if it does not finish.
-- The client never decides an engine is gated. An engine is gated only if its docs show every action reaches `session/request_permission` and a real-binary test confirms it.
 
-Tests: `orchestrator/scripts/test-engine-acp.mjs` (a fake ACP agent in `orchestrator/scripts/fake-acp-agent.mjs`, plus the Hermes generated config).
+Tests: `orchestrator/scripts/test-engine-acp.mjs` (a fake ACP agent in `orchestrator/scripts/fake-acp-agent.mjs`, the hook OK cases, and the Hermes generated config).
+
+## Pre-tool hooks (Hermes, Antigravity)
+
+Neither harness asks a client before every action on its own, but both run a hook before every tool call and obey its answer. Orchy uses that hook as its gate:
+
+- Before every run Orchy writes the hook into the harness's own config: Hermes's profile `config.yaml` (`hooks.pre_tool_call`, the only one, `fail_closed: true`, `hooks_auto_accept: true`) and the agent's agy folder (`config/hooks.json`, a `PreToolUse` hook on `*`). The hook is `orchestrator/mcp/tool-hook.mjs`.
+- For each tool call the hook maps what the harness sent to the gate's words (`orchestrator/lib/engines/hookmap.mjs`) and asks Orchy (`POST /api/bridge/tool-hook`, `runner.mjs#toolHook`), which runs the same `gate()` as every other harness: routine work passes, decisions become the owner's pop-up, and the hook waits for the answer.
+- The run is found by the session id the harness puts in every hook call (Hermes's ACP session, agy's conversation id), so two runs sharing a profile or an agy folder never answer for each other. A session with no live hooked run gets a deny.
+- Fail closed everywhere: the hook denies (and exits non-zero) when Orchy can't be reached, the token is wrong, the credentials file is missing or the payload is unreadable, and both harnesses block a call whose hook fails, crashes or times out.
+- The hook finds Orchy through `orchestrator/data/tool-hook.json` (Orchy's address and bridge token), in Orchy's data folder, which agents are never allowed to read. Nothing secret is written into the harness's config.
+- Hermes stops a hook after 5 minutes. When the owner takes longer, the hook answers "still waiting" a little before that, the agent is told to try the same call again, and the same call asked again waits on the same pop-up (never a second one) until it is answered. agy waits as long as the hook takes (Orchy sets 6 hours).
 
 ## Hermes
 
-**Status: implemented, unverified against the real binary. Gated: NO.** Refused unless the workspace sets `allowUngated`.
+**Status: gated through its `pre_tool_call` hook. Checked against the real Hermes 0.21.7 on Windows (2026-10-19).**
 
 | | |
 |---|---|
 | Install | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash` (run in WSL or Git Bash on Windows). Set `HERMES_CLI_PATH` in `.env` if the binary is somewhere unusual. Orchy never installs it |
-| How Orchy runs it | `hermes acp` through the ACP client, `cwd` = the workspace folder, `HERMES_HOME` = the workspace's profile folder, `HERMES_ACP_SKIP_CONFIGURED_MCP=1` (so servers in the profile's `config.yaml` do not start beside Orchy's bridge). Never `--yolo`, never `HERMES_YOLO_MODE` (removed from the child's environment) |
-| Forced config | Before every run Orchy rewrites the profile's `config.yaml` keeping the owner's keys (model, provider) and forcing `approvals.mode: manual`, `unattended_mode: deny`, `single_query_mode: deny`, `cron_mode: deny`, `command_allowlist: []`, any `yolo` key removed. Existing `approvals.deny` globs are kept |
+| How Orchy runs it | `hermes acp` through the ACP client (strict), `cwd` = the workspace folder, `HERMES_HOME` = the workspace's profile, `HERMES_ACP_SKIP_CONFIGURED_MCP=1` (so servers in the profile's `config.yaml` do not start beside Orchy's bridge). Never `--yolo`; `HERMES_YOLO_MODE`, `HERMES_ACCEPT_HOOKS` and `HERMES_SAFE_MODE` (which skips every hook) are removed from the child's environment |
+| Forced config | Before every run Orchy rewrites the profile's `config.yaml` keeping the owner's keys (model, provider, other hooks) and forcing `approvals.mode: manual`, `unattended_mode: deny`, `single_query_mode: deny`, `cron_mode: deny`, `command_allowlist: []`, any `yolo` key removed, and Orchy's hook as the only `pre_tool_call` hook (`fail_closed: true`, 300 s, auto-accepted). Another `pre_tool_call` hook is removed: one could rewrite a call's arguments after Orchy approved it. Existing `approvals.deny` globs are kept |
+| Profile | New Hermes workspaces get one of Hermes's own profiles: `%LOCALAPPDATA%\hermes\profiles\orchy-<id>` on Windows, `~/.hermes/profiles/orchy-<id>` elsewhere. Hermes 0.21 tries to rebuild its runtime for a `HERMES_HOME` outside its own data folder (and on Windows that failed), so an older workspace on `~/.hermes-<id>` should move its profile there |
 | MCP | Through ACP `session/new` `mcpServers` |
-| Account | `accountModel: 'profile'`: `hermesProfile` (a folder of its own, shared with no other Hermes workspace) is the profile. `account().label` comes from `hermes status` (providers with credentials, model), parsed defensively; a profile `auth.json` also counts as logged in. The PC's `*_API_KEY` style variables are removed from the child's environment. Hermes shares OAuth logins (Anthropic, OpenAI Codex, xAI) from `~/.hermes/auth.json` between profiles, so use an API-key provider per workspace |
+| Account | `accountModel: 'profile'`: `hermesProfile` (its own, shared with no other Hermes workspace) is the profile. Signed in = credentials in the profile's `auth.json` or provider keys in its `.env`; plan and models come from the profile's own files (`tier-catalog.mjs`). The PC's `*_API_KEY` style variables are removed from the child's environment |
 | Models | All `default`: Hermes uses the model its own config picks. An agent that names a `provider/model` gets it through the session's model config option, else `session/set_model`; if Hermes refuses, the run notes it and keeps its own pick |
+| Not offered | Client pages and huddles (`clientSafe: false`, `huddles: false`): not checked with clients' sandboxes yet |
 
-### Why it is not gated (evidence)
+### Evidence (real binary, Hermes 0.21.7, Windows)
 
-- The Hermes ACP docs say dangerous **terminal** approvals can be sent to the editor as permission prompts, with allow once / allow for session / allow always / deny options, and that timeouts and bridge failures deny.
-- The ACP internals page says "Only terminal approvals are bridged. File writes are not gated by the permission bridge": `write_file` and `patch` are only rendered as diffs.
-- The security page says `write_file` / `patch` have no approval prompt (protected paths are blocked, `~/.ssh/config` is the one exception), web tools rely on SSRF checks, and MCP tool calls have no per-call approval. The deny globs and the hardline blocklist are a shell-command policy, "not a sandbox".
-- The docs name the `allow_once` / `allow_always` / reject mapping but never the `session/request_permission` method itself, and the docs mention hosts (Buzz) that auto-answer allow once.
-
-So in `hermes acp` a file edit, a web fetch or an MCP call can happen without Orchy ever being asked. Orchy's file-edit rules (stay in the folder), the reads of other clients' folders and every MCP decision cannot be enforced.
-
-**What would flip it to gated:** a real-binary test showing every non-read tool kind (edit, delete, move, fetch, MCP, execute) produces a `session/request_permission` before it runs, or a documented Hermes setting that makes `write_file`, `patch`, web and MCP tools ask (and the ACP bridge forward it). Then set `capabilities.gated: true` and `strict` on in `hermes.mjs`, so the safety net applies.
+- Without the hook, Orchy's forced config alone: over ACP Hermes asked before `write_file` and `patch` (refused → file unchanged), but ran a terminal command, a shell `rm`, a web fetch and an MCP call without asking. Not enough on its own.
+- With Orchy's `pre_tool_call` hook (`fail_closed`): every tool call reached the hook first, with its name and arguments: `write_file`, `read_file`, `patch`, `terminal` (including `rm`), `web_extract`, `tool_describe` and an MCP tool. A block was honoured every time (nothing written, run, fetched or called); an allow let the call run; a hook that crashed, and one past its timeout, blocked the call.
+- Through Orchy end to end (real server, runner and adapter, approvals on "Every change"): a terminal command produced the owner's pop-up through the hook and, refused, never ran; the strict safety net accepted every hooked call; an owner who answered after the hook's wait got "still waiting", the agent retried the same call, the retry waited on the same pop-up and ran once it was approved.
+- Source (Hermes 0.21.7, `agent/shell_hooks.py`, `model_tools.py`): `pre_tool_call` runs before every tool dispatch, `fail_closed` blocks on a spawn error, a timeout, a non-zero exit without a directive or unreadable output; the hook timeout is capped at 300 s.
 
 ### Still unconfirmed
 
-- That `HERMES_HOME` can be set to an arbitrary folder (the docs show only the profile alias setting it to `~/.hermes/profiles/<name>`) and that `hermes acp` honours it.
-- The format of `hermes status` (the parser is defensive; the label may be empty). `hermes acp` flags, `session/load` support and the exact `mcpServers` handling are not documented.
-- That `HERMES_ACP_SKIP_CONFIGURED_MCP=1` is honoured by the installed version.
-
-### Manual verification checklist (not done yet)
-
-1. Install Hermes; confirm `hermes --version` and `hermes acp --check`.
-2. Add a workspace on Hermes with its own profile folder, run the login command Orchy shows (`hermes setup`), confirm `hermes status` shows a provider and Orchy's check goes green.
-3. Allow the workspace to run without approvals (`allowUngated`), run a task: "create a file, then run `git push`". Confirm whether the file write produced an approval (expected: no) and the `git push` did (expected: yes, and denied by the gate).
-4. Look at `<profile>/config.yaml` after a run: manual approvals, no allowlist, no yolo.
-5. Try an MCP call and a web fetch; note whether any permission request reached Orchy.
-6. If every kind asked, update the "Why it is not gated" section and flip the flag.
+- macOS and Linux (only Windows was run).
+- Tool calls a subagent (`delegate_task`) or `execute_code`'s own tool calls make: the source fires the hook once per dispatch, but this wasn't exercised. `delegate_task` itself is an unrecognised tool to the gate, so it asks the owner.
+- A Hermes plugin that registers its own `pre_tool_call` hook is not removed by the forced config (only `config.yaml` hooks are). If the dispatcher itself raised an error, Hermes's source logs it and carries on; that path was not seen.
 
 ## Antigravity
+
+**Status: gated through its `PreToolUse` hook. Checked against the real agy 1.4.2 on Windows (2026-10-19). Off by default.**
 
 | | |
 |---|---|
 | Install | Google's Antigravity CLI (`agy`); Orchy looks on PATH, in `~/.gemini/bin` and `~/.local/bin`, or at `AGY_CLI_PATH` |
 | Switched on | Off by default. Set `ORCHY_ANTIGRAVITY=1` in `.env` to offer it in the Add window; until then no run starts on it (`offeredRefusal`, code `ENGINE_OFF`) |
 | Headless command Orchy uses | `agy --gemini_dir <agent folder> --output-format stream-json --input-format stream-json --disable-slash-commands [--model <id>] [--effort <e>] [--conversation <id>] --log-file <file> -p=`, the prompt as one stream-json line on stdin |
-| Approvals | None mid-run: headless agy can't ask and its hooks can only block. Every run waits for the owner's OK on an approval card first (never remembered), then agy runs `always-proceed` inside deny rules Orchy writes into the agent's own agy folder (`antigravity-cli/settings.json` `permissions.deny`): no writes to the workspace's setup (`.claude/`, `.agents/`, `Resources/`, CLAUDE.md, AGENTS.md, GEMINI.md…), no reads of other workspaces, their profile folders, Retired/, Orchy's own code and data, `.env`, Uploads, Reports, LOGS.md, the harnesses' and One's sign-in folders, or other workspaces' agy folders. Its shell commands are not checked |
+| Approvals | Every tool call goes through Orchy's hook (`config/hooks.json` in the agent's agy folder, `PreToolUse` on `*`, 6-hour timeout), which waits for the gate and the owner's pop-up. agy runs its own permissions as `always-proceed` (headless, it can't ask anyone) inside deny rules Orchy also writes (`antigravity-cli/settings.json` `permissions.deny`) as a second fence: no writes to the workspace's setup (`.claude/`, `.agents/`, `Resources/`, CLAUDE.md, AGENTS.md, GEMINI.md…) or to the agent's own hook and settings, no reads of other workspaces, their profile folders, Retired/, Orchy's own code and data, `.env`, Uploads, Reports, LOGS.md, the harnesses' and One's sign-in folders, or other workspaces' agy folders |
+| Hook command | agy splits a hook's command on spaces, keeps quotes, and runs it in the `hooks.json` folder, so the command is `node orchy-tool-hook.mjs`: a launcher Orchy writes next to `hooks.json` that loads Orchy's hook wherever Orchy lives |
 | MCP | `config/mcp_config.json` in the agent folder: the `jos` bridge (its run id and token ride in agy's environment, never the file) plus the agent's allowed servers, each with the bridge's variables blanked |
-| Config and account | One Google sign-in per computer, so every Antigravity workspace names the same account (`antigravityAccount`; Orchy refuses a second, different one, and `accountCheck` compares it with the email agy's `models` log says it signed in as before every run). Agent folders: `antigravityHome`, default `~/.antigravity-orchy/<workspace id>/<agent>` |
-| Not offered | Client pages, huddles (`clientSafe: false`, `huddles: false`), and any workspace without its own One login |
+| Config and account | One Google sign-in per computer, so every Antigravity workspace names the same account (`antigravityAccount`; Orchy refuses a second, different one, and `accountCheck` compares it with the signed-in Google account before every run). Agent folders: `antigravityHome`, default `~/.antigravity-orchy/<workspace id>/<agent>` |
+| Not offered | Client pages and huddles (`clientSafe: false`, `huddles: false`): not checked with clients' sandboxes yet |
+
+### Evidence (real binary, agy 1.4.2, Windows)
+
+- The hook fired before every tool tried, even in `always-proceed` mode: `write_to_file`, `view_file`, `replace_file_content`, `run_command`, `read_url_content` and `call_mcp_tool`, each with its full arguments (path and content, command line, URL, MCP server, tool and arguments).
+- `deny` was honoured every time (nothing written, run, fetched or called) and `allow` let the call run. agy waited for the hook for 20 seconds and for 5½ minutes alike. A hook that crashed, and one past its timeout, blocked the call.
+- Through Orchy end to end (real server, runner and adapter, approvals on "Every change"): a shell command and a write into the workspace's `.claude/` each produced the owner's pop-up through the hook and, refused, never happened; allowed work ran; the run finished with its report.
+- Headless agy (`-p`) soft-denies a tool that would need a confirmation instead of approving it (agy changelog), so nothing slips through unasked.
 
 ### Still unconfirmed
 
-- Event shapes (`init`, `step_update` with tool `ACTIVE`/`DONE`/`ERROR`, `result` with `denied_actions`) and flag names come from the agy builds the adapter was written against; nobody has run this repo's adapter against a real agy.
-- That the sign-in check works on macOS and Linux (where agy may keep its sign-in somewhere else than on Windows).
-- That deny rules use forward-slash absolute paths on every platform.
+- macOS and Linux (only Windows was run), including where agy keeps its sign-in and that deny rules use forward-slash absolute paths there.
+- Tool calls of agy subagents and browser tools (an unrecognised tool asks the owner, so they aren't silent, but they weren't exercised).
 - Google's terms for consumer plans may not allow wrapping agy in another app; check yours before switching it on.
-
-### Manual verification checklist (not done yet)
-
-1. Set `ORCHY_ANTIGRAVITY=1`, add a test workspace on Antigravity with its own One login and `allowUngated`.
-2. Run a task that writes `.claude/x.md` and reads another workspace's folder: both should come back as refused (the feed shows "denied"), the run's own task folder should work.
-3. Confirm the approval card appears before agy starts, and that Stop ends the agy process tree.
-4. Sign agy in as another Google account: the next run must be refused (`ACCOUNT_MISMATCH`).
 
 ## Ori Harness (launcher)
 
@@ -171,7 +172,7 @@ So in `hermes acp` a file edit, a web fetch or an MCP call can happen without Or
 
 ## Adding a harness (engine adapters)
 
-Every harness is an engine module in `orchestrator/lib/engines/` registered in `index.mjs` (the interface is documented at the top of that file): binary lookup, `install`, `account()`, `profileEnv()`, `mcpConfig()`, `launch()` and `capabilities`. The setup script, the dashboard's setup guide (Tools step) and `npm run check` list every registered engine with found / version / install command / gated. An engine with `capabilities.gated: false` is refused by `startRun` unless the workspace has `allowUngated: true` in `config.json`. An ACP harness can reuse `engines/acp.mjs`. Optional fields: `optIn: 'ENV_NAME'` keeps an engine off until the owner sets that variable to 1 in `.env`; `sharedLogin: true` means one sign-in per computer (every workspace on it must name the same account); `openModels: true` lets an agent name any model id the harness lists. An engine that can't ask mid-run can call `rt.hooks(run, ws).approveRun({ title, message })` to get the owner's OK for the whole run first (Antigravity does).
+Every harness is an engine module in `orchestrator/lib/engines/` registered in `index.mjs` (the interface is documented at the top of that file): binary lookup, `install`, `account()`, `profileEnv()`, `mcpConfig()`, `launch()` and `capabilities`. The setup script, the dashboard's setup guide (Tools step) and `npm run check` list every registered engine with found / version / install command / gated. An engine with `capabilities.gated: false` is refused by `startRun` unless the workspace has `allowUngated: true` in `config.json`. An ACP harness can reuse `engines/acp.mjs`. Optional fields: `optIn: 'ENV_NAME'` keeps an engine off until the owner sets that variable to 1 in `.env`; `sharedLogin: true` means one sign-in per computer (every workspace on it must name the same account); `openModels: true` lets an agent name any model id the harness lists. An engine whose harness only offers a pre-tool hook gets gated through it: `rt.hooks(run, ws).useToolHook(id)` returns the hook script and its credentials file to write into the harness's config, and `hookmap.mjs` maps the hook's payload to the gate's words (Hermes and Antigravity do; see Pre-tool hooks). An engine that can't ask at all can call `rt.hooks(run, ws).approveRun({ title, message })` to get the owner's OK for the whole run first.
 
 ## Updating this file
 

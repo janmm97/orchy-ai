@@ -1305,6 +1305,13 @@ on('POST', '/api/bridge/approval', async (req) => {
   if (v.decision === 'ask') runner.setRunStatus(runner.getRun(b.runId), 'waiting');
   return v;
 });
+// Antigravity's and Hermes's pre-tool hook (mcp/tool-hook.mjs): every tool call, through the same gate. It may hold the
+// request while the owner decides (runner.mjs#toolHook).
+on('POST', '/api/bridge/tool-hook', async (req) => {
+  bridgeAuth(req);
+  const b = await readBody(req);
+  return runner.toolHook({ engine: String(b.engine || ''), sessionId: String(b.sessionId || ''), calls: b.calls, maxWaitMs: b.maxWaitMs });
+});
 on('POST', '/api/bridge/report', async (req) => {
   bridgeAuth(req);
   const b = await readBody(req);
