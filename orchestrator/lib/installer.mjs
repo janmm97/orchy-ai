@@ -36,9 +36,24 @@ export function installScript(e, { win = process.platform === 'win32', dirs = in
   const cmd = engineInstallCmd(e, { win });
   const bin = i.bin || e.id;
   const label = e.label.replace(/\s+/g, ' ');
-  const brokenNote = `${label} installed but won't start: its install didn't finish. ${win && i.winRepair ? 'To finish it, run this, then go back to Orchy and press Re-check:' : "Scroll up for the installer's message, then try again from Orchy."}`;
-  const repairLine = win && i.winRepair ? `\n  Write-Host ${psq(`  ${i.winRepair}`)}` : '';
+  const brokenNote = `${label} installed but won't start: its install didn't finish. Scroll up for the installer's message, then try again from Orchy.`;
   if (win) {
+    // Installing again doesn't help when npm skips the package's setup step (ignore-scripts): the engine's own repair
+    // (winRepair) runs here, once, before giving up. The probe records success inside the try, so a program that
+    // can't start at all (which throws, leaving $LASTEXITCODE as it was) never counts as running.
+    const repair = i.winRepair ? `if ($found -and -not $runs) {
+  Write-Host ''
+  Write-Host ${psq(`${label} installed but won't start: its install didn't finish. Orchy is finishing it:`)} -ForegroundColor Yellow
+  Write-Host ${psq(`> ${i.winRepair}`)}
+  Push-Location
+  ${i.winRepair}
+  Pop-Location
+  $runs = Test-Runs
+}
+` : '';
+    const stillBroken = i.winRepair
+      ? `  Write-Host ${psq(`${label} still won't start. Scroll up for the message; once it's fixed, run this, then press Re-check in Orchy:`)} -ForegroundColor Red\n  Write-Host ${psq(`  ${i.winRepair}`)}`
+      : `  Write-Host ${psq(brokenNote)} -ForegroundColor Red`;
     // the BOM makes Windows PowerShell read it as UTF-8
     return `﻿# Orchy: install ${label}
 $Host.UI.RawUI.WindowTitle = ${psq(`Install ${label}`)}
@@ -48,16 +63,16 @@ ${cmd}
 $env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + ${psq(dirs.join(';'))}
 foreach ($v in @(${PROFILE_VARS.map(psq).join(', ')})) { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }
 $found = [bool](Get-Command ${psq(bin)} -ErrorAction SilentlyContinue)
-$global:LASTEXITCODE = 1
-if ($found) { try { & ${psq(bin)} --version *> $null } catch { } }
-if ($found -and $global:LASTEXITCODE -eq 0) {
+function Test-Runs { $ok = $false; $global:LASTEXITCODE = 0; try { & ${psq(bin)} --version *> $null; $ok = $? -and $global:LASTEXITCODE -eq 0 } catch { }; $ok }
+$runs = $found -and (Test-Runs)
+${repair}if ($runs) {
   Write-Host ''
   Write-Host ${psq(`${label} is installed.${i.signIn ? ' Now sign in to your account (a browser window may open).' : ''}`)} -ForegroundColor Green
 ${i.signIn ? `  ${i.signIn}\n` : ''}  Write-Host ''
   Write-Host 'Done. Go back to Orchy: it notices on its own.' -ForegroundColor Green
 } elseif ($found) {
   Write-Host ''
-  Write-Host ${psq(brokenNote)} -ForegroundColor Red${repairLine}
+${stillBroken}
 } else {
   Write-Host ''
   Write-Host ${psq(`${label} didn't install. Scroll up for the installer's message, then try again from Orchy.`)} -ForegroundColor Red

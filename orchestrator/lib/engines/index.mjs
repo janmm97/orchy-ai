@@ -117,11 +117,11 @@ export function engineRepairCmd(e, { win = process.platform === 'win32' } = {}) 
   return (win && e?.install?.winRepair) || engineInstallCmd(e, { win });
 }
 
-/** What to tell the owner when engineHealth says 'broken'. */
-export function brokenMessage(e, { win = process.platform === 'win32' } = {}) {
+/** What to tell the owner when engineHealth says 'broken'; `then` is what they do once it's fixed. */
+export function brokenMessage(e, { win = process.platform === 'win32', then = 'press Re-check' } = {}) {
   const i = e?.install || {};
   const fix = engineRepairCmd(e, { win });
-  return `${e.label} is on this computer but won't start (${e.bin() || i.bin || e.id}): its install didn't finish.${fix ? ` Run this in a terminal, then press Re-check: ${fix}` : ' Install it again, then press Re-check.'}`;
+  return `${e.label} is on this computer but won't start (${e.bin() || i.bin || e.id}): its install didn't finish.${fix ? ` Run this in a terminal, then ${then}: ${fix}` : ` Install it again, then ${then}.`}`;
 }
 
 /** Every registered engine as a setup-guide row: found / version / install command / gated (setup, the dashboard's Tools step and `npm run check` all read this). */

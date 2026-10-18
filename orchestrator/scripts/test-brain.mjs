@@ -5,7 +5,7 @@ import { route as realRoute } from '../lib/router.mjs';
 import { askViaHarness, firstJson, brainEngine, HERMES_BRAIN_ARGS } from '../lib/brain.mjs';
 import { offlineAnswer } from '../lib/orchy.mjs';
 import { installScript, installBinDirs } from '../lib/installer.mjs';
-import { engine, engineInstallCmd, engineHealth, engineRepairCmd, brokenMessage } from '../lib/engines/index.mjs';
+import { engine, engineInstallCmd, engineHealth, engineRepairCmd, brokenMessage, registerEngine } from '../lib/engines/index.mjs';
 import { loginRun } from '../lib/workspaces.mjs';
 
 let fail = 0;
@@ -76,6 +76,13 @@ const route = (text, opts = {}) => realRoute(text, { workspaces: ONE, agents: AG
   const keep = process.env.ORCHY_BRAIN;
   process.env.ORCHY_BRAIN = 'off';
   ok(brainEngine() === null, 'ORCHY_BRAIN=off: no brain');
+  // a harness that is there but won't start is never the brain: picked by name it's none, else the next that runs
+  const undo = registerEngine({ ...engine('claude'), available: () => true, version: () => null });
+  process.env.ORCHY_BRAIN = 'claude';
+  ok(brainEngine() === null, 'ORCHY_BRAIN=claude but it won’t start: no brain');
+  delete process.env.ORCHY_BRAIN;
+  ok(brainEngine() !== 'claude', 'in order: a harness that won’t start is passed over');
+  undo();
   if (keep === undefined) delete process.env.ORCHY_BRAIN; else process.env.ORCHY_BRAIN = keep;
   ok(['--safe-mode', '--oneshot', '-Q'].every(f => HERMES_BRAIN_ARGS.includes(f)) && HERMES_BRAIN_ARGS[HERMES_BRAIN_ARGS.indexOf('-t') + 1] === 'todo', 'Hermes as the brain: one-shot, safe mode, only its task-list toolset');
 }
@@ -118,6 +125,9 @@ const route = (text, opts = {}) => realRoute(text, { workspaces: ONE, agents: AG
   ok(/postinstall\.mjs/.test(engineRepairCmd(engine('opencode'), { win: true })), 'OpenCode on Windows: rerun its postinstall');
   const ps = installScript(engine('opencode'), { win: true, dirs: [] });
   ok(/\} elseif \(\$found\) \{/.test(ps) && ps.includes("won''t start") && ps.includes('postinstall.mjs') && ps.indexOf('opencode auth login') < ps.indexOf('elseif ($found)'), 'the install window signs in only when it runs, else shows the repair');
+  ok(/if \(\$found -and -not \$runs\) \{[^}]*node postinstall\.mjs[^}]*\$runs = Test-Runs/.test(ps) && ps.indexOf('$runs = Test-Runs') < ps.indexOf('if ($runs) {'), 'a reinstall that still won’t start runs the repair itself and tests again (npm skipping postinstall twice)');
+  ok(/\$global:LASTEXITCODE = 0; try \{ & 'opencode' --version \*> \$null; \$ok = \$\? -and \$global:LASTEXITCODE -eq 0 \} catch \{ \}/.test(ps), 'the probe counts a script launcher that returns normally, never a program that can’t start');
+  ok(!installScript(engine('claude'), { win: true, dirs: [] }).includes('Test-Runs\n}') && !/-not \$runs/.test(installScript(engine('claude'), { win: true, dirs: [] })), 'an engine without a repair command has no repair step');
   const win = loginRun("& 'x' auth login", { win: true });
   ok(/^\$global:LASTEXITCODE = 0\n& 'x' auth login\nif \(\$\? -and \$global:LASTEXITCODE -eq 0\)/.test(win) && win.includes("didn''t finish") && win.includes('Done.'), 'the login window says Done only when the sign-in succeeded (PowerShell)');
   const sh = loginRun("'x' auth login", { win: false });

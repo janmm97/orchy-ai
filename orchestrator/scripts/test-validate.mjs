@@ -333,7 +333,7 @@ try {
     id: 'fakev', label: 'Fake V', models: ['lo', 'mid', 'hi'], blurb: '', fields: { account: 'fakevAccount', profile: 'fakevProfile' },
     accountModel: 'email', instructionFile: 'AGENTS.md', defaultProfileLabel: '(none)',
     capabilities: { gated: true, mcp: true, resume: true, headless: true, clientSafe: false, huddles: false, notes: '' },
-    bin: () => null, version: () => null, available: () => true,
+    bin: () => null, version: () => 'fake 1.0', available: () => true,
     account: async () => ({ loggedIn: true, email: 'x@example.com' }),
     profileEnv: () => ({}), loginCommand: () => 'fake login', loginAlt: () => null, mcpConfig: () => ({}), protocolNotes: () => '',
     launch(run, ws, opts, rt) {

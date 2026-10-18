@@ -46,6 +46,7 @@ fs.writeFileSync(fixture, `
 const fs = require('node:fs'), path = require('node:path');
 const argv = process.argv.slice(2), flag = n => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : null; };
 const email = fs.existsSync(${JSON.stringify(who)}) ? fs.readFileSync(${JSON.stringify(who)}, 'utf8').trim() : 'shared@example.com';
+if (argv.includes('--version')) { console.log('1.0.0-fake'); process.exit(0); } // Orchy checks the program runs before a run
 if (argv.includes('models')) { fs.writeFileSync(flag('--log-file'), 'I1016 OAuth: authenticated successfully as ' + email + '\\n'); console.log('gemini-4-argon-high\\tGemini 4 Argon (High)'); process.exit(0); }
 const out = m => process.stdout.write(JSON.stringify(m) + '\\n');
 let input = '';

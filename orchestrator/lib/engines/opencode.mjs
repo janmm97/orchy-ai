@@ -57,7 +57,7 @@ export default {
   version() {
     const b = bin();
     if (!b) return null;
-    if (!probe || probe.bin !== b || (!probe.v && Date.now() - probe.at > 60_000)) probe = { bin: b, at: Date.now(), v: probeVersion(b) };
+    if (!probe || probe.bin !== b || (!probe.v && Date.now() - probe.at > 5_000)) probe = { bin: b, at: Date.now(), v: probeVersion(b) };
     return probe.v;
   },
   available: () => !!bin(),
