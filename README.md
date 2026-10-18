@@ -280,7 +280,7 @@ Putting them online (Cloudflare Tunnel, Access, and R2 for video) is in [docs/CO
 | **Hermes** | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash`; on Windows (PowerShell) `iex (irm https://hermes-agent.nousresearch.com/install.ps1)` | ✅ yes |
 | **Antigravity** (off by default) | Google's `agy` CLI (see antigravity.google), then `ORCHY_ANTIGRAVITY=1` in `.env` | ✅ yes |
 
-"Gated" means every risky action asks Orchy first. You don't have to type these: **Install** in the dashboard (Add workspace, or Set up Orchy → Tools) runs the right one for your computer in a terminal window, then the sign-in.
+"Gated" means every risky action asks Orchy first. You don't have to type these: **Install** in the dashboard (Add workspace, or Set up Orchy → Tools) runs the right one for your computer in a terminal window, then the sign-in. A harness whose program is there but won't start (an install that didn't finish) shows as **won't start**, with the command that fixes it.
 
 Details, headless commands, config locations, the evidence behind each "gated" answer, [which instructions an agent run reads](docs/HARNESSES.md#which-instructions-an-agent-run-reads) and manual verification checklists are in [docs/HARNESSES.md](docs/HARNESSES.md).
 
@@ -301,6 +301,7 @@ This health check tests each workspace's accounts, the One CLI, Jev, voice, agen
 | A workspace says it is not signed in to One | Workspaces, the workspace, "Sign in to One". |
 | A run is refused for an account mismatch | The harness profile for that workspace is logged into the wrong account: sign in again with the right one. |
 | A workspace "isn't logged in", but you signed in to the harness in a terminal | A plain terminal signs in the computer's profile, not the workspace's. Hermes workspaces use the computer's Hermes sign-in on their own. For OpenCode, or a Claude Code or Codex workspace with its own profile, press **Log in** on the workspace: the window it opens signs in that workspace's profile. Then press Re-check. |
+| A harness shows **won't start**, or Windows says "This version of … opencode.exe is not compatible with the version of Windows you're running" | Its install didn't finish. For OpenCode on Windows, npm skipped the package's setup step (often `npm config get ignore-scripts` is `true`), so a placeholder `opencode.exe` is left in place of the real one. Press **Install** (it installs again and finishes that step itself), or run `cd "$env:APPDATA\npm\node_modules\opencode-ai"; node postinstall.mjs`. Then press Re-check. |
 
 ## Project structure
 
