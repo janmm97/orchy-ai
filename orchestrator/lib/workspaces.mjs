@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { ROOT, DATA_DIR, config, saveConfig, expandPath, env, ownerName, readJson, setAside } from './env.mjs';
 import { one, oneInteractive, listConnections, whoami } from './one.mjs';
-import { engine, engines, engineInfo, registerEngine } from './engines/index.mjs';
+import { engine, engines, engineInfo, registerEngine, engineOffered, offeredRefusal } from './engines/index.mjs';
 import { envPrefix, psq, profilePath } from './engines/shared.mjs';
 import { findBinary } from './claude.mjs';
 export { toClaudeMcp } from './engines/claude.mjs';
@@ -67,9 +67,12 @@ export function enabledWorkspaces() {
   return workspaces().filter(w => w.enabled);
 }
 
-/** What the owner calls a workspace: its id, its name without "Agent", and the aliases saved for it ("acme", "the bakery"). */
+/** "Acme" / "Acme Agent" / "Acme Workspace" → "Acme Workspace": what the owner, Jev, Orchy and every agent call a workspace. */
+export const workspaceName = s => `${String(s || '').trim().replace(/\s+(agent|workspace)$/i, '')} Workspace`;
+
+/** What the owner calls a workspace: its id, its name without "Workspace" (or an older "Agent"), and the aliases saved for it ("acme", "the bakery"). */
 export function handles(ws) {
-  const all = [ws.name.replace(/\s+agent$/i, ''), ws.id, ...(ws.aliases || [])].map(s => String(s || '').trim()).filter(Boolean);
+  const all = [ws.name.replace(/\s+(agent|workspace)$/i, ''), ws.id, ...(ws.aliases || [])].map(s => String(s || '').trim()).filter(Boolean);
   return all.filter((s, i) => all.findIndex(x => x.toLowerCase() === s.toLowerCase()) === i);
 }
 
@@ -133,11 +136,19 @@ export function tierModel(ws, i, runtime = ws.runtime) { const m = modelsFor(ws,
 export function modelFor(ws, model, runtime = ws.runtime) {
   const mine = modelsFor(ws, runtime);
   if (model && mine.includes(model)) return model;
-  if (mine.every(m => m === 'default')) return /^[^/\s]+\/\S+$/.test(String(model || '')) ? model : 'default'; // OpenCode: provider/model or nothing
+  if (mine.every(m => m === 'default')) {
+    const s = String(model || '').trim();
+    if (/^[^/\s]+\/\S+$/.test(s)) return s; // OpenCode / Hermes provider/model
+    const isOtherTier = Object.values(runtimes()).some(rt => rt.models.includes(s));
+    if (!isOtherTier && engine(runtime)?.openModels && /^[\w][\w.:-]{1,79}$/.test(s)) return s;
+    return 'default';
+  }
   for (const rt of Object.values(runtimes())) {
     const i = rt.models.indexOf(model);
     if (i >= 0) return tierModel(ws, i, runtime);
   }
+  // an engine that takes any model id it lists itself (Antigravity: `agy models`): a plain id an agent names passes as is
+  if (model && engine(runtime)?.openModels && /^[\w][\w.:-]{1,79}$/.test(String(model))) return model;
   return mine[1] || mine[0];
 }
 /** The engine an agent runs on: its own `engine` if it pins one, else the workspace's. */
@@ -166,9 +177,9 @@ export function profileClash(ws, runtime = ws.runtime) {
 
 /**
  * Hard guard: never run a workspace under the wrong account (checked for the engine the run uses).
- * 'email' engines (Claude Code, Codex): the profile must be logged in as the workspace's email.
- * 'profile' engines (API-key / provider logins, no email): the workspace needs a profile folder of its own that no
- * other workspace on that engine shares, and that profile must be logged in to a provider (reported as `actual`).
+ * 'email' engines (Claude Code, Codex, Antigravity): the profile must be logged in as the workspace's email.
+ * 'profile' engines (Hermes, OpenCode): the workspace has its own profile folder (and OAuth login), reporting
+ * its provider(s), detected plan/tier, and tier-scoped `availableModels`.
  */
 export async function accountCheck(ws, { force = false, runtime = ws.runtime } = {}) {
   const e = engine(runtime);
@@ -188,8 +199,16 @@ export async function accountCheck(ws, { force = false, runtime = ws.runtime } =
     const status = problem ? { loggedIn: false } : await e.account(a.profileDir, { force });
     const ok = !problem && !!status.loggedIn;
     return {
-      ...base, ok, expected: a.email || (a.profileDir ? configDir : null), actual: status.label || null, loggedIn: !!status.loggedIn, configDir,
-      subscription: status.subscription || null, sandbox: status.sandbox ?? null,
+      ...base, ok, expected: a.email || (a.profileDir ? configDir : null), actual: status.label || null,
+      email: status.email || a.email || null,
+      loggedIn: !!status.loggedIn, configDir,
+      subscription: status.subscription || status.plan || null,
+      plan: status.plan || status.subscription || null,
+      tier: status.tier || null,
+      providers: status.providers || [],
+      availableModels: Array.isArray(status.models) && status.models.length ? status.models : null,
+      configuredModel: status.configuredModel || null,
+      sandbox: status.sandbox ?? null,
       error: problem || status.error || null, profileProblem: problem,
       fix: ok ? null : loginHint(ws, e.id), fixAlt: ok ? null : loginAlt(ws, e.id),
     };
@@ -205,6 +224,9 @@ export async function accountCheck(ws, { force = false, runtime = ws.runtime } =
     loggedIn: !!status.loggedIn,
     configDir,
     subscription: status.subscriptionType || status.subscription || status.plan || null,
+    plan: status.plan || status.subscriptionType || status.subscription || null,
+    tier: status.tier || null,
+    availableModels: Array.isArray(status.models) && status.models.length ? status.models : null,
     sandbox: status.sandbox ?? null,
     error: status.error || (a.email ? null : ws.builtin ? 'Orchy has no Claude Code account set for fixing himself (orchy.claudeAccount in config.json)' : `${ws.name} has no ${runtimeLabel(e.id)} account set (${e.fields.account} in config.json)`),
     fix: ok ? null : loginHint(ws, e.id),
@@ -252,13 +274,18 @@ function openPosixLogin(ws, runtime, a, name, label) {
   const file = path.join(DATA_DIR, `login-${ws.id}${runtime === ws.runtime ? '' : `-${runtime}`}.sh`);
   const intro = `Logging ${name} in to ${label}. ${a.email ? `Sign in as ${a.email} in the browser.` : 'Follow the prompts to sign in.'}`;
   fs.writeFileSync(file, `#!/bin/sh\n# Orchy: log a workspace in to ${label.replace(/\s+/g, ' ')}\nprintf '%s\\n\\n' ${shq(intro)}\n${loginHint(ws, runtime)}\nprintf '\\nDone. Go back to Orchy and press Re-check.\\n'\nexec "\${SHELL:-/bin/sh}"\n`, { mode: 0o700 });
+  openShellWindow(file, loginHint(ws, runtime));
+}
+
+/** Run a shell script in a terminal window on macOS (Terminal) or Linux (the desktop's terminal); none: paste `hint`. */
+export function openShellWindow(file, hint) {
   if (process.platform === 'darwin') {
     const as = s => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`; // an AppleScript string
     spawn('osascript', ['-e', `tell application "Terminal" to do script "sh " & quoted form of ${as(file)}`, '-e', 'tell application "Terminal" to activate'], { detached: true, stdio: 'ignore' }).unref();
     return;
   }
   const term = LINUX_TERMINALS.map(([bin, pre]) => [findBinary(bin), pre]).find(([bin]) => bin);
-  if (!term) throw Object.assign(new Error(`No terminal window to open here. Run this in a terminal: ${loginHint(ws, runtime)}`), { status: 400 });
+  if (!term) throw Object.assign(new Error(`No terminal window to open here. Run this in a terminal: ${hint}`), { status: 400 });
   spawn(term[0], [...term[1], 'sh', file], { detached: true, stdio: 'ignore' }).unref();
 }
 
@@ -447,6 +474,14 @@ export function upsertMcp(ws, name, def) {
   } else {
     if (!def.url) throw Object.assign(new Error('An http/sse server needs a URL'), { status: 400 });
     Object.assign(clean, { url: def.url, headers: def.headers || {} });
+    // a sign-in app the service gave out (mcpauth.mjs): its client ID and the callback port registered for it
+    const clientId = String(def.oauth?.clientId || '').trim();
+    const port = Number(def.oauth?.callbackPort) || null;
+    if (port && (!Number.isInteger(port) || port < 1024 || port > 65535)) throw Object.assign(new Error('Callback port: a number from 1024 to 65535'), { status: 400 });
+    // connection: which login the service opens on (an Auth0 connection name); set in mcp.json, kept through dashboard edits
+    const was = servers[name]?.oauth;
+    const connection = String(def.oauth?.connection ?? (was?.clientId === clientId ? was?.connection || '' : '')).trim();
+    if (clientId) clean.oauth = { clientId, ...(port ? { callbackPort: port } : {}), ...(connection ? { connection } : {}) };
   }
   servers[name] = clean;
   writeMcp(ws, servers);
@@ -493,12 +528,14 @@ export async function testMcp(def) {
     const headers = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...(def.headers || {}) };
     const r1 = await fetch(def.url, { method: 'POST', headers, body: JSON.stringify(init), signal: AbortSignal.timeout(15_000) });
     const sid = r1.headers.get('mcp-session-id');
+    if (r1.status === 401) return { ok: false, needsLogin: true, error: 'HTTP 401: it needs a sign-in. Save it, then press Sign in (or put an API key in Headers).' };
     if (!r1.ok) return { ok: false, error: `HTTP ${r1.status}` };
     const h2 = { ...headers, ...(sid ? { 'mcp-session-id': sid } : {}) };
     await fetch(def.url, { method: 'POST', headers: h2, body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) }).catch(() => {});
     const r2 = await fetch(def.url, { method: 'POST', headers: h2, body: JSON.stringify(list), signal: AbortSignal.timeout(15_000) });
     const text = await r2.text();
-    const jsonText = text.includes('data:') ? text.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5)).pop() : text;
+    // by the reply's type, not its text: plain JSON can say "data:" too (inside a tool's description, say)
+    const jsonText = /event-stream/i.test(r2.headers.get('content-type') || '') ? text.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5)).pop() : text;
     const m = JSON.parse(jsonText);
     return { ok: true, tools: (m.result?.tools || []).map(t => ({ name: t.name, description: (t.description || '').slice(0, 160) })) };
   } catch (e) {
@@ -510,7 +547,7 @@ export async function testMcp(def) {
 export async function allConnections(ws, { force = false } = {}) {
   let oneConns = [], oneError = null;
   const scoped = oneScope(ws).own;
-  if (!scoped) oneError = `${ws.name} isn't signed in to its own One account yet, so One is off here (it would otherwise borrow Orchy's). Sign it in from Workspace → ${ws.name} → Sign in to One.`;
+  if (!scoped) oneError = `${ws.name} isn't signed in to its own One account yet, so One is off here (it would otherwise borrow Orchy's). Sign it in from Workspaces → ${ws.name} → Sign in to One.`;
   else { try { oneConns = await listConnections(ws.dir, { force }); } catch (e) { oneError = e.message; } }
   const mcp = Object.entries(readMcp(ws)).map(([name, s]) => mcpListing(name, s));
   return { one: oneConns, mcp, oneError, oneScoped: scoped };
@@ -550,18 +587,34 @@ function newId(name) {
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/**
+ * An engine with one sign-in per computer (Antigravity): no profile of its own, and every workspace on it names the
+ * same account, so two workspaces can never expect different logins from the one sign-in (accountCheck compares it
+ * with who the harness is signed in as before every run, too).
+ */
+function sharedLoginCheck(eng, email, ownProfile, id) {
+  if (!eng?.sharedLogin) return;
+  if (ownProfile) throw bad(`${eng.label} has one sign-in for the whole computer, so a workspace can’t have an account of its own on it.`);
+  const other = config.workspaces.find(w => w.id !== id && (w.runtime === eng.id || w[eng.fields.account]) && w[eng.fields.account]);
+  const shared = other?.[eng.fields.account];
+  if (shared && shared.toLowerCase() !== String(email).toLowerCase()) throw bad(`${eng.label} on this computer runs as ${shared}, shared by every ${eng.label} workspace. It can’t run as ${email} too.`);
+}
+
 /** Register a new workspace (the folder itself is created by scaffold.mjs). */
 export function addWorkspace({ name, client, blurb, aliases, runtime = 'claude', account, ownProfile = false, allowUngated = false }) {
   const folder = checkFolderName(name);
   fs.mkdirSync(WORKSPACES_DIR, { recursive: true });
   const eng = engine(runtime);
   if (!eng) throw bad(`Unknown engine "${runtime}"`);
+  if (!engineOffered(eng)) throw bad(offeredRefusal(eng));
   const profileOnly = eng.accountModel === 'profile'; // no email: a provider login in a profile folder of its own
   const email = String(account || '').trim();
   if (!profileOnly && !EMAIL.test(email)) throw bad(`Which ${runtimeLabel(runtime)} account should it run as? Give an email address.`);
+  sharedLoginCheck(eng, email, ownProfile, null);
   const id = newId(folder);
   const entry = {
-    id, name: folder,
+    // the folder keeps its own name; the workspace is "<Name> Workspace"
+    id, name: workspaceName(folder),
     client: String(client || '').trim() || folder.replace(/\s+agent$/i, ''),
     blurb: String(blurb || '').trim() || `Work for ${String(client || '').trim() || folder}.`,
     folder: `workspaces/${folder}`, runtime, enabled: true,
@@ -571,9 +624,14 @@ export function addWorkspace({ name, client, blurb, aliases, runtime = 'claude',
     codexAccount: runtime === 'codex' ? email : null,
     codexHome: runtime === 'codex' && ownProfile ? profileDir('codex', id) : null,
     ...(profileOnly ? { [eng.fields.account]: email.slice(0, 80) || null, [eng.fields.profile]: profileDir(eng.id, id) } : {}),
+    ...(eng.sharedLogin ? { [eng.fields.account]: email } : {}),
     ...(allowUngated === true && !eng.capabilities.gated ? { allowUngated: true } : {}),
     createdAt: new Date().toLocaleDateString('en-CA'),
     color: nextInk(inksInUse()), // its own client ink, never one another workspace wears
+    // organised from the start: the builder in I.T. Department, the generalist in Operations; a department named in a
+    // new agent's frontmatter joins this list on its own (resources.mjs#syncHomes)
+    departments: ['Operations', 'I.T. Department'],
+    generalistHome: 'Operations/Generalist',
   };
   // One already has a login for this folder (an earlier workspace of the same name): not this one's until the owner signs it in
   if (oneScope({ dir: path.join(WORKSPACES_DIR, folder) }).own) entry.oneInherited = true;
@@ -594,6 +652,7 @@ export function updateWorkspace(id, patch = {}) {
   if (patch.aliases !== undefined) entry.aliases = checkAliases(parseAliases(patch.aliases), id);
   if (patch.runtime) {
     if (!engine(patch.runtime)) throw bad(`Unknown engine "${patch.runtime}"`);
+    if (patch.runtime !== entry.runtime && !engineOffered(engine(patch.runtime))) throw bad(offeredRefusal(engine(patch.runtime)));
     entry.runtime = patch.runtime;
   }
   const eng = engine(entry.runtime || 'claude');
@@ -601,8 +660,9 @@ export function updateWorkspace(id, patch = {}) {
   if (patch.account !== undefined) {
     const email = String(patch.account || '').trim();
     if (!profileOnly && !EMAIL.test(email)) throw bad('Give the account as an email address');
+    sharedLoginCheck(eng, email, patch.ownProfile, id);
     entry[eng.fields.account] = profileOnly ? email.slice(0, 80) || null : email;
-    if (patch.ownProfile !== undefined && !profileOnly) {
+    if (patch.ownProfile !== undefined && !profileOnly && !eng.sharedLogin) {
       if (eng.id === 'claude') entry[eng.fields.profile] = patch.ownProfile ? (entry[eng.fields.profile] || profileDir(eng.id, id)) : null;
       else entry[eng.fields.profile] = patch.ownProfile ? profileDir(eng.id, id) : null;
     }
@@ -619,7 +679,7 @@ export function updateWorkspace(id, patch = {}) {
   return workspace(id);
 }
 
-/** The owner's tab order (the Workspace window, panes, every workspace list). Ids it leaves out keep their place at the end. */
+/** The owner's tab order (the Workspaces window, panes, every workspace list). Ids it leaves out keep their place at the end. */
 export function reorderWorkspaces(order = []) {
   if (!Array.isArray(order)) throw bad('Give the order as a list of workspace ids');
   const rank = new Map(order.map((id, i) => [String(id), i]));

@@ -48,13 +48,14 @@ async function loadFeed(runId) {
 }
 
 function feedHTML(runId, run) {
-  const evs = (feeds.get(runId) || []).filter(e => e.kind !== 'system' || /Finished|Started/i.test(e.text || ''));
+  // tool_done only closes a step (it feeds the run's activity), so it gets no row of its own
+  const evs = (feeds.get(runId) || []).filter(e => e.kind !== 'tool_done' && (e.kind !== 'system' || /Finished|Started/i.test(e.text || '')));
   return evs.slice(-FEED_MAX).map(evRow).join('') || `<div class="ev placeholder"><span></span><span>${!run || run.status === 'starting' ? 'Starting up…' : run.status === 'waiting' ? 'Paused until you answer.' : 'Working. Each step shows up here as it happens.'}</span><span></span></div>`;
 }
 
 /** A live event for a run: if a pane is showing that run's feed, add the row. */
 export function paneEvent(runId, event) {
-  if (!feeds.has(runId)) return;
+  if (!feeds.has(runId) || event.kind === 'tool_done') return;
   feeds.get(runId).push(event);
   const box = document.querySelector(`[data-feed="${CSS.escape(runId)}"]`);
   if (!box) return;
@@ -89,6 +90,7 @@ function nowCard(wsId, f) {
       <span class="timer" ${live ? `data-start="${esc(run.startedAt)}"` : ''}>${dur((run.endedAt ? Date.parse(run.endedAt) : Date.now()) - Date.parse(run.startedAt))}</span></div>
     <p class="task">${esc(run.instruction)}</p>
     <div class="stagebar"><span>${stripHTML(run)}</span><span class="btnrow">
+      ${run.status === 'queued' || run.status === 'paused-limit' ? `<button class="btn sm primary" data-run-now="${esc(run.id)}">${icon('play')}Run now</button>` : ''}
       ${asks.length ? `<button class="btn sm decide" data-answer="${esc(asks[0].id)}">${icon('bang')}Answer</button>` : ''}<button class="btn sm" data-run="${esc(run.id)}">${icon('eye')}${live ? 'Watch' : 'Full report'}</button>
       ${live ? `<button class="btn sm" data-stop="${esc(run.id)}">${icon('stop')}Stop</button>` : ''}</span></div>
     ${asks.length ? `<div class="asks"><span class="stage">${esc(asks[0].kind === 'approval' ? 'Needs your OK' : asks[0].kind === 'connections' ? 'Pick connections' : 'Asks you')}</span><p>${esc(asks[0].kind === 'approval' ? asks[0].title || asks[0].message : asks[0].message || asks[0].title || '')}</p></div>` : ''}

@@ -40,6 +40,9 @@ ok(!owner.isOwner(req({ key: a.key }), PORT), 'key without the cookie: refused')
 ok(owner.ownerState(req({ key: a.key }), PORT) === 'none', 'key without the cookie reads as none');
 ok(!owner.isOwner(req({ cookie: a.cookie, key: a.key }), 8009), 'the same pair on another port: refused (cookie named for the port)');
 ok(!owner.isOwner(req(), PORT), 'nothing at all: refused');
+// file reads (the viewer's <img>/<video> can't send the key): a paired browser's cookie is enough, nothing else is
+ok(owner.isOwnerBrowser(req({ cookie: a.cookie }), PORT) && owner.isOwnerBrowser(req({ cookie: a.cookie, key: a.key }), PORT), 'file reads: a paired browser’s cookie, with or without the key');
+ok(!owner.isOwnerBrowser(req(), PORT) && !owner.isOwnerBrowser(req({ key: a.key }), PORT) && !owner.isOwnerBrowser(req({ cookie: 'orchy_owner_8008=forged' }), PORT), 'file reads: no cookie, a key alone or an unknown cookie are refused');
 ok(!owner.isOwner(req({ cookie: `other=1; ${a.cookie.replace('orchy_owner_8008', 'orchy_owner_8009')}`, key: a.key }), PORT), 'a cookie for another port: refused');
 
 // ── keys don't mix between browsers ──

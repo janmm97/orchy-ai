@@ -13,10 +13,11 @@ const empty = () => ({
   rules: [],         // remembered "always allow" approvals
   actionCache: {},   // One actionId -> {title, method, path, platform}
   jevDecisions: {},  // actionId or mcp:<tool> -> Jev's decision kind for it (jevdecide.mjs)
-  huddles: {},       // huddleId -> two agents talking a task through (huddle.mjs)
+  huddles: {},       // huddleId -> agents of one workspace talking a task through (huddle.mjs)
+  missions: {},      // missionId -> one ask run by several agents of one workspace in a row (missions.mjs)
   // approvals: 'decisions' = agents run on their own and only money, sending, calendar, deleting and
   // sharing ask the owner (askFor switches each kind); 'all' = every change asks.
-  settings: { voiceReplies: false, sound: true, autoDispatch: true, actionPlan: true, liveJev: true, liveStart: true, approvals: 'decisions', askFor: { money: true, send: true, calendar: true, delete: true, share: true } },
+  settings: { voiceReplies: false, sound: true, autoDispatch: true, actionPlan: true, liveJev: true, liveStart: true, maxLivePerAccount: 3, approvals: 'decisions', askFor: { money: true, send: true, calendar: true, delete: true, share: true } },
 });
 
 /**
@@ -44,9 +45,19 @@ export function save() {
 }
 export function flush() {
   clearTimeout(timer);
+  const payload = JSON.stringify(state, null, 2);
   const tmp = STATE_PATH + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
-  fs.renameSync(tmp, STATE_PATH);
+  try {
+    fs.writeFileSync(tmp, payload);
+    fs.renameSync(tmp, STATE_PATH);
+  } catch (e) {
+    if (e && (e.code === 'EPERM' || e.code === 'EBUSY' || e.code === 'EACCES')) {
+      try { fs.writeFileSync(STATE_PATH, payload); } catch {}
+      try { fs.unlinkSync(tmp); } catch {}
+    } else {
+      throw e;
+    }
+  }
 }
 
 export function db() { return state; }

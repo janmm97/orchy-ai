@@ -5,8 +5,16 @@ import { expandPath } from '../env.mjs';
 // a PowerShell single-quoted string: nothing in it runs ($(…), backticks, ;). PowerShell also closes one at a
 // curly quote, so those are doubled too.
 export const psq = s => `'${String(s ?? '').replace(/['‘’‚‛]/g, '$&$&')}'`;
-/** A POSIX single-quoted string: everything literal. */
-export const sq = s => `'${String(s ?? '').replace(/'/g, `'\''`)}'`;
+/** A POSIX single-quoted string: everything literal (a ' inside becomes '\'', the usual close, escaped quote, reopen). */
+export const sq = s => `'${String(s ?? '').replace(/'/g, `'\\''`)}'`;
+
+/**
+ * A command line a harness runs through its own shell (a hook): POSIX single quotes on macOS and Linux; on Windows
+ * double quotes and forward slashes, which Git Bash, cmd and Claude Code's hook runner all read the same way.
+ */
+export function shellLine(parts, win = process.platform === 'win32') {
+  return parts.map(p => (win ? `"${String(p ?? '').replace(/\\/g, '/').replace(/"/g, '')}"` : sq(p))).join(' ');
+}
 
 /** The env assignments that pick a profile, as a prefix for a pasteable command (PowerShell on Windows, POSIX elsewhere). */
 export function envPrefix(vars, win = process.platform === 'win32') {

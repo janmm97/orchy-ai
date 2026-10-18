@@ -10,7 +10,7 @@
 //   report_done / note   → reports back to Orchy (logged to LOGS.md)
 //   delegate             → a department head hands a task to its team agent (only listed when JOS_TEAM is set)
 //   call_owner             → rings the owner in the dashboard for a live voice call (not in a client's run)
-//   huddle               → a C-suite agent pulls another agent of its workspace into a huddle (only listed when JOS_HUDDLE_WITH is set)
+//   huddle               → a C-suite agent pulls one or more agents of its workspace into a huddle (only listed when JOS_HUDDLE_WITH is set)
 //   huddle_reply         → what the agent says in its turn of a huddle (a huddle turn has only this, note and approval)
 import readline from 'node:readline';
 import { ownerName } from '../lib/env.mjs';
@@ -36,7 +36,8 @@ const HUDDLE_REPLY = {
     type: 'object',
     properties: {
       message: { type: 'string', description: 'What you say to the others: short and concrete, under ~150 words.' },
-      ready: { type: 'boolean', description: 'True once you two agree on what to do and who does it.' },
+      challenge: { type: 'string', description: 'Your pushback this turn, from your role: whose idea you are testing and its weakest point (wrong, missing, risky, too costly, what it needs from your area) or a better option, with your reason. Your ready only counts once you have challenged something, and a new challenge reopens the talk. To dispute a point Orchy raised, name Orchy here.' },
+      ready: { type: 'boolean', description: 'True once the plan has survived your pushback and you all agree on what to do and who does it.' },
       questions_for_owner: { type: 'array', items: { type: 'string' }, description: `Things only ${ownerName()} can answer. They wait for the agreement; don't guess them.` },
       invite: {
         type: 'object',
@@ -58,7 +59,22 @@ const HUDDLE_REPLY = {
             description: `Each agent's part once ${ownerName()} approves.`,
             items: { type: 'object', properties: { agent: { type: 'string', description: 'The agent\'s slug.' }, task: { type: 'string', description: 'A complete task: what to do, with the names, links, IDs and details from the talk.' } }, required: ['agent', 'task'] },
           },
-          questions_for_owner: { type: 'array', items: { type: 'string' } },
+          questions_for_owner: {
+            type: 'array',
+            description: `At most 5 broad questions for ${ownerName()} that together cover every question anyone raised: merge repeats and narrow ones into one general question. Leave out anything ${ownerName()}'s standing rules or the team's settings already answer.`,
+            items: {
+              type: 'object',
+              properties: {
+                question: { type: 'string', description: `One clear question ${ownerName()} can answer in a line.` },
+                why: { type: 'string', description: 'One line: what hangs on it, and which concerns it settles.' },
+                options: { type: 'array', items: { type: 'string' }, description: `2–4 short answers ${ownerName()} can pick from.` },
+                recommended: { type: 'string', description: 'The option you recommend (one of options), if you agree on one.' },
+                covers: { type: 'array', items: { type: 'string' }, description: 'Slugs of the agents whose work the answer changes; empty means everyone.' },
+              },
+              required: ['question'],
+            },
+          },
+          dissent: { type: 'array', items: { type: 'string' }, description: `Each challenge you did not settle: who holds what view, and why. ${ownerName()} decides.` },
         },
         required: ['summary', 'work'],
       },
@@ -140,6 +156,7 @@ const ALL_TOOLS = [
       properties: {
         status: { type: 'string', enum: ['completed', 'partial', 'blocked', 'failed'] },
         summary: { type: 'string', description: 'Detailed, honest summary: what you did, what you found or produced, what you could not do and why.' },
+        result: { type: 'string', description: `When the task was to fetch, find, look up or show something (an email, a message, a list, numbers, an answer): the thing itself, in full, as Markdown (an email: From, To, Date, Subject, then the body as plain text). ${ownerName()} sees it as is, right under the report Orchy gives in the dashboard. Leave out when the task only did something.` },
         actions_taken: { type: 'array', items: { type: 'string' }, description: 'Each meaningful action, e.g. "Sent email to x@y.com via the shared gmail".' },
         outputs: { type: 'array', items: { type: 'string' }, description: 'Links, file paths, IDs, or results produced.' },
         follow_ups: { type: 'array', items: { type: 'string' }, description: `Anything ${ownerName()} should do or decide next.` },
@@ -166,14 +183,15 @@ const ALL_TOOLS = [
   }] : []),
   ...(HUDDLE_WITH.length ? [{
     name: 'huddle',
-    description: `Start a huddle: you and one other agent of this workspace talk something through, turn by turn, and you write up what you agree. Use it when you need another agent's thinking or input before deciding, not to hand off work (that's delegate). You open, and you wait here until it ends (it can take several minutes). Talk only: nothing changes during it, and nothing in the agreement runs until ${ownerName()} approves it in the dashboard. The other agent can't see your conversation, so the topic must stand on its own. Who you can huddle with:\n${HUDDLE_WITH.map(t => `- ${t.slug}: ${t.name}. ${t.does}`).join('\n')}`,
+    description: `Start a huddle: you and one or more other agents of this workspace talk something through, turn by turn, challenging each other's proposals from your roles, and you write up what you agree. Use it when you need other agents' thinking or input before deciding, not to hand off work (that's delegate). You open, and you wait here until it ends (it can take several minutes, longer with more agents). Talk only: nothing changes during it, and nothing in the agreement runs until ${ownerName()} approves it in the dashboard. The others can't see your conversation, so the topic must stand on its own. Who you can huddle with:\n${HUDDLE_WITH.map(t => `- ${t.slug}: ${t.name}. ${t.does}`).join('\n')}`,
     inputSchema: {
       type: 'object',
       properties: {
-        agent: { type: 'string', enum: HUDDLE_WITH.map(t => t.slug), description: 'The other agent\'s slug.' },
-        topic: { type: 'string', description: 'What the two of you should work out, complete and self-contained: the goal, the context and facts from your task (names, links, IDs), what you need from them, and the decision to reach.' },
+        agents: { type: 'array', items: { type: 'string', enum: HUDDLE_WITH.map(t => t.slug) }, minItems: 1, description: 'The other agents\' slugs: everyone whose view the decision needs.' },
+        agent: { type: 'string', enum: HUDDLE_WITH.map(t => t.slug), description: 'Older form: one other agent\'s slug. Use agents.' },
+        topic: { type: 'string', description: 'What you should work out together, complete and self-contained: the goal, the context and facts from your task (names, links, IDs), what you need from them, and the decision to reach.' },
       },
-      required: ['agent', 'topic'],
+      required: ['topic'],
     },
   }] : []),
   ...(PERSON === ownerName() && !process.env.JOS_NO_CALL ? [{
@@ -311,12 +329,12 @@ Check this before you rely on it, and say in your report_done what you handed to
       const list = (label, xs) => (xs?.length ? `\n${label}:\n${xs.map(x => `- ${x}`).join('\n')}` : '');
       if (r.status === 'agreed' && r.agreement) {
         const g = r.agreement;
-        return text(`Your huddle with ${st.with} ended in an agreement (${r.turns} turns, huddle ${st.huddleId}${r.taskDir ? `, transcript Tasks/${r.taskDir}/HUDDLE.md` : ''}).
-Summary: ${g.summary}${list('Decisions', g.decisions)}${list(`Work once ${ownerName()} approves`, (g.work || []).map(w => `${w.agent}: ${w.task}`))}${list(`Questions for ${ownerName()}`, g.questions_for_owner)}
+        return text(`Your huddle with ${st.with} ended in an agreement (${r.turns} turns, huddle ${st.huddleId}${r.taskDir ? `, transcript ${r.taskRel || `Tasks/${r.taskDir}`}/HUDDLE.md` : ''}).
+Summary: ${g.summary}${list('Decisions', g.decisions)}${list(`Work once ${ownerName()} approves`, (g.work || []).map(w => `${w.agent}: ${w.task}`))}${list(`Questions for ${ownerName()}`, g.questions_for_owner)}${list(`Still contested (${ownerName()} decides)`, g.dissent)}
 
 It's waiting for ${ownerName()} in the dashboard. Nothing in it runs until ${ownerName()} approves; then each part starts as its own run (yours resumes the huddle). Don't do that work here. Carry on with the rest of your task, and say in report_done that the agreement is waiting for ${ownerName()}.`);
       }
-      return text(`Your huddle with ${st.with} ended without an agreement: ${r.status}${r.note ? ` (${r.note})` : ''}. ${ownerName()} can pick it up again from the huddle window. Carry on without it, and say so in report_done.`);
+      return text(`Your huddle with ${st.with} ended without an agreement: ${r.status}${r.note ? ` (${r.note})` : ''}${r.taskDir ? ` (transcript ${r.taskRel || `Tasks/${r.taskDir}`}/HUDDLE.md)` : ''}. ${ownerName()} can pick it up again from the huddle window. Carry on without it, and say so in report_done.`);
     }
     case 'call_owner': {
       let c;

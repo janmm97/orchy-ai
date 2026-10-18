@@ -1,7 +1,10 @@
-// <workspace>/Tasks: every task a workspace's generalist does gets its own folder there, holding the
-// files it made for the task plus TASK.md, the record Orchy writes when it finishes (follow-ups add
-// a round to the same file). Every agent in that workspace is told to look here (prompts.mjs).
-// A client's tasks live in the client's own corner instead (<workspace>/.clients/<id>/Tasks, clientspace.mjs).
+// Task folders: every task gets its own folder, holding the files made for it plus TASK.md, the record Orchy writes
+// when it finishes (follow-ups add a round to the same file). Where the folder opens:
+//   - an agent's task: its home's Tasks (`Marketing/Writer/Tasks`); the generalist's: `generalistHome`'s;
+//   - a huddle or a mission: the lead's department's Tasks (`Marketing/Tasks`);
+//   - a workspace or agent without homes: `<workspace>/Tasks`;
+//   - a client's task: the client's own corner (<workspace>/.clients/<id>/Tasks, clientspace.mjs), always.
+// The record keeps where it opened (`taskRoot`, relative to the workspace) next to its folder name (`taskDir`).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,13 +12,29 @@ import { db } from './store.mjs';
 import { config, ROOT, ownerName } from './env.mjs';
 import { itemsForRun } from './inbox.mjs';
 import { fmtTime, STATUS, bullets, qaLines } from './logs.mjs';
-import { clientHome } from './clientspace.mjs';
+import { clientHome, tasksBase, taskRootRel } from './clientspace.mjs';
+import { getAgent, homeOf, departmentOf } from './agents.mjs';
 
 export const tasksDir = ws => path.join(ws.dir, 'Tasks');
 export const isGeneralist = run => !run.agentSlug && !run.isBuilder;
-/** Runs that keep a task folder: the generalist's, and every client's. */
-export const hasTaskDir = run => !run.backend && (isGeneralist(run) || !!run.client); // Orchy fixing himself keeps no Tasks/ in the Orchy folder
-const rootFor = (ws, run) => (run.client ? path.join(clientHome(ws, run.client), 'Tasks') : tasksDir(ws));
+/** Runs that keep a task folder: task runs (generalist, specialist, handed over) and every client's. */
+export const hasTaskDir = run => !run.backend && !run.huddleTalk && !run.isBuilder; // Orchy fixing himself, huddle talk turns and agent builds keep no TASK.md folder
+const rootFor = tasksBase;
+
+/**
+ * The Tasks folder a new task opens in, relative to the workspace: its agent's home (`agentSlug`; none = the
+ * generalist), or for a huddle or a mission the department of its `lead`; `Tasks` while there are no homes.
+ */
+export function taskRootFor(ws, { agentSlug = null, lead = null } = {}) {
+  const find = slug => { try { return getAgent(ws.id, slug); } catch { return null; } };
+  if (lead) {
+    const dept = departmentOf(ws, find(lead));
+    return dept ? `${dept}/Tasks` : 'Tasks';
+  }
+  const agent = agentSlug ? find(agentSlug) : null;
+  const home = agentSlug && !agent ? null : homeOf(ws, agent);
+  return home ? `${home}/Tasks` : 'Tasks';
+}
 /** Whose words a round is. */
 const askerOf = run => (run.client && !run.ownerReply ? run.clientName : ownerName());
 
@@ -28,13 +47,18 @@ function folderName(run) {
   return `${day}-${words.join('-') || 'task'}`.slice(0, 64).replace(/-+$/, '');
 }
 
-/** A new folder for a task (a follow-up keeps its parent's). Returns its name inside Tasks/. */
+/**
+ * A new folder for a task (a follow-up keeps its parent's, in the parent's Tasks). Sets `run.taskRoot` (not for a
+ * client's) and returns the folder's name inside it.
+ */
 export function openTaskDir(ws, run, parent) {
-  const root = rootFor(ws, run);
   if (parent?.taskDir && parent.workspace === ws.id && (parent.client || null) === (run.client || null)) {
-    fs.mkdirSync(path.join(root, parent.taskDir), { recursive: true });
+    if (!run.client) run.taskRoot = taskRootRel(parent);
+    fs.mkdirSync(path.join(rootFor(ws, run), parent.taskDir), { recursive: true });
     return parent.taskDir;
   }
+  if (!run.client) run.taskRoot = taskRootFor(ws, run);
+  const root = rootFor(ws, run);
   const base = folderName(run);
   let name = base;
   for (let n = 2; fs.existsSync(path.join(root, name)); n++) name = `${base}-${n}`;
@@ -67,7 +91,9 @@ ${String(run.instruction).trim().split('\n').map(l => `> ${l}`).join('\n')}
 
 ### What was done`}
 
-${summary || said || run.error || (run.outcome === 'stopped' ? `${run.stoppedBy || ownerName()} stopped this before ${run.agentName} reported back.` : `${run.agentName} finished without writing a summary.`)}
+${r.result ? `${String(r.result).trim()}
+
+` : ''}${summary || said || run.error || (run.outcome === 'stopped' ? `${run.stoppedBy || ownerName()} stopped this before ${run.agentName} reported back.` : `${run.agentName} finished without writing a summary.`)}
 
 **Actions taken**
 ${bullets(r.actions_taken)}
@@ -98,10 +124,11 @@ function pcScrub(ws, run) {
     .replace(/(?<=^|[\s'"`(=])\/(?:[A-Za-z]\/)?(?:Users|home)\/[^\s'"`)\]]*/g, '…');
 }
 
-/** Write Tasks/<folder>/TASK.md from every round of the task so far. */
+/** Write <Tasks>/<folder>/TASK.md from every round of the task so far. */
 export function saveTask(run, ws) {
-  if (!run.taskDir) return null;
-  const rounds = Object.values(db().runs).filter(r => r.workspace === ws.id && r.taskDir === run.taskDir && (r.client || null) === (run.client || null))
+  // a mission's steps share one folder: the mission writes its TASK.md (missions.mjs#writeTask), not each step
+  if (!run.taskDir || run.missionId) return null;
+  const rounds = Object.values(db().runs).filter(r => r.workspace === ws.id && r.taskDir === run.taskDir && (r.client || null) === (run.client || null) && taskRootRel(r) === taskRootRel(run))
     .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
   const first = rounds[0] || run, last = rounds[rounds.length - 1] || run;
   const status = last.report?.status || last.outcome || last.status;

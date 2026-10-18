@@ -28,7 +28,7 @@ ok(!r.asked.some(a => a.startsWith('key:')), 'no key is asked for when both answ
 
 // voice with ElevenLabs, Jev with TypeSafe
 r = await run({ answers: [true, 0, true, 0, 1], keys: { ELEVENLABS_API_KEY: 'el', TYPESAFE_API_KEY: 'ts' } });
-ok(r.store.VOICE_ENABLED === '1' && r.store.ELEVENLABS_API_KEY === 'el' && !('DEEPGRAM_API_KEY' in r.store), 'Voice, ElevenLabs: only its key is asked and saved');
+ok(r.store.VOICE_ENABLED === '1' && r.store.VOICE_PROVIDER === 'elevenlabs' && r.store.ELEVENLABS_API_KEY === 'el' && !('DEEPGRAM_API_KEY' in r.store), 'Voice, ElevenLabs: only its key is asked and saved, and it is the voice');
 ok(r.store.TYPESAFE_API_KEY === 'ts' && r.store.JEV_PROVIDER === 'typesafe', 'Jev, [1] TypeSafe: key saved, provider set');
 ok(r.store.SETUP_SCRIPTS === 'off', 'scripts: Off');
 
@@ -107,6 +107,25 @@ status = 401; ok(await CHECKS.TYPESAFE_API_KEY('K') === 'bad', '401: the key is 
 status = 403; ok(await CHECKS.OPENROUTER_API_KEY('K') === 'bad', '403: the key is refused');
 status = 500; ok(/answered 500/.test(await CHECKS.DEEPGRAM_API_KEY('K')), 'a server error: couldn’t check (saved anyway)');
 status = 0; ok(/offline/.test(await CHECKS.ELEVENLABS_API_KEY('K')), 'no connection: couldn’t check (saved anyway)');
+
+// the launcher: this computer's one is copied from launchers/ into the Orchy folder, the others aren't
+{
+  const fs = await import('node:fs'), os = await import('node:os'), path = await import('node:path');
+  const { placeLauncher } = await import('../../scripts/setup.mjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'orchy-launch-'));
+  fs.mkdirSync(path.join(root, 'launchers'));
+  for (const n of ['Start Orchy.cmd', 'Start Orchy.command', 'Start Orchy.sh']) fs.writeFileSync(path.join(root, 'launchers', n), `${n}\nline 2\n`);
+  ok(placeLauncher(root, 'win32') === 'made' && fs.readFileSync(path.join(root, 'Start Orchy.cmd'), 'utf8') === 'Start Orchy.cmd\r\nline 2\r\n', 'Windows: Start Orchy.cmd copied to the Orchy folder, with CRLF');
+  ok(!fs.existsSync(path.join(root, 'Start Orchy.command')) && !fs.existsSync(path.join(root, 'Start Orchy.sh')), 'Windows: only its own launcher is copied');
+  ok(placeLauncher(root, 'win32') === 'same', 'run again: left as it is');
+  fs.appendFileSync(path.join(root, 'launchers', 'Start Orchy.cmd'), 'line 3\n');
+  ok(placeLauncher(root, 'win32') === 'updated', 'launchers/ changed (a pull): the copy is refreshed');
+  ok(placeLauncher(root, 'darwin') === 'made' && fs.readFileSync(path.join(root, 'Start Orchy.command'), 'utf8') === 'Start Orchy.command\nline 2\n', 'macOS: Start Orchy.command copied as it is');
+  ok(placeLauncher(root, 'linux') === 'made' && fs.existsSync(path.join(root, 'Start Orchy.sh')), 'Linux: Start Orchy.sh copied');
+  fs.rmSync(path.join(root, 'launchers'), { recursive: true });
+  ok(placeLauncher(root, 'linux') === 'missing', 'no launchers folder: nothing to copy');
+  fs.rmSync(root, { recursive: true, force: true });
+}
 
 console.log(fail ? `\n${fail} failed` : '\nall setup checks passed');
 process.exit(fail ? 1 : 0);

@@ -6,13 +6,16 @@ import { icon, orchySVG, agentSVG, createEl } from './pixel.mjs';
 import { esc, md, timeShort, dateTime, dur, setTimezone } from './util.mjs';
 import { fileTray } from './attach.mjs';
 import { initCalls, startCall, callingWith } from './clientcall.mjs';
+import { configureViewer, mountViewer, artifactChanged, kindIcon } from './viewer.mjs';
 
 const token = location.pathname.split('/')[2] || '';
 const BASE = `/c/${token}/api`;
 const LIVE = new Set(['starting', 'working', 'waiting', 'stopping']);
 const FEED_MAX = 40;
+// the same file viewer as the owner's dashboard, on this page's own routes: only this client's files (portal.mjs → clientview.mjs)
+configureViewer({ base: `${BASE}/artifacts`, client: true });
 
-const S = { client: null, agents: [], runs: new Map(), inbox: new Map(), pick: null, maxLive: 3, feeds: new Map(), files: new Map(), calls: false, owner: '' };
+const S = { client: null, agents: [], runs: new Map(), inbox: new Map(), pick: null, maxLive: 3, feeds: new Map(), files: new Map(), arts: new Map(), calls: false, owner: '' };
 /** Who runs this workspace, as the page says it (the state may carry `owner`, else "the owner"). */
 const host = () => S.owner || 'the owner';
 const drafts = {}; // what they've typed, kept through re-renders: key -> text
@@ -268,8 +271,23 @@ function taskHTML(r) {
         <div class="btnrow end">${callBtn(agentOf(r.agent))}${trayFor(`fu-${r.id}`).button()}<button class="btn primary" data-reply="${esc(r.id)}" ${S.client.open ? '' : 'disabled'}>${icon('send')}Send follow-up</button></div></div>` : ''}`;
 }
 
-/** The task's folder: what they attached and what the agent made, each a download. */
+/** The task's files: what the agent made and what they attached, each opens the viewer (downloads from there). */
+const KIND_WORD = { image: 'Image', pdf: 'PDF', video: 'Video', audio: 'Audio', markdown: 'Text', text: 'Text', code: 'Code', json: 'Data', csv: 'Table', sheet: 'Spreadsheet', doc: 'Document', slides: 'Slides', html: 'Web page', other: 'File' };
+const uploadedArt = a => /^Tasks\/[^/]+\/files\//i.test(a.rel || '');
+function artRow(a) {
+  const th = a.media?.thumb ? `<img src="${esc(`${BASE}/artifacts/${encodeURIComponent(a.id)}/media/thumb?v=${a.version}`)}" alt="" loading="lazy">` : icon(kindIcon(a.kind));
+  return `<button type="button" class="vfile" data-art="${esc(a.id)}"><span class="th" aria-hidden="true">${th}</span><span class="nm"><b>${esc(a.name)}</b><span>${esc(KIND_WORD[a.kind] || 'File')}${a.status === 'draft' ? ' · draft' : ''}</span></span><span class="tag">${fsize(a.size || 0)}</span></button>`;
+}
 function filesHTML(r) {
+  const arts = S.arts.get(r.id);
+  if (arts?.length) {
+    const made = arts.filter(a => !uploadedArt(a) && a.name !== 'TASK.md'), given = arts.filter(uploadedArt);
+    if (!made.length && !given.length) return '';
+    return `<section class="tfiles"><h2>Files</h2>
+      ${made.length ? `<span class="label">Made for this task</span><div class="vfiles">${made.map(artRow).join('')}</div>` : ''}
+      ${given.length ? `<span class="label">Attached</span><div class="vfiles">${given.map(artRow).join('')}</div>` : ''}</section>`;
+  }
+  // the viewer's list isn't there (yet): the folder's files, each a download
   const list = S.files.get(r.id) || [];
   if (!list.length) return '';
   const made = list.filter(f => !f.uploaded && f.name !== 'TASK.md');
@@ -282,19 +300,61 @@ function filesHTML(r) {
 
 /** A result line: a web link, a file from the task's folder (downloadable), or plain text. */
 function outLink(r, o) {
+  const arts = S.arts.get(r.id) || [];
+  const a = arts.find(x => o === x.rel || o.endsWith(`/${x.rel}`)) || arts.find(x => o === x.name || o.endsWith(`/${x.name}`));
+  if (a) return `<a href="#" data-art="${esc(a.id)}">${esc(a.name)}</a>`;
   const f = (S.files.get(r.id) || []).find(x => o === x.path || o.endsWith(`/${x.path}`));
   return f ? `<a href="${esc(fileURL(r.id, f.path))}" target="_blank" rel="noopener noreferrer">${esc(f.name)}</a>` : linkify(o);
 }
 
 async function loadFiles(rid) {
-  try { S.files.set(rid, await api(`/runs/${encodeURIComponent(rid)}/files`)); } catch { return; }
-  if (currentTask() === rid) renderTask();
+  const [files, arts] = await Promise.all([
+    api(`/runs/${encodeURIComponent(rid)}/files`).catch(() => null),
+    api(`/artifacts?run=${encodeURIComponent(rid)}`).catch(() => null),
+  ]);
+  if (files) S.files.set(rid, files);
+  if (arts) S.arts.set(rid, arts.artifacts || []);
+  if ((files || arts) && currentTask() === rid) renderTask();
+}
+
+// ── the file viewer: a sheet over the page (Esc or Close shuts it) ──
+let sheet = null;
+function openFile(rid, aid) {
+  const list = S.arts.get(rid) || [];
+  const art = list.find(a => a.id === aid);
+  if (!art) return;
+  if (!sheet) {
+    const dlg = createEl(`<dialog class="cview" aria-labelledby="cv-t"><div class="cvbar"><b id="cv-t"></b><button type="button" class="btn sm" data-cv="close">${icon('x')}Close</button></div><div class="cvbody"></div></dialog>`);
+    document.body.appendChild(dlg);
+    sheet = { dlg, root: dlg.querySelector('.cvbody'), handle: null };
+    dlg.querySelector('[data-cv="close"]').addEventListener('click', () => dlg.close());
+    dlg.addEventListener('close', () => { sheet.handle?.close(); sheet.handle = null; dlg.classList.remove('large'); });
+  }
+  const { dlg } = sheet;
+  // "Open large" fills the screen; windows and pop-outs are the owner's dashboard only
+  const frame = { setTitle: t => { dlg.querySelector('#cv-t').textContent = t; }, get popped() { return dlg.classList.contains('large'); }, popOut: () => dlg.classList.add('large'), popIn: () => dlg.classList.remove('large') };
+  if (!dlg.open) dlg.showModal();
+  sheet.handle = mountViewer(sheet.root, { artifact: art, list, frame });
+}
+/** artifact.updated from the stream (already scrubbed and only theirs): the list and an open viewer follow. */
+function artUpdated(a) {
+  let redraw = false;
+  for (const [rid, list] of S.arts) {
+    const i = list.findIndex(x => x.id === a.id);
+    const was = i >= 0 ? list[i] : null;
+    if (was) list[i] = a; else if (a.runId === rid) list.unshift(a);
+    const sig = x => x && [x.version, x.status, x.size, x.media?.thumb].join('|');
+    if (rid === currentTask() && sig(was) !== sig(a)) redraw = true;
+  }
+  artifactChanged(a);
+  if (redraw) renderTask();
 }
 
 function wireTask(box) {
   wireNeeds(box);
   wireCall(box);
   box.querySelector('[data-back]')?.addEventListener('click', () => { location.hash = ''; });
+  box.querySelectorAll('[data-art]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); openFile(currentTask(), b.dataset.art); }));
   box.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => { location.hash = `task=${b.dataset.open}`; }));
   box.querySelector('[data-stop]')?.addEventListener('click', async e => {
     const btn = e.currentTarget;
@@ -404,6 +464,7 @@ function onEvents() {
   on('inbox.created', itemChanged);
   on('inbox.answered', itemChanged);
   on('inbox.expired', itemChanged);
+  on('artifact.updated', ({ artifact }) => artUpdated(artifact));
   on('refresh', () => load().catch(() => {}));
   on('revoked', () => { es.close(); location.reload(); });
   let dropped = false;

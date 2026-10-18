@@ -15,7 +15,8 @@ import { engine } from './engines/index.mjs';
 const canHuddleOn = (ws, pin) => !!engine(engineFor(ws, pin))?.capabilities.huddles;
 
 export const MAX_LIVE_SUBRUNS = 3;
-const LIVE = new Set(['starting', 'working', 'waiting', 'stopping']);
+// a hand-off waiting in its account's queue (runner.mjs) still counts as one of the head's live hand-offs
+const LIVE = new Set(['queued', 'paused-limit', 'starting', 'working', 'waiting', 'stopping']);
 const no = (msg, status = 403) => Object.assign(new Error(msg), { status });
 
 /** This workspace's agents shared with a client (switched off or not): delegation never reaches them. */
@@ -94,11 +95,11 @@ export function huddlePartners(run) {
 }
 
 // ── Agents a huddle's agents may bring in mid-talk (huddle_reply `invite`; huddle.mjs#bringIn) ──
-export const MAX_HUDDLE_AGENTS = 4;
+// no cap on how many: every eligible agent of the workspace may end up in the room (the turn budget grows with them)
 
-/** The agents of a huddle's workspace that could join it now: not in it yet, not shared with a client, Claude Code. */
+/** The agents of a huddle's workspace that could join it now: not in it yet, not shared with a client, on an engine that can huddle. */
 export function huddleInvitees(h) {
-  if (!h || (h.agents || []).length >= MAX_HUDDLE_AGENTS) return [];
+  if (!h) return [];
   let ws;
   try { ws = workspace(h.workspace); } catch { return []; }
   const shared = clientSharedSlugs(ws.id);

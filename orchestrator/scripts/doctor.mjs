@@ -9,6 +9,7 @@ import { CLAUDE_BIN, claudeVersion } from '../lib/claude.mjs';
 import { engines, engineTools } from '../lib/engines/index.mjs';
 import { listAgents } from '../lib/agents.mjs';
 import { clients, clientBase, CLIENT_PORT } from '../lib/clients.mjs';
+import { ffBins } from '../lib/media.mjs';
 
 let failed = 0;
 const ok = (m) => console.log(`  ✔ ${m}`);
@@ -20,6 +21,11 @@ console.log('\nOrchy health check\n');
 console.log('System');
 Number(process.versions.node.split('.')[0]) >= 20 ? ok(`Node ${process.version}`) : bad(`Node ${process.version} is too old`, 'Orchy needs Node 20 or newer: https://nodejs.org');
 fs.existsSync(path.join(ORCH_DIR, 'config.json')) ? ok('config.json present') : off('No config.json yet (Orchy creates it the first time it starts)');
+{
+  const ff = ffBins();
+  ff ? ok(`ffmpeg: ${ff.ffmpeg} (thumbnails, video posters and playable copies in the file viewer)`)
+    : off('ffmpeg: not found (optional: files still open; install it for thumbnails, video posters and playable copies, or set FFMPEG_PATH)');
+}
 
 console.log('\nAgent harnesses (at least one is needed)');
 // every engine the registry knows: found / version / install command / gated
@@ -45,7 +51,7 @@ else {
     const w = await one(['whoami'], { cwd: ROOT, timeoutMs: 20_000 });
     const who = w.email || w.user?.email || w.organization?.name || w.org?.name || w.raw;
     who ? ok(`whoami (in this folder): ${typeof who === 'string' ? who.split('\n')[0] : JSON.stringify(who)}`) : off('whoami answered, but with no account name');
-  } catch (e) { warn(`whoami failed: ${e.message.split('\n')[0]}`, 'Sign in at https://app.withone.ai/sign-in, then Orchy → Workspace → your workspace → Sign in to One'); }
+  } catch (e) { warn(`whoami failed: ${e.message.split('\n')[0]}`, 'Sign in at https://app.withone.ai/sign-in, then Orchy → Workspaces → your workspace → Sign in to One'); }
 }
 
 console.log('\nAccounts (must never mix)');
@@ -65,9 +71,9 @@ console.log('\nOne connections per folder');
 try { const c = await listConnections(ROOT, { force: true }); ok(`Orchestrator (root): ${c.length} connections`); }
 catch (e) { off(`Orchestrator (root): ${e.message.split('\n')[0]} (only needed for Orchy's own One use)`); }
 for (const ws of workspaces()) {
-  if (!oneScope(ws).own) { bad(`${ws.name}: not signed in to its own One account (One is blocked there until it is)`, `Workspace → ${ws.name} → Sign in to One`); continue; }
+  if (!oneScope(ws).own) { bad(`${ws.name}: not signed in to its own One account (One is blocked there until it is)`, `Workspaces → ${ws.name} → Sign in to One`); continue; }
   try { const c = await listConnections(ws.dir, { force: true }); ok(`${ws.name}: ${c.length} connections`); }
-  catch (e) { bad(`${ws.name}: ${e.message}`, 'Run `one init --auth browser --project` in that folder (Workspace → Sign in to One)'); }
+  catch (e) { bad(`${ws.name}: ${e.message}`, 'Run `one init --auth browser --project` in that folder (Workspaces → Sign in to One)'); }
 }
 for (const r of listRetired()) off(`${r.name}: retired ${String(r.retiredAt).slice(0, 10)} → Retired/${r.archivedFolder}${r.dirExists ? '' : ' (folder missing)'}`);
 
@@ -101,10 +107,10 @@ console.log('\nClient pages');
 const base = clientBase();
 for (const c of clients()) {
   const tag = `${c.name} → ${c.agents.join(', ')} in ${c.workspace}${c.enabled === false ? ' (switched off)' : ''}`;
-  if (!c.email && /^https:/.test(base)) bad(`${tag}: no email, so Cloudflare Access can't be matched to them`, `Workspace → ${c.workspace} → Client access → Edit`);
+  if (!c.email && /^https:/.test(base)) bad(`${tag}: no email, so Cloudflare Access can't be matched to them`, `Workspaces → ${c.workspace} → Client access → Edit`);
   else ok(tag);
 }
-if (!clients().length) off('No client links yet (Workspace → a workspace → Client access)');
+if (!clients().length) off('No client links yet (Workspaces → a workspace → Client access)');
 /^https:/.test(base) ? ok(`Online at ${base} (port ${CLIENT_PORT()})`) : off(`Only on this PC: ${base}. README → Client pages puts them online.`);
 
 console.log(`\nDashboard: http://localhost:${env('PORT', '8008')}  ·  timezone ${config.timezone}${failed ? `  ·  ${failed} problem${failed === 1 ? '' : 's'} above` : ''}\n`);

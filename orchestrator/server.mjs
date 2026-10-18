@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { ROOT, DASHBOARD_DIR, env, setEnv, reloadEnv, config, ownerName, saveConfig } from './lib/env.mjs';
 import { db, save, flush, id } from './lib/store.mjs';
 import { post, ensureSession, getSession, updateSession, listSessions, publicSession, sessionChat, recentChat, sweepSessions, migrateChat } from './lib/sessions.mjs';
-import { bus, emit, attachSSE } from './lib/bus.mjs';
+import { bus, emit, attachSSE, cursor as busCursor } from './lib/bus.mjs';
 import {
   workspaces, workspace, accountCheck, allConnections, identity, readMcp, shownMcp, upsertMcp, removeMcp, testMcp, loginHint,
   runtimes, runtimeLabel, modelsFor, modelFor, oneScope, oneLoginStatus, startOneLogin, oneAddStatus, startOneAdd, openLoginWindow, runtimeAvailability,
@@ -18,7 +18,8 @@ import { listPlatforms } from './lib/one.mjs';
 import { toolStatus } from './lib/setupcheck.mjs';
 import { quickClaude } from './lib/claude.mjs';
 import { engine, engines } from './lib/engines/index.mjs';
-import { listAgents, getAgent, saveAgent, deleteAgent, BUILDER_SLUG } from './lib/agents.mjs';
+import { listAgents, getAgent, saveAgent, deleteAgent, BUILDER_SLUG, departmentsOf } from './lib/agents.mjs';
+import { syncAllResources } from './lib/resources.mjs';
 import { route, remodel, earlierRuns } from './lib/router.mjs';
 import { quickStatus } from './lib/status.mjs';
 import { jevMode, jevLabel } from './lib/jev.mjs';
@@ -28,9 +29,8 @@ import * as inbox from './lib/inbox.mjs';
 import { addRule, removeRule, DECISIONS } from './lib/policy.mjs';
 import { gate, runCtx, resolveAction } from './lib/gate.mjs';
 import { pickTools } from './lib/toolpick.mjs';
-import { readLogs } from './lib/logs.mjs';
-import { impact } from './lib/impact.mjs';
-import { writeMonthly, listMonthly, startMonthly, REPORTS_DIR } from './lib/monthly.mjs';
+import { readLogs, computeUsage } from './lib/logs.mjs';
+import { weeklyReview, startUsageReview, usageBrief, REVIEW_DAYS } from './lib/usagereview.mjs';
 import * as orchy from './lib/orchy.mjs';
 import * as voice from './lib/voice.mjs';
 import * as voiceAgents from './lib/voiceagents.mjs';
@@ -40,13 +40,23 @@ import { clients, clientById, addClient, updateClient, rotateLink, removeClient,
 import { startPortal } from './portal.mjs';
 import { saveUpload, uploadInfo, publicUpload, handToWorkspace, withFiles } from './lib/uploads.mjs';
 import { taskFiles, taskFile, sendTaskFile, removeHome } from './lib/clientspace.mjs';
+import { r2Status } from './lib/r2.mjs';
+import * as mcpAuth from './lib/mcpauth.mjs';
+import * as artifacts from './lib/artifacts.mjs';
+import * as media from './lib/media.mjs';
+import * as validate from './lib/validate.mjs';
+import * as recover from './lib/recover.mjs';
 import { checkDelegation } from './lib/delegation.mjs';
 import * as liveJev from './lib/livejev.mjs';
 import * as huddles from './lib/huddle.mjs';
+import * as standingRules from './lib/rules.mjs';
+import { COACH } from './lib/huddlecoach.mjs';
 import * as backend from './lib/backend.mjs';
 import { BACKEND_ID, backendWorkspace } from './lib/workspaces.mjs';
-import { fixRouting } from './lib/router.mjs';
+import { fixRouting, unroutedModel } from './lib/router.mjs';
 import * as owner from './lib/owner.mjs';
+import * as missions from './lib/missions.mjs';
+import { openTaskDir } from './lib/tasks.mjs';
 
 const PORT = Number(env('PORT', '8008'));
 // scripts/restart.mjs hands the Orchy it starts a one-time token, so only it can report how the restart went.
@@ -80,27 +90,65 @@ runner.setPort(PORT);
 const setupScripts = String(env('SETUP_SCRIPTS') || '').trim().toLowerCase();
 if (setupScripts === 'on' || setupScripts === 'off') { db().settings.scriptsFree = setupScripts === 'on'; save(); setEnv('SETUP_SCRIPTS', ''); }
 ensureInks(); // any workspace from before colours: each gets its own
-runner.markInterruptedRuns();
+const interrupted = runner.markInterruptedRuns(); // recover.boot offers the owner Resume / Start over on each
 migrateChat();
 for (const item of inbox.pending()) if (!runner.isLive(item.runId)) inbox.expireForRun(item.runId);
 // a team agent's run reports to the head that handed it over; the head's report reaches the owner.
 // A client's own run reports to nobody but the client: their page shows it, the owner's chat doesn't.
 // Orchy's fix of his own code reports with what it changed, and restarts him when it needs to (backend.mjs).
+// Before Orchy reports, he checks the run (validate.mjs: flags only) and names what went wrong (recover.mjs: a safe
+// automatic retry, or a card for the owner); a run the owner just chose to stop and resume (`quietReport`) isn't reported again.
 runner.onRunFinished(async (run, ws) => {
   try {
     if (run.backend) await reportFix(run, ws);
-    else if (!run.delegatedBy && !(run.client && !run.ownerReply)) await orchy.reportRun(run, ws);
+    // a mission's step reports to its mission (missions.mjs): it checks it, decides the next step, and Orchy speaks once at the end
+    else if (run.missionId) { try { await missions.onRunEnded(run); } catch (e) { console.error('[mission]', e.message); } }
+    else {
+      if (validate.shouldValidate(run)) await validate.applyValidation(run);
+      let rec = null;
+      try { rec = recover.afterRun(run); } catch (e) { console.error('[recover]', e.message); }
+      if (!run.delegatedBy && !(run.client && !run.ownerReply) && !run.quietReport) {
+        if (rec?.quiet) orchy.say(rec.quiet, { runId: run.id, workspace: ws.id, kind: 'report', outcome: run.outcome, session: ensureSession(run.session, { text: run.instruction, origin: 'run' }).id, ...rec.meta });
+        else await orchy.reportRun(run, ws, rec ? { tail: rec.tail, meta: rec.meta } : {});
+      }
+    }
   } finally {
     backend.maybeRestart(anyLive); // a restart a fix left waiting goes ahead once nothing is running
   }
 });
+// an account hit its session/usage limit: its runs pause and start again by themselves when the window resets
+runner.onSessionLimit(({ ws, run, reason }) => {
+  orchy.say(`${ws.name}'s ${runtimeLabel(run.runtime)} account hit its usage limit while ${rn(run)} was working (${reason}). I've paused it, and any runs waiting on that account wait too; they start again by themselves when the window resets, or you can press Run now.`, { runId: run.id, workspace: ws.id, session: run.session, error: true });
+});
+// recovery (recover.mjs): retries go through startRun (account check, ungated-engine refusal, gate), resumes through
+// followUp; the stall timer runs here too (it never starts work, so a test copy with NO_SCHEDULER keeps it)
+recover.start({
+  startRun: opts => runner.startRun(opts), stopRun: rid => runner.stopRun(rid), isLive: rid => runner.isLive(rid),
+  followUp: (rid, body) => followUp(rid, { ...body, shown: 'Resume where you left off' }), note: (rid, text) => runner.ownerNote(rid, text),
+  who: r => rn(r), wsName: wid => { try { return workspace(wid).name; } catch { return wid; } },
+  say: (text, meta = {}) => orchy.say(text, { ...meta, session: ensureSession(meta.session, { text: 'Recovery', origin: 'run' }).id }),
+});
+recover.boot(interrupted);
+// missions (missions.mjs): every step through startRun (account check, ungated-engine refusal, gate), Orchy's lines in
+// the mission's session; after a restart a mission with live steps waits for the owner (Resume / Stop), nothing starts on its own
+missions.start({
+  startRun: opts => runner.startRun(opts), stopRun: rid => runner.stopRun(rid), isLive: rid => runner.isLive(rid),
+  say: (text, meta = {}) => orchy.say(text, { ...meta, session: ensureSession(meta.session, { text: 'Mission', origin: 'run' }).id }),
+  openTaskDir: (ws, r) => openTaskDir(ws, r, null), handFiles: (ws, names) => handToWorkspace(ws, names),
+  nameOf: (w, s) => { try { return voiceAgents.nameOf(w, s); } catch { return null; } },
+  fallback: m => missionFallback(m),
+});
+missions.boot();
 // a huddle's turns report to the huddle; Orchy speaks for it at the start, the agreement and a failure
 huddles.initHuddles({ say: (text, meta) => orchy.say(text, meta) });
 // each scheduled run opens its own session, so its report has somewhere to land.
 // NO_SCHEDULER=1 (a test copy's .env) keeps a second Orchy from starting the same scheduled runs.
 if (!env('NO_SCHEDULER')) startScheduler({
+  liveCount: runner.liveCount, // slots wait while two or more runs are live
   startRun: async ({ label, ...opts }) => {
     const sid = id('s');
+    // an AI Agent Builder's scheduled run (a weekly review) gets its agents' week, to propose slimming the costliest
+    if (opts.agentSlug === BUILDER_SLUG) opts.instruction += usageBrief(opts.workspace);
     const run = await runner.startRun({ ...opts, session: sid });
     ensureSession(sid, { text: label, origin: 'schedule' });
     return run;
@@ -113,14 +161,44 @@ if (!env('NO_SCHEDULER')) startScheduler({
   }),
 });
 
-// ── monthly impact report: last month's, written on the 1st ──
-if (!env('NO_SCHEDULER')) startMonthly({
-  onWritten: r => orchy.say(`Your ${r.month} impact report is ready: ${r.totals.tasks} tasks finished, about $${r.totals.saved.toLocaleString('en-US')} saved against people.`, { kind: 'report', report: r.url }),
-  onError: e => console.error('[monthly]', e),
-});
+// the weekly usage review (usagereview.mjs): Orchy suggests 3–5 savings in chat, in a session of its own
+function reviewSay(text, meta) {
+  return orchy.say(text, { ...meta, session: ensureSession(null, { text: 'Weekly usage review', origin: 'review' }).id });
+}
+if (!env('NO_SCHEDULER')) startUsageReview({ say: reviewSay });
+// Resources/ (resources.mjs): new skills filed and linked, MCP copies and INDEX.md refreshed, agent homes made, at boot
+// and every 10 minutes; skill folders only move in a workspace with nothing live. A test copy (NO_SCHEDULER) leaves
+// the workspace folders be.
+if (!env('NO_SCHEDULER')) {
+  const syncRes = () => syncAllResources(workspaces().filter(w => w.enabled), { busy: ws => runner.liveIn(ws.id) });
+  setTimeout(syncRes, 5_000).unref();
+  setInterval(syncRes, 10 * 60_000).unref();
+}
 
 // ── routing proposals (Jev's pick, shown as a card before dispatch) ──
 const proposals = new Map();
+// Jev's routing of a message that became a mission (memory only): its card falls back to a task card with it
+const missionRoutes = new Map();
+
+/** Not a mission after all (missions.mjs: one agent can do it, the plan didn't hold up, no account, or the owner's
+ *  choice): a task card for the same words, held for the owner's Send, with the planner's one agent picked when it named one. */
+function missionFallback(m) {
+  const ws = workspace(m.workspace);
+  const slug = m.fallback?.agent && m.fallback.agent !== 'general' ? m.fallback.agent : null;
+  const a = slug ? listAgents(ws.id).find(x => x.slug === slug && !x.isBuilder && !x.error) : null;
+  const r = missionRoutes.get(m.id) || {};
+  missionRoutes.delete(m.id);
+  const routing = { ...r, intent: 'task', workspace: ws.id, agent: a?.slug || null, needsChoice: false, holdReason: null, askChat: false, autoDispatchSeconds: r.autoDispatchSeconds ?? config.routing.autoDispatchSeconds };
+  const model = a?.engine ? modelFor(ws, a.model, a.engine) : unroutedModel(ws, a, m.text);
+  const p = {
+    id: id('route'), session: m.session, text: m.text, routing, viaVoice: !!m.viaVoice, status: 'proposed', createdAt: new Date().toISOString(), held: true, fromMission: m.id,
+    ...(m.files?.length && { files: m.files }),
+    choice: { intent: 'task', workspace: ws.id, agent: a?.slug || null, model },
+  };
+  proposals.set(p.id, p);
+  orchy.say(`A plain task fits that better: ${m.fallback?.why || 'one agent can do it'}. Here it is as a task card; press Send when it looks right.`, { missionId: m.id, workspace: ws.id, kind: 'mission-ask', session: m.session });
+  emit('routing.proposed', { proposal: publicProposal(p) });
+}
 // cards that are done (sent, answered, cancelled, failed) leave the Map about an hour later
 setInterval(() => {
   for (const [pid, p] of proposals) {
@@ -185,7 +263,8 @@ setInterval(() => backend.maybeRestart(anyLive), 30_000).unref();
 
 /** Is anything still going on in this session? (Busy sessions never auto-close.) */
 const sessionBusy = sid => Object.values(db().runs).some(r => r.session === sid && runner.isLive(r.id))
-  || [...proposals.values()].some(p => p.session === sid && p.status === 'proposed');
+  || [...proposals.values()].some(p => p.session === sid && p.status === 'proposed')
+  || missions.listMissions(50).some(m => m.session === sid && ['planning', 'planned', 'running', 'waiting'].includes(m.status));
 sweepSessions(sessionBusy);
 
 /** A run started from a window (agent card, Build, follow-up) is said into a session like any other. */
@@ -231,7 +310,18 @@ async function dispatchProposal(pid, overrides = {}) {
   if (!choice.workspace) throw Object.assign(new Error('Pick a workspace first'), { status: 400 });
   p.status = 'dispatching';
   emit('routing.updated', { proposal: publicProposal(p) });
-  // a huddle: the two agents talk it through first (huddle.mjs); Orchy says so in the session
+  // the owner turned the card into a mission (Do → Mission): Orchy plans it, and the mission card waits for Go
+  if (choice.intent === 'mission') {
+    let m;
+    try { m = missions.propose({ text: p.text, workspace: choice.workspace, session: p.session, routing: { ...p.routing, missionSure: false }, files: p.files || [], viaVoice: p.viaVoice }); }
+    catch (e) { Object.assign(p, { status: 'proposed', held: true, dispatchAt: null }); emit('routing.updated', { proposal: publicProposal(p) }); throw e; }
+    missionRoutes.set(m.id, p.routing);
+    p.status = 'dispatched';
+    p.missionId = m.id;
+    emit('routing.updated', { proposal: publicProposal(p) });
+    return { mission: missions.publicMission(m) };
+  }
+  // a huddle: the agents talk it through first (huddle.mjs); Orchy says so in the session
   if (choice.intent === 'huddle') {
     const topic = p.files?.length ? withFiles(p.text, handToWorkspace(workspace(choice.workspace), p.files)) : p.text;
     const h = await huddles.startHuddle({ workspace: choice.workspace, agents: choice.huddle, topic, session: p.session }).catch(e => {
@@ -308,12 +398,15 @@ async function readBody(req) {
   if (!raw) return {};
   try { return JSON.parse(raw); } catch { throw Object.assign(new Error('Invalid JSON'), { status: 400 }); }
 }
-const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.ico': 'image/x-icon', '.mp3': 'audio/mpeg', '.wav': 'audio/wav' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.ico': 'image/x-icon', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.wasm': 'application/wasm' };
+// frames: the viewer's sandboxed HTML (same origin) and click-to-load players from these hosts only (viewer.mjs#embedOf)
+const FRAME_SRC = "frame-src 'self' https://www.youtube-nocookie.com https://player.vimeo.com https://www.loom.com https://drive.google.com";
 function serveFile(res, file) {
   if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return send(res, 404, 'Not found');
   const ext = path.extname(file).toLowerCase();
-  // scripts only from Orchy itself (the ElevenLabs worklets and the resampler's WebAssembly included), so injected markup can't run code
-  res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-cache', ...(ext === '.html' && { 'Content-Security-Policy': "script-src 'self' 'wasm-unsafe-eval'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'" }) });
+  // scripts only from Orchy itself (the ElevenLabs worklets, the resampler's and pdf.js's WebAssembly and pdf.js's worker
+  // included), so injected markup can't run code
+  res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-cache', ...(ext === '.html' && { 'Content-Security-Policy': `script-src 'self' 'wasm-unsafe-eval'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; ${FRAME_SRC}` }) });
   fs.createReadStream(file).pipe(res);
 }
 function safeJoin(base, rel) {
@@ -333,8 +426,10 @@ async function extraAccounts(ws, force) {
 async function workspaceSummary(ws, { force = false } = {}) {
   const [account, extra] = await Promise.all([accountCheck(ws, { force }), extraAccounts(ws, force)]);
   return {
-    id: ws.id, name: ws.name, client: ws.client, blurb: ws.blurb, color: ws.color || null, aliases: ws.aliases || [], handles: handles(ws), folder: ws.folder,
-    runtime: ws.runtime, runtimeLabel: runtimeLabel(ws.runtime), models: modelsFor(ws), enabled: ws.enabled,
+    id: ws.id, name: ws.name, client: ws.client, blurb: ws.blurb, color: ws.color || null, aliases: ws.aliases || [], handles: handles(ws), folder: ws.folder, departments: departmentsOf(ws),
+    runtime: ws.runtime, runtimeLabel: runtimeLabel(ws.runtime), models: modelsFor(ws),
+    availableModels: account.availableModels || null, plan: account.plan || account.subscription || null, tier: account.tier || null,
+    enabled: ws.enabled,
     claudeAccount: ws.claudeAccount || null, codexAccount: ws.codexAccount || null, ownProfile: !!ws[engine(ws.runtime)?.fields.profile],
     // every registered engine's account and profile for this workspace, and whether it may run an engine Orchy can't gate
     accounts: Object.fromEntries(engines().map(e => [e.id, { account: ws[e.fields.account] || null, ownProfile: !!ws[e.fields.profile] }])), allowUngated: ws.allowUngated === true, gated: engine(ws.runtime)?.capabilities.gated !== false,
@@ -345,7 +440,7 @@ async function workspaceSummary(ws, { force = false } = {}) {
 const retiredSummary = () => listRetired().map(r => ({ id: r.id, name: r.name, client: r.client, color: r.color || null, runtime: r.runtime || 'claude', runtimeLabel: runtimeLabel(r.runtime || 'claude'), archivedFolder: r.archivedFolder, retiredAt: r.retiredAt, dirExists: r.dirExists }));
 
 const ENV_KEYS = ['TYPESAFE_API_KEY', 'TYPESAFE_MODEL', 'OPENROUTER_API_KEY', 'DEEPGRAM_API_KEY', 'ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID', 'ELEVENLABS_MODEL', 'CLIENT_URL', 'CF_ACCESS_TEAM_DOMAIN', 'CF_ACCESS_AUD',
-  'JEV_PROVIDER', 'AI_GATEWAY_API_KEY', 'OPENCODE_API_KEY', 'OPENCODE_JEV_MODEL', 'VOICE_ENABLED'];
+  'JEV_PROVIDER', 'AI_GATEWAY_API_KEY', 'OPENCODE_API_KEY', 'OPENCODE_JEV_MODEL', 'VOICE_ENABLED', 'VOICE_PROVIDER'];
 const JEV_PROVIDERS = ['', 'typesafe', 'openrouter', 'vercel', 'opencode', 'off'];
 const SECRET = k => /KEY$/.test(k);
 
@@ -353,11 +448,14 @@ const SECRET = k => /KEY$/.test(k);
 const routes = [];
 const on = (method, pattern, handler) => routes.push({ method, re: new RegExp(`^${pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)')}$`), handler });
 
-on('GET', '/api/events', (req, res) => attachSSE(req, res));
+// replayable (bus.mjs): Last-Event-ID from the browser's own reconnect, or `?last=BOOT:seq` from a fresh EventSource
+on('GET', '/api/events', (req, res) => attachSSE(req, res, { lastEventId: req.headers['last-event-id'] || new URL(req.url, 'http://x').searchParams.get('last') || '' }));
 
 on('GET', '/api/state', async () => {
   sweepSessions(sessionBusy);
+  const events = busCursor(); // taken first: the dashboard's stream replays whatever happens while this is built
   return {
+    events,
     now: new Date().toISOString(),
     timezone: config.timezone,
     owner: { name: ownerName(), set: !!(config.owner?.name || '').trim(), hideBusinessNames: !!config.owner?.hideBusinessNames },
@@ -377,6 +475,7 @@ on('GET', '/api/state', async () => {
     chat: recentChat(),
     proposals: [...proposals.values()].filter(p => p.status === 'proposed').map(publicProposal),
     huddles: huddles.listHuddles(20),
+    missions: missions.listMissions(20).map(missions.publicMission),
     backend: { id: BACKEND_ID, name: backendWorkspace().name, client: backendWorkspace().client, models: modelsFor(backendWorkspace()), pendingRestart: backend.pendingRestart()?.runId || null },
     envStatus: Object.fromEntries(ENV_KEYS.map(k => [k, SECRET(k) ? !!env(k) : env(k)])),
     clients: clients(),
@@ -467,6 +566,16 @@ async function chat({ text, viaVoice, session: sid, files: names, live, pick: ra
     if (files.length) return { ...review(), routing };
     orchy.reply(clean, { viaVoice, model: routing.effortScore > 1.5 ? 'sonnet' : config.orchy.chatModel, session, messageId: msg.id });
     return { kind: 'reply', routing, session: session.id };
+  }
+  // several agents of one workspace in a row (missions.mjs): Orchy plans it and the mission card shows the steps;
+  // with no client picked it's an ordinary card that waits for the owner to pick one
+  if (routing.intent === 'mission') {
+    if (routing.workspace) {
+      const m = missions.propose({ text: clean, workspace: routing.workspace, session: session.id, routing, files: files.map(f => f.name), viaVoice: !!viaVoice });
+      missionRoutes.set(m.id, routing);
+      return { kind: 'mission', mission: missions.publicMission(m), routing, session: session.id };
+    }
+    routing = { ...routing, intent: 'task' };
   }
   const p = {
     id: id('route'), session: session.id, text: clean, routing, viaVoice: !!viaVoice, status: 'proposed', createdAt: new Date().toISOString(), messageId: msg.id,
@@ -575,8 +684,8 @@ on('PATCH', '/api/routing/:id', async (req, _res, { id: pid }) => {
   if (body.workspace && !workspace(body.workspace).enabled) throw Object.assign(new Error(`${workspace(body.workspace).name} is switched off`), { status: 409 });
   const before = p.choice.workspace;
   for (const k of ['intent', 'workspace', 'agent', 'model']) if (k in body) p.choice[k] = body[k];
-  // a huddle: the owner picks its two agents on the card (another workspace starts the pair over)
-  if (Array.isArray(body.huddle)) p.choice.huddle = body.huddle.map(String).filter(Boolean).slice(0, 2);
+  // a huddle: the owner picks its agents on the card, two or more (another workspace starts them over)
+  if (Array.isArray(body.huddle)) p.choice.huddle = [...new Set(body.huddle.map(String).filter(Boolean))];
   if (p.choice.intent === 'huddle' && (!Array.isArray(p.choice.huddle) || (body.workspace && body.workspace !== before && !Array.isArray(body.huddle)))) p.choice.huddle = [];
   // building an agent is the Builder's job; a task is never the Builder's
   if (body.intent === 'build_agent') p.choice.agent = BUILDER_SLUG;
@@ -606,6 +715,24 @@ on('PATCH', '/api/routing/:id', async (req, _res, { id: pid }) => {
   return publicProposal(p);
 });
 on('POST', '/api/routing/:id/dispatch', async (req, _res, { id: pid }) => runner.publicRun(await dispatchProposal(pid, await readBody(req))));
+
+// Missions (missions.mjs): the card's edits while it waits, and the owner's answers (go, hold, stop, as-task, and an
+// open ask's accept / followup / skip / retry / reassign / replan / use-replan / keep-plan / raise / continue / resume).
+// The changes are owner-only like every other mutating route (ownerOnly); every step still starts through startRun.
+on('GET', '/api/missions', async () => missions.listMissions(30).map(missions.publicMission));
+on('GET', '/api/missions/:id', async (_req, _res, { id: mid }) => {
+  const m = missions.getMission(mid);
+  if (!m) throw Object.assign(new Error('That mission is gone'), { status: 404 });
+  return missions.publicMission(m);
+});
+on('PATCH', '/api/missions/:id', async (req, _res, { id: mid }) => missions.publicMission(missions.patch(mid, await readBody(req))));
+on('POST', '/api/missions/:id/act', async (req, _res, { id: mid }) => {
+  const b = await readBody(req);
+  const action = String(b.action || '');
+  if (!missions.ACTIONS.includes(action)) throw Object.assign(new Error(`Unknown choice "${action.slice(0, 40)}"`), { status: 400 });
+  const m = await missions.act(mid, { action, agent: b.agent ? String(b.agent).slice(0, 80) : null, text: String(b.text || '').slice(0, 4000) });
+  return missions.publicMission(m);
+});
 // "Just answer": the owner meant a question after all (a card Jev held between chat and task)
 on('POST', '/api/routing/:id/answer', async (_req, _res, { id: pid }) => {
   const p = proposals.get(pid);
@@ -679,7 +806,14 @@ on('GET', '/api/workspaces/:ws', async (req, _res, { ws: wsId }) => {
 on('GET', '/api/workspaces/:ws/connections', async (req, _res, { ws: wsId }) => allConnections(workspace(wsId), { force: new URL(req.url, 'http://x').searchParams.has('refresh') }));
 // MCP servers: their values (env, headers, arguments, the URL past its host, any other field) only go to a browser
 // the owner paired; any other gets names and shape. Changing, removing and testing one are owner-only like every non-GET.
-on('GET', '/api/workspaces/:ws/mcp', async (req, _res, { ws: wsId }) => shownMcp(readMcp(workspace(wsId)), owner.isOwner(req, PORT)));
+// A remote server's sign-in state (signed in or not, waiting, the last error) shows to any browser: never its token,
+// which stays in orchestrator/data/mcp-auth.json (mcpauth.mjs).
+on('GET', '/api/workspaces/:ws/mcp', async (req, _res, { ws: wsId }) => {
+  const ws = workspace(wsId);
+  const servers = readMcp(ws);
+  const shown = shownMcp(servers, owner.isOwner(req, PORT));
+  return Object.fromEntries(Object.entries(shown).map(([n, s]) => [n, servers[n]?.url && s && typeof s === 'object' ? { ...s, auth: mcpAuth.authStatus(ws, n, servers[n]) } : s]));
+});
 on('PUT', '/api/workspaces/:ws/mcp/:name', async (req, _res, { ws: wsId, name }) => {
   const def = upsertMcp(workspace(wsId), decodeURIComponent(name), await readBody(req));
   emit('connections.changed', { workspace: wsId });
@@ -687,10 +821,34 @@ on('PUT', '/api/workspaces/:ws/mcp/:name', async (req, _res, { ws: wsId, name })
 });
 on('DELETE', '/api/workspaces/:ws/mcp/:name', async (_req, _res, { ws: wsId, name }) => {
   removeMcp(workspace(wsId), decodeURIComponent(name));
+  mcpAuth.forget(workspace(wsId), decodeURIComponent(name));
   emit('connections.changed', { workspace: wsId });
   return { ok: true };
 });
-on('POST', '/api/workspaces/:ws/mcp-test', async (req) => testMcp(await readBody(req)));
+on('POST', '/api/workspaces/:ws/mcp-test', async (req, _res, { ws: wsId }) => {
+  const { name, auth: _auth, ...def } = await readBody(req);
+  const ws = workspace(wsId);
+  // a saved server's own sign-in rides along (only for the URL it was made for)
+  const r = await testMcp(typeof name === 'string' && name ? await mcpAuth.withAuth(ws, name, def) : def);
+  // signed in through Claude Code: runs use that token, but Orchy never holds it, so its own Test can't
+  if (r.needsLogin && name && mcpAuth.claudeSignedIn(ws, name, def.url)) return { ok: false, viaClaude: true, error: 'signed in through Claude Code, which the agents’ runs use. Orchy never holds that token, so this Test can’t check it; a task that uses it will.' };
+  return r;
+});
+// OAuth sign-in for a remote MCP server with no API key: opens the owner's browser; the window updates when it's done
+on('POST', '/api/workspaces/:ws/mcp/:name/login', async (_req, _res, { ws: wsId, name }) => {
+  const ws = workspace(wsId), n = decodeURIComponent(name);
+  const def = readMcp(ws)[n];
+  if (!def) throw Object.assign(new Error(`No MCP server called ${n}`), { status: 404 });
+  let r;
+  try { r = await mcpAuth.startLogin(ws, n, def, { onDone: () => emit('connections.changed', { workspace: wsId }) }); }
+  catch (e) {
+    // a service that only lets approved apps register: sign the workspace's own Claude Code account in instead
+    if (e.code !== 'register-refused' || !ws.claudeAccount) throw Object.assign(e, { status: e.status || 400 });
+    r = mcpAuth.openClaudeLogin(ws, n, def);
+  }
+  emit('connections.changed', { workspace: wsId });
+  return { status: r.status };
+});
 
 // ── Adding, switching off and retiring workspaces ("agents" to the owner) ──
 const wsChanged = async (wsId, extra = {}) => emit('workspaces.changed', {
@@ -702,10 +860,24 @@ const liveIn = wsId => Object.values(db().runs).filter(r => r.workspace === wsId
 on('GET', '/api/runtimes', async () => {
   const have = runtimeAvailability();
   const cfg = runtimes();
-  const rows = await Promise.all(engines().map(async e => {
+  // an opt-in engine the owner hasn't switched on (engineOffered) only shows for a workspace already on it
+  const shown = engines().filter(e => cfg[e.id]?.offered !== false || workspaces().some(w => w.runtime === e.id));
+  const rows = await Promise.all(shown.map(async e => {
     // only an engine that runs here is asked who its default profile is signed in as
-    const a = have[e.id]?.available && e.accountModel === 'email' ? await e.account(null).catch(() => null) : null;
-    return [e.id, { ...cfg[e.id], available: !!have[e.id]?.available, version: have[e.id]?.available ? e.version?.() || null : null, defaultAccount: a?.email || null, sandbox: a?.sandbox || null }];
+    const a = have[e.id]?.available ? await e.account(null).catch(() => null) : null;
+    // one sign-in per computer: the account the other workspaces on it already use comes first
+    const shared = e.sharedLogin ? workspaces().map(w => w[e.fields.account]).find(Boolean) || null : null;
+    return [e.id, {
+      ...cfg[e.id],
+      available: !!have[e.id]?.available,
+      version: have[e.id]?.available ? e.version?.() || null : null,
+      defaultAccount: shared || a?.email || a?.label || null,
+      loggedIn: !!a?.loggedIn,
+      plan: a?.plan || a?.subscriptionType || a?.subscription || null,
+      tier: a?.tier || null,
+      availableModels: Array.isArray(a?.models) && a.models.length ? a.models : null,
+      sandbox: a?.sandbox || null,
+    }];
   }));
   return Object.fromEntries(rows);
 });
@@ -767,7 +939,7 @@ on('POST', '/api/workspaces/:ws/retire', async (req, _res, { ws: wsId }) => {
   await wsChanged(wsId, { retired: retiredSummary() });
   if (r.clientsOff?.length) clientsChanged(); // its client links are switched off with it
   voiceRefresh(true);
-  orchy.say(`${ws.name} is retired. Its folder is in Retired/${r.archivedFolder}, and I won't send it anything. You can bring it back from the Workspace window.`, { session: null });
+  orchy.say(`${ws.name} is retired. Its folder is in Retired/${r.archivedFolder}, and I won't send it anything. You can bring it back from the Workspaces window.`, { session: null });
   return r;
 });
 on('GET', '/api/workspaces-retired', async () => retiredSummary());
@@ -783,6 +955,7 @@ on('DELETE', '/api/workspaces-retired/:ws', async (req, _res, { ws: wsId }) => {
   const { confirm } = await readBody(req);
   if (String(confirm || '').trim().toLowerCase() !== r.name.toLowerCase()) throw Object.assign(new Error(`Type "${r.name}" to confirm`), { status: 400 });
   const p = purgeRetired(wsId);
+  mcpAuth.forgetWorkspace(wsId); // its MCP sign-ins go with it
   if (p?.clientsRemoved?.length) clientsChanged();
   db().rules = db().rules.filter(x => x.workspace !== wsId);
   save();
@@ -866,7 +1039,8 @@ async function runAgent(ws, slug, { instruction, model, files }) {
 // A link's secret is shown once, when it's made; a lost link is replaced.
 function clientPages() {
   const base = clientBase();
-  return { port: CLIENT_PORT(), base, online: /^https:\/\//.test(base) };
+  // client video plays only through R2 links (r2.mjs); the Clients window says when it's off
+  return { port: CLIENT_PORT(), base, online: /^https:\/\//.test(base), video: r2Status().on };
 }
 const clientsChanged = () => emit('clients.changed', { clients: clients(), clientPages: clientPages() });
 on('GET', '/api/clients', async () => clients());
@@ -934,16 +1108,26 @@ If the notes hold nothing useful, write a two-line brief from the agent list alo
 <workspace_notes>
 ${notes || '(none)'}
 </workspace_notes>`;
-  const { text } = await quickClaude({ prompt, model: 'sonnet', configDir: ws.claudeConfigDir || null, timeoutMs: 120_000 });
+  const { text } = await quickClaude({ prompt, model: 'sonnet', configDir: ws.claudeConfigDir || null, timeoutMs: 120_000, purpose: 'brief', workspace: ws.id });
   return text.trim().slice(0, 6000);
 }
 
 // Runs
 on('GET', '/api/runs', async () => runner.listRuns(100).map(runner.publicRun));
 on('GET', '/api/runs/:id', async (_req, _res, { id: rid }) => ({ run: runner.publicRun(runner.getRun(rid)), events: runner.runEvents(rid), items: inbox.itemsForRun(rid), live: runner.isLive(rid) }));
+// a queued or limit-paused run starts at once (it jumps its account's queue)
+on('POST', '/api/runs/:id/run-now', async (_req, _res, { id: rid }) => runner.runNow(rid));
 on('POST', '/api/runs/:id/stop', async (_req, _res, { id: rid }) => runner.stopRun(rid));
+// the owner's answer on a recovery card: resume | restart | stop | leave (recover.mjs#act; restart goes through startRun)
+on('POST', '/api/runs/:id/recover', async (req, _res, { id: rid }) => {
+  runner.getRun(rid);
+  const { action } = await readBody(req);
+  const r = await recover.act(rid, String(action || ''));
+  return { ok: true, run: r.run ? runner.publicRun(r.run) : null };
+});
 on('POST', '/api/runs/:id/reply', async (req, _res, { id: rid }) => followUp(rid, await readBody(req)));
-async function followUp(rid, { text, model, files }) {
+// `shown`: what the owner's line in the session says when the words sent aren't theirs (a recovery card's Resume)
+async function followUp(rid, { text, model, files, shown = null }) {
   const prev = runner.getRun(rid);
   if (!prev) throw Object.assign(new Error('No such run'), { status: 404 });
   if (runner.isLive(rid)) throw Object.assign(new Error('Still running; wait for it to finish'), { status: 409 });
@@ -956,7 +1140,7 @@ async function followUp(rid, { text, model, files }) {
   const session = getSession(prev.session)?.origin === 'client' ? id('s') : prev.session || id('s');
   const run = await runner.startRun({ workspace: prev.workspace, agentSlug: prev.isBuilder ? BUILDER_SLUG : prev.agentSlug, kind: prev.kind, model: model || prev.model, instruction: prev.client ? clean : withFiles(clean, paths), ownerFiles, resumeSessionId: prev.sessionId, parentRunId: prev.id, session });
   const n = paths.length || ownerFiles.length;
-  sayDispatched(run, clean || `${n} file${n > 1 ? 's' : ''}`, prev.client ? `Follow-up sent on ${prev.clientName}’s task. ${rn(run)} picks up where it left off, and ${prev.clientName} sees it on their page.` : `Follow-up sent. ${rn(run)} picks up where it left off.`, files);
+  sayDispatched(run, (typeof shown === 'string' && shown.trim().slice(0, 200)) || clean || `${n} file${n > 1 ? 's' : ''}`, prev.client ? `Follow-up sent on ${prev.clientName}’s task. ${rn(run)} picks up where it left off, and ${prev.clientName} sees it on their page.` : `Follow-up sent. ${rn(run)} picks up where it left off.`, files);
   return run;
 }
 
@@ -995,7 +1179,48 @@ on('GET', '/api/runs/:id/file', async (req, res, { id: rid }) => {
   const run = runner.getRun(rid);
   const file = taskFile(workspace(run.workspace), run, new URL(req.url, 'http://x').searchParams.get('path'));
   if (!file) throw Object.assign(new Error('That file isn’t in the task’s folder'), { status: 404 });
-  sendTaskFile(res, file);
+  sendTaskFile(res, file, {}, { req });
+});
+
+// ── Artifacts: what agents made, for the dashboard's viewer (the owner's dashboard only; client pages have none yet).
+// Every file is re-resolved through artifacts.mjs#resolveFile (realpath inside the workspace, no setup, hidden or
+// other clients' files) on each request. File contents need a paired browser's cookie (FILE_READS below). ──
+const qs = req => new URL(req.url, 'http://x').searchParams;
+on('GET', '/api/artifacts', async req => {
+  const q = qs(req);
+  const run = q.get('run') ? runner.getRun(q.get('run')) : null;
+  if (run) artifacts.syncRun(run, { ended: !!run.endedAt && !runner.isLive(run.id) });
+  if (q.get('huddle')) { try { artifacts.syncHuddle(huddles.getHuddle(q.get('huddle'))); } catch {} }
+  const list = artifacts.listArtifacts({ run, workspace: q.get('workspace'), agent: q.get('agent'), huddle: q.get('huddle'), kind: q.get('kind'), limit: Number(q.get('limit')) || 300 });
+  return { artifacts: list, links: run?.links || [] };
+});
+on('GET', '/api/artifacts/:id', async (_req, _res, { id: aid }) => {
+  try { return { artifact: artifacts.publicArtifact(artifacts.openArtifact(aid).artifact) }; }
+  catch (e) { if (e.artifact) return { artifact: e.artifact }; throw e; }
+});
+on('GET', '/api/artifacts/:id/raw', async (req, res, { id: aid }) => {
+  const { artifact: a, file } = artifacts.openArtifact(aid);
+  sendTaskFile(res, file, {}, { req, media: true, types: artifacts.VIEW_TYPES, download: qs(req).has('download'), name: a.name });
+});
+on('GET', '/api/artifacts/:id/preview', async (_req, _res, { id: aid }) => {
+  const { artifact: a, file } = artifacts.openArtifact(aid);
+  return { ...(await artifacts.previewFile(file, a.name)), version: a.version };
+});
+on('GET', '/api/artifacts/:id/media/:what', async (req, res, { id: aid, what }) => {
+  const { artifact: a } = artifacts.openArtifact(aid); // the guard, and a fresh version
+  if (!media.MEDIA_FILES.includes(what)) throw Object.assign(new Error('No such preview'), { status: 404 });
+  const file = media.mediaFile(aid, what);
+  if (!file) throw Object.assign(new Error(a.media?.state === 'transcoding' ? 'The playable copy isn’t ready yet' : 'No preview for this file'), { status: 404 });
+  // previews are per version (the URL carries ?v=), so they can be cached; the original never is
+  sendTaskFile(res, file, {}, { req, media: true, types: artifacts.VIEW_TYPES, name: what === 'play' ? a.name : `${what}.webp`, cache: what === 'play' && a.media?.play === 'original' ? null : 'private, max-age=86400' });
+});
+// the research sources: the URLs a run fetched and the searches it ran (from its recorded events only)
+on('GET', '/api/runs/:id/sources', async (_req, _res, { id: rid }) => artifacts.sourcesFor(runner.getRun(rid).id));
+// a file the owner gave Orchy, as the viewer previews it (Office, CSV, JSON, text)
+on('GET', '/api/uploads/:name/preview', async (_req, _res, { name }) => {
+  const u = uploadInfo(decodeURIComponent(name));
+  if (!u) throw Object.assign(new Error('That file is gone from Uploads'), { status: 404 });
+  return artifacts.previewFile(u.file, u.name);
 });
 
 // Inbox (the owner's answers)
@@ -1076,7 +1301,7 @@ on('POST', '/api/bridge/voice-agent', async (req) => {
 on('POST', '/api/bridge/approval', async (req) => {
   bridgeAuth(req);
   const b = await readBody(req);
-  const v = await gate(b.runId, b.tool_name, b.input || {});
+  const v = await gate(b.runId, b.tool_name, b.input || {}, { toolUseId: b.tool_use_id });
   if (v.decision === 'ask') runner.setRunStatus(runner.getRun(b.runId), 'waiting');
   return v;
 });
@@ -1101,13 +1326,18 @@ on('POST', '/api/bridge/huddle-reply', async (req) => {
   const g = b.agreement && typeof b.agreement === 'object' ? b.agreement : null;
   // bring another agent in (huddle.mjs#bringIn checks who when the turn ends)
   const inv = b.invite && typeof b.invite === 'object' && String(b.invite.agent || '').trim() ? { agent: String(b.invite.agent).trim().slice(0, 80), why: String(b.invite.why || '').slice(0, 600) } : null;
+  // pushback this turn (huddle.mjs: ready only counts once an agent has challenged something)
+  const challenge = String(b.challenge || '').trim();
   run.huddleReply = {
-    message: message.slice(0, 6000), ready: !!b.ready, questions_for_owner: strs(b.questions_for_owner), ...(inv ? { invite: inv } : {}),
-    ...(g ? { agreement: { summary: String(g.summary || '').slice(0, 4000), decisions: strs(g.decisions), questions_for_owner: strs(g.questions_for_owner),
-      work: (Array.isArray(g.work) ? g.work : []).slice(0, 6).map(w => ({ agent: String(w?.agent || ''), task: String(w?.task || '').slice(0, 6000) })) } } : {}),
+    message: message.slice(0, 6000), ready: !!b.ready, questions_for_owner: strs(b.questions_for_owner), ...(inv ? { invite: inv } : {}), ...(challenge ? { challenge: challenge.slice(0, 2000) } : {}),
+    ...(g ? { agreement: { summary: String(g.summary || '').slice(0, 4000), decisions: strs(g.decisions), questions_for_owner: huddles.questionsIn(g.questions_for_owner), dissent: strs(g.dissent),
+      work: (Array.isArray(g.work) ? g.work : []).slice(0, 60).map(w => ({ agent: String(w?.agent || ''), task: String(w?.task || '').slice(0, 6000) })) } } : {}),
   };
   save();
-  runner.addNote(run.id, `${g ? 'Agreement' : 'Said'}: ${message.replace(/\s+/g, ' ').slice(0, 300)}${b.ready ? ' (ready to agree)' : ''}${inv ? ` (bringing in ${inv.agent})` : ''}`);
+  runner.addNote(run.id, `${g ? 'Agreement' : 'Said'}: ${message.replace(/\s+/g, ' ').slice(0, 300)}${challenge ? ' (pushes back)' : ''}${b.ready ? ' (ready to agree)' : ''}${inv ? ` (bringing in ${inv.agent})` : ''}`);
+  // huddle_reply is the turn's last action: end the harness process now so it doesn't take extra trailing turns
+  // (runner.endHuddleTurn, when this build's runner has it)
+  if (typeof runner.endHuddleTurn === 'function') setTimeout(() => { try { runner.endHuddleTurn(run.id); } catch {} }, 50);
   return { ok: true };
 });
 on('POST', '/api/bridge/note', async (req) => {
@@ -1141,7 +1371,7 @@ on('GET', '/api/bridge/subrun/:id', async (req, _res, { id: sid }) => {
   const sub = db().runs[sid];
   if (!sub) throw Object.assign(new Error('No such run'), { status: 404 });
   if (!parent || sub.delegatedBy !== parent) throw Object.assign(new Error('That run wasn’t handed over by you'), { status: 403 });
-  const ended = () => !runner.isLive(sid) && !['starting', 'working', 'waiting', 'stopping'].includes(sub.status);
+  const ended = () => !runner.isLive(sid) && !['queued', 'paused-limit', 'starting', 'working', 'waiting', 'stopping'].includes(sub.status);
   if (!ended()) {
     await new Promise(resolve => {
       const done = () => { clearTimeout(t); bus.off('event', onEvt); resolve(); };
@@ -1161,11 +1391,12 @@ on('POST', '/api/bridge/huddle', async (req) => {
   const b = await readBody(req);
   const run = runner.getRun(b.runId);
   if (!runner.isLive(run.id)) throw Object.assign(new Error('Your run has ended'), { status: 409 });
-  const h = await huddles.startFromRun(run, { agent: b.agent, topic: b.topic });
+  const h = await huddles.startFromRun(run, { agent: b.agent, agents: b.agents, topic: b.topic });
   (run.huddlesStarted ||= []).push(h.id);
   save();
-  runner.addNote(run.id, `Huddling with ${h.agents[1].name}: ${String(b.topic || '').replace(/\s+/g, ' ').slice(0, 160)}`);
-  return { huddleId: h.id, with: h.agents[1].name };
+  const others = huddles.nameList(h.agents.slice(1).map(a => a.name));
+  runner.addNote(run.id, `Huddling with ${others}: ${String(b.topic || '').replace(/\s+/g, ' ').slice(0, 160)}`);
+  return { huddleId: h.id, with: others };
 });
 on('GET', '/api/bridge/huddle/:id', async (req, _res, { id: hid }) => {
   bridgeAuth(req);
@@ -1202,7 +1433,7 @@ on('GET', '/api/bridge/call/:id', async (req, _res, { id: cid }) => {
 // ── Huddles: two agents of a workspace talk a task through; the owner approves what they agree (huddle.mjs) ──
 on('GET', '/api/huddles', async () => huddles.listHuddles(30));
 on('GET', '/api/huddles/:id', async (_req, _res, { id: hid }) => huddles.getHuddle(hid));
-// from the Workspace window (Jev's card starts one through dispatchProposal)
+// from the Workspaces window (Jev's card starts one through dispatchProposal)
 on('POST', '/api/huddles', async (req) => {
   const b = await readBody(req);
   const ws = workspace(String(b.workspace || ''));
@@ -1213,21 +1444,35 @@ on('POST', '/api/huddles', async (req) => {
   return huddles.startHuddle({ workspace: ws.id, agents: agents.map(a => a.slug), topic, session: getSession(b.session)?.id || null, maxTurns: b.maxTurns });
 });
 on('POST', '/api/huddles/:id/say', async (req, _res, { id: hid }) => huddles.ownerSays(hid, (await readBody(req)).text));
-on('POST', '/api/huddles/:id/continue', async (req, _res, { id: hid }) => { const b = await readBody(req); return huddles.keepTalking(hid, { text: b.text, more: b.more }); });
+on('POST', '/api/huddles/:id/continue', async (req, _res, { id: hid }) => { const b = await readBody(req); return huddles.keepTalking(hid, { text: b.text, more: b.more, answers: b.answers }); });
 on('POST', '/api/huddles/:id/stop', async (_req, _res, { id: hid }) => huddles.stopHuddle(hid));
 on('POST', '/api/huddles/:id/approve', async (req, _res, { id: hid }) => {
-  const { huddle: h, runs, errors } = await huddles.approve(hid, { note: (await readBody(req)).note });
+  const b = await readBody(req);
+  const { huddle: h, runs, errors } = await huddles.approve(hid, { note: b.note, answers: b.answers });
   orchy.say(`Approved. ${runs.map(r => `${rn(r)} is on ${r.isBuilder ? 'the agent changes' : 'their part'}`).join(', ')} in ${workspace(h.workspace).name}, picking up from the huddle.${errors.length ? ` Couldn't start: ${errors.join(' · ')}` : ''}`, { workspace: h.workspace, kind: 'dispatch', session: h.session, ...(runs.length === 1 ? { runId: runs[0].id } : {}) });
   return { huddle: h, runs: runs.map(runner.publicRun), errors };
 });
 on('POST', '/api/huddles/:id/close', async (_req, _res, { id: hid }) => huddles.dismiss(hid));
+// The owner's standing rules per workspace (rules.mjs): what Orchy answers for them in a huddle's proposal. Not the
+// remembered approvals (/api/rules, policy.mjs): these never clear an ask.
+on('GET', '/api/standing-rules/:ws', async (_req, _res, { ws: wsId }) => ({ rules: standingRules.rulesFor(workspace(wsId).id) }));
+on('POST', '/api/standing-rules/:ws', async (req, _res, { ws: wsId }) => {
+  const w = workspace(wsId);
+  standingRules.addRule(w.id, (await readBody(req)).text);
+  return { rules: standingRules.rulesFor(w.id) };
+});
+on('DELETE', '/api/standing-rules/:ws/:rule', async (_req, _res, { ws: wsId, rule }) => ({ rules: standingRules.removeRule(workspace(wsId).id, rule) }));
 
 // Logs, rules, settings
 on('POST', '/api/greeting', async () => orchy.dailyGreeting());
 on('GET', '/api/logs', async () => readLogs());
-on('GET', '/api/impact', async (req) => { const q = new URL(req.url, 'http://x').searchParams; return impact({ period: q.get('period') || 'month', rate: q.get('rate'), speedup: q.get('speedup') }); });
-on('GET', '/api/reports', async () => listMonthly());
-on('POST', '/api/reports', async (req) => { const b = await readBody(req); return writeMonthly(b.month, { rate: b.rate, speedup: b.speedup }); });
+// tokens and cost per workspace, agent, model and kind, chains, top runs, Orchy's own calls (logs.mjs#computeUsage)
+on('GET', '/api/usage', async (req) => computeUsage(new URL(req.url, 'http://x').searchParams.get('period') || 'month'));
+// the weekly usage review, now
+on('POST', '/api/usage/review', async () => {
+  const r = await weeklyReview({ say: reviewSay });
+  return { ok: true, suggestions: r.suggestions.length };
+});
 on('GET', '/api/rules', async () => db().rules);
 on('DELETE', '/api/rules/:i', async (_req, _res, { i }) => {
   const n = Number(i);
@@ -1237,11 +1482,29 @@ on('DELETE', '/api/rules/:i', async (_req, _res, { i }) => {
 });
 on('POST', '/api/settings', async (req) => {
   const b = await readBody(req);
-  for (const k of ['voiceReplies', 'sound', 'autoDispatch', 'actionPlan', 'callStuck', 'callAsk', 'callDone', 'liveJev', 'liveStart', 'scriptsFree']) if (k in b) db().settings[k] = !!b[k];
+  for (const k of ['voiceReplies', 'sound', 'autoDispatch', 'actionPlan', 'callStuck', 'callAsk', 'callDone', 'liveJev', 'liveStart', 'scriptsFree', 'budgetRouting']) if (k in b) db().settings[k] = !!b[k];
+  // runs at once per account (1–10, default 3; more wait in the queue), and when the weekly usage review runs
+  if ('maxLivePerAccount' in b) db().settings.maxLivePerAccount = Math.min(10, Math.max(1, Math.round(Number(b.maxLivePerAccount)) || 3));
+  // Orchy's check of finished runs (validate.mjs, on unless off; Jev's read off unless on) and his retries (recover.mjs)
+  for (const k of ['validateRuns', 'validateJev', 'autoRetry']) if (k in b) db().settings[k] = !!b[k];
+  // recovery: flag a run with no new step after N minutes (0 = off, default 20); stop runs after N minutes (0 = off)
+  if ('stallMin' in b) db().settings.stallMin = Math.min(240, Math.max(0, Math.round(Number(b.stallMin)) || 0));
+  if ('stopAfterMin' in b) db().settings.stopAfterMin = Math.min(1440, Math.max(0, Math.round(Number(b.stopAfterMin)) || 0));
+  if ('usageReviewDay' in b) db().settings.usageReviewDay = b.usageReviewDay === 'off' || REVIEW_DAYS.includes(b.usageReviewDay) ? b.usageReviewDay : 'Fri';
+  if ('usageReviewHour' in b) db().settings.usageReviewHour = Math.min(23, Math.max(0, Math.round(Number(b.usageReviewHour)) || 0));
   // Jev's reads as the owner types: caps per message and per day (0 = no cap)
   if ('liveReadsPerMessage' in b) db().settings.liveReadsPerMessage = Math.min(200, Math.max(0, Math.round(Number(b.liveReadsPerMessage)) || 0));
   if ('liveReadsPerDay' in b) db().settings.liveReadsPerDay = Math.min(100000, Math.max(0, Math.round(Number(b.liveReadsPerDay)) || 0));
   if ('huddleTurns' in b) db().settings.huddleTurns = Math.min(huddles.TURNS.max, Math.max(huddles.TURNS.min, Math.round(Number(b.huddleTurns)) || huddles.TURNS.default));
+  // Orchy in huddles (huddlecoach.mjs): on/off, and interventions per huddle, 0–6 (default 3)
+  if ('huddleCoach' in b) db().settings.huddleCoach = !!b.huddleCoach;
+  if ('huddleCoachMax' in b) db().settings.huddleCoachMax = Math.min(COACH.cap, Math.max(0, Math.round(Number(b.huddleCoachMax)) || 0));
+  // missions (missions.mjs): start a sure one on its own, Jev's read of each step, the cost ceiling per mission
+  // ($1–500, default 15), live steps at once (1–3, default 2), a time cap in minutes (0 = off)
+  for (const k of ['missionAutoStart', 'validateJevMissions']) if (k in b) db().settings[k] = !!b[k];
+  if ('missionCeiling' in b) db().settings.missionCeiling = Math.min(500, Math.max(1, Math.round(Number(b.missionCeiling)) || missions.LIMITS.ceiling));
+  if ('missionMaxLive' in b) db().settings.missionMaxLive = Math.min(missions.LIMITS.liveCap, Math.max(1, Math.round(Number(b.missionMaxLive)) || missions.LIMITS.maxLive));
+  if ('missionMaxMin' in b) db().settings.missionMaxMin = Math.min(1440, Math.max(0, Math.round(Number(b.missionMaxMin)) || 0));
   if ('callStuckMin' in b) db().settings.callStuckMin = Math.min(120, Math.max(1, Math.round(Number(b.callStuckMin)) || 10));
   if (b.approvals === 'decisions' || b.approvals === 'all') db().settings.approvals = b.approvals;
   if (b.askFor && typeof b.askFor === 'object') {
@@ -1257,13 +1520,14 @@ on('POST', '/api/settings/env', async (req) => {
   if (!ENV_KEYS.includes(key)) throw Object.assign(new Error('Not an editable setting'), { status: 400 });
   let v = String(value ?? '').replace(/[\r\n]+/g, '').trim(); // one line in .env
   if (key === 'VOICE_ENABLED') v = /^(0|false|off|no)$/i.test(v) ? '0' : '1';
+  if (key === 'VOICE_PROVIDER' && !voice.VOICE_PROVIDERS.includes(v = v.toLowerCase())) throw Object.assign(new Error('Voice provider is elevenlabs or deepgram'), { status: 400 });
   if (key === 'JEV_PROVIDER' && !JEV_PROVIDERS.includes(v.toLowerCase())) throw Object.assign(new Error(`Jev provider is one of: ${JEV_PROVIDERS.filter(Boolean).join(', ')}`), { status: 400 });
   if (key === 'CLIENT_URL' && v) {
     if (!/^https?:\/\//i.test(v)) v = `https://${v}`;
     try { v = new URL(v).origin; } catch { throw Object.assign(new Error('That doesn’t look like a web address (e.g. https://clients.example.com)'), { status: 400 }); }
   }
   setEnv(key, v);
-  emit('settings.updated', { envKey: key, voice: voice.voiceConfig(), jev: { mode: jevMode(), label: jevLabel() } });
+  emit('settings.updated', { envKey: key, voice: voice.voiceConfig(), jev: { mode: jevMode(), label: jevLabel() }, envStatus: Object.fromEntries(ENV_KEYS.map(k => [k, SECRET(k) ? !!env(k) : env(k)])) });
   if (key === 'CLIENT_URL') clientsChanged();
   if (key === 'VOICE_ENABLED' || key === 'ELEVENLABS_API_KEY') voiceRefresh(false); // voice back on: its agents get made
   return { ok: true, set: !!env(key) };
@@ -1379,6 +1643,7 @@ async function voiceTool(name, p) {
       const who = c.agent && c.agent !== 'general' ? voiceAgents.callName(c.workspace, c.agent, listAgents(c.workspace).find(a => a.slug === c.agent)?.displayName) : 'the generalist';
       return `Orchy routed it to ${who} in ${workspace(c.workspace).name}. ${r.proposal.dispatchAt ? `It starts in a few seconds unless ${ownerName()} changes it in the dashboard.` : `It waits for ${ownerName()} to send it from the dashboard.`}`;
     }
+    if (r.kind === 'mission') return `That needs several of ${workspace(r.mission.workspace).name}'s agents, so Orchy is planning it as a mission; ${ownerName()} sees the steps in the dashboard${missions.missionSettings().autoStart ? ', and a plan Jev is sure of starts after a short countdown' : ' and starts it there'}.`;
     if (r.kind === 'ignored') return `${r.routing.switchedOff.name} is switched off, so nothing was started.`;
     return 'Orchy took that as a question rather than a task; the answer is in the Orchy chat.';
   }
@@ -1432,6 +1697,10 @@ function crossSite(req) {
 // The bridge, pairing itself and the restart report carry their own proof.
 const OWNERLESS = /^\/api\/(bridge\/|pair$|backend\/restarted$)/;
 const ownerOnly = (req, pathname) => req.method !== 'GET' && req.method !== 'HEAD' && !OWNERLESS.test(pathname);
+// Reads stay open to this PC, except the contents of files in workspaces and Uploads (the viewer, task files, the
+// owner's uploads): those need a paired browser's cookie (owner.mjs#isOwnerBrowser; an <img> or <video> can't send
+// the key header). An agent's curl has no cookie, so it can't read another workspace's files through Orchy.
+const FILE_READS = /^\/api\/(artifacts\/[^/]+\/(raw|preview|media\/[^/]+)|runs\/[^/]+\/file|uploads\/[^/]+(\/preview)?)$/;
 const server = http.createServer(async (req, res) => {
   // The owner's dashboard has no login of its own: it's never served through Cloudflare (client pages are, on CLIENT_PORT)
   if (req.headers['cf-ray'] || req.headers['cf-connecting-ip']) {
@@ -1447,6 +1716,9 @@ const server = http.createServer(async (req, res) => {
         const stale = owner.ownerState(req, PORT) === 'stale';
         return send(res, 401, { error: stale ? 'Pair this browser again to make changes (Orchy now keeps a second key in the page)' : 'This browser isn’t paired with Orchy, so it can’t make changes', code: 'unpaired', stale });
       }
+      if ((req.method === 'GET' || req.method === 'HEAD') && FILE_READS.test(pathname) && !owner.isOwnerBrowser(req, PORT)) {
+        return send(res, 401, { error: 'This browser isn’t paired with Orchy, so it can’t open workspace files', code: 'unpaired' });
+      }
       for (const r of routes) {
         if (r.method !== req.method) continue;
         const m = pathname.match(r.re);
@@ -1458,7 +1730,6 @@ const server = http.createServer(async (req, res) => {
       return send(res, 404, { error: `No route ${req.method} ${pathname}` });
     }
     if (pathname === '/' || pathname === '/index.html') return serveFile(res, path.join(DASHBOARD_DIR, 'index.html'));
-    if (pathname.startsWith('/reports/')) return serveFile(res, safeJoin(REPORTS_DIR, pathname.slice(9)));
     if (pathname.startsWith('/assets/')) return serveFile(res, safeJoin(path.join(ROOT, 'assets'), pathname.slice(8)));
     if (pathname === '/vendor/marked.js') return serveFile(res, path.join(ROOT, 'node_modules', 'marked', 'lib', 'marked.esm.js'));
     return serveFile(res, safeJoin(DASHBOARD_DIR, pathname.slice(1)));
@@ -1499,6 +1770,11 @@ function voiceRefresh(full) {
   });
 }
 bus.on('event', e => { if (e.type === 'agent.created' || e.type === 'agent.updated' || e.type === 'agent.retired') voiceRefresh(e.type !== 'agent.created'); });
+
+// the artifact registry listens for file tools and run ends; media makes thumbs/posters/playable copies in the
+// background when ffmpeg is installed (optional: without it the originals still open)
+artifacts.start();
+media.startMedia();
 
 server.listen(PORT, '127.0.0.1', () => {
   const url = `http://localhost:${PORT}`;

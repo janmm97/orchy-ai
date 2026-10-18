@@ -39,7 +39,7 @@ export function openOneGuide({ from } = {}) {
     <ol>
       <li><b>Create a One account</b> at <a href="${ONE_SIGN_IN}" target="_blank" rel="noopener noreferrer">app.withone.ai</a>.</li>
       <li><b>Make one organization per business or client</b> (the switcher is at the top left of the One dashboard). Their apps stay separate.</li>
-      <li><b>Link each workspace.</b> Workspace → the workspace → <i>Sign in to One</i>. Your browser opens; pick the organization this workspace should use. A workspace that isn’t signed in can’t use One at all.</li>
+      <li><b>Link each workspace.</b> Workspaces → the workspace → <i>Sign in to One</i>. Your browser opens; pick the organization this workspace should use. A workspace that isn’t signed in can’t use One at all.</li>
       <li><b>Add an app.</b> Connections → <i>Add app</i>. Your browser opens the app’s own sign-in page; when you finish, it appears in that workspace.</li>
       <li><b>App missing from the list?</b> Switch it on in Embeddable Auth:
         <ol>${EMBED_STEPS.map(s => `<li>${s}</li>`).join('')}</ol></li>

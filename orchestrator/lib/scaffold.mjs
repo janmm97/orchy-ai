@@ -3,13 +3,15 @@
 //   .claude/agents/agent-builder.md  the workspace's Chief of AI Agents (Orchy Agent Spec)
 //   .jos/mcp.json, .jos/retired/     external MCP servers and retired agents
 //   .one/                            marks the folder as its own One project (signed in separately)
-//   Tasks/                           one folder per task the generalist does (tasks.mjs)
+//   Tasks/                           task folders until the agents have homes in departments (tasks.mjs)
+//   Resources/, Uploads/             skills/MCPs/CLIs in one place (resources.mjs); files the owner attaches
 // The text lives in orchestrator/templates/*.md: edit those to change what new workspaces get.
 import fs from 'node:fs';
 import path from 'node:path';
 import { ORCH_DIR, config, ownerName } from './env.mjs';
 import { modelsFor, runtimeLabel, accountFor } from './workspaces.mjs';
 import { engine } from './engines/index.mjs';
+import { ensureResources, syncResources } from './resources.mjs';
 
 const TEMPLATES = path.join(ORCH_DIR, 'templates');
 
@@ -36,12 +38,15 @@ export function scaffoldWorkspace(ws) {
     made.push(rel);
   };
   fs.mkdirSync(ws.dir, { recursive: true });
-  for (const d of ['.one', '.jos/retired', '.claude/agents', 'Tasks']) fs.mkdirSync(path.join(ws.dir, d), { recursive: true });
+  for (const d of ['.one', '.jos/retired', '.claude/agents', 'Tasks', 'Uploads']) fs.mkdirSync(path.join(ws.dir, d), { recursive: true });
+  ensureResources(ws);
   const instructions = fill('workspace-instructions.md', vars);
   write('CLAUDE.md', instructions);
   write('AGENTS.md', instructions);
   write('.claude/agents/agent-builder.md', fill('agent-builder.md', vars));
   write('.jos/mcp.json', JSON.stringify({ servers: {} }, null, 2) + '\n');
+  // the homes of the departments it starts with (the builder's included, resources.mjs#syncHomes) and INDEX.md
+  try { syncResources(ws); } catch (e) { console.warn('[scaffold] resources', e.message); }
   return made;
 }
 

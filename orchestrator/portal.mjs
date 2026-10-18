@@ -1,5 +1,5 @@
 // Client pages: a second, separate web server (CLIENT_PORT, default 8009) where one of the owner's clients works
-// with the agents the owner shared with them (Workspace → a workspace → Client access). Everything lives under
+// with the agents the owner shared with them (Workspaces → a workspace → Client access). Everything lives under
 // /c/<link secret>/: the page, and an API that only knows that client's agents, runs and questions.
 // The owner's own API on 8008 is never reachable from here. Put this port, and only this one, online
 // (Cloudflare Tunnel + Access); requests that come through Cloudflare without Access are refused.
@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ROOT, DASHBOARD_DIR, config, ownerName } from './lib/env.mjs';
-import { db, id } from './lib/store.mjs';
+import { db, id, save } from './lib/store.mjs';
 import { bus } from './lib/bus.mjs';
 import { workspace } from './lib/workspaces.mjs';
 import { listAgents } from './lib/agents.mjs';
@@ -22,15 +22,24 @@ import * as voiceAgents from './lib/voiceagents.mjs';
 import { env } from './lib/env.mjs';
 import { accessConfig, verifiedEmail } from './lib/cfaccess.mjs';
 import { voiceEnabled } from './lib/voice.mjs';
+import * as clientview from './lib/clientview.mjs';
+import { previewFile, kindFor, VIEW_TYPES } from './lib/artifacts.mjs';
+import { mediaFile } from './lib/media.mjs';
+import { mediaOrigin } from './lib/r2.mjs';
 
 const MAX_LIVE = 3;        // tasks one client can have running at once
 const MAX_TEXT = 8000;     // characters in a task or answer
 
 const err = (status, message) => Object.assign(new Error(message), { status });
+// Cloudflare's terms (non-Enterprise): no video (or big audio) through the tunnel; it plays from R2 (clientview.mjs)
+const STREAMED = new Set(['video', 'audio']);
+const NO_TUNNEL = 'Videos and audio play in the viewer on this page.';
+// files a client opens: SAMEORIGIN so an HTML file shows in the viewer's sandboxed frame on their page
+const FILE_HEADERS = { 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'SAMEORIGIN', 'X-Robots-Tag': 'noindex, nofollow' };
 const clip = (s, n = 140) => { const t = String(s).replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
 // How much one client can do in an hour (a leaked link or a stuck script can't run up the owner's bill or fill the disk)
-const LIMITS = { task: 40, upload: 80, call: 12, end: 12, tool: 300 };
+const LIMITS = { task: 40, upload: 80, call: 12, end: 12, tool: 300, play: 240 };
 const spent = new Map(); // `${clientId}:${kind}` -> [timestamps]
 function allow(c, kind) {
   const key = `${c.id}:${kind}`, now = Date.now();
@@ -82,7 +91,8 @@ export function clientRun(r) {
   // what they asked (the note about attached files is shown as file chips instead); the owner's follow-ups are scrubbed too
   const asked = String(r.instruction || '').replace(/\n\nFiles (?:[^\n]*) attached \(in this folder; open them with Read\):[\s\S]*$/, '');
   return {
-    id: r.id, agent: r.agentSlug, agentName: r.agentName, status: r.status, outcome: r.outcome || null,
+    // a run waiting its turn on the owner's account (queued, or paused on a usage limit) is just "starting" to the client
+    id: r.id, agent: r.agentSlug, agentName: r.agentName, status: r.status === 'queued' || r.status === 'paused-limit' ? 'starting' : r.status, outcome: r.outcome || null,
     instruction: r.ownerReply ? s(asked) : asked,
     by: r.ownerReply ? ownerName() : null, files: (r.files || []).map(p => path.posix.basename(p)),
     startedAt: r.startedAt, endedAt: r.endedAt || null, parentRunId: r.parentRunId || null,
@@ -213,6 +223,9 @@ function forClient(c, evt) {
     }
     case 'inbox.created': case 'inbox.answered': case 'inbox.expired':
       return evt.item?.client === c.id ? [evt.type, { item: clientItem(evt.item) }] : null;
+    // files their tasks made: only theirs, scrubbed (clientview.mjs)
+    case 'artifact.created': case 'artifact.updated':
+      return clientview.artifactEvent(c, evt);
     case 'clients.changed': case 'workspaces.changed': case 'agent.updated': case 'agent.retired':
       return ['refresh', {}];
     default: return null;
@@ -299,14 +312,29 @@ const SECURITY = {
   'Content-Security-Policy': "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; media-src 'self' blob:; connect-src 'self' https://api.elevenlabs.io wss://api.elevenlabs.io https://livekit.rtc.elevenlabs.io wss://livekit.rtc.elevenlabs.io; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'",
   'Permissions-Policy': 'microphone=(self), camera=(), geolocation=(), payment=(), usb=()',
 };
-const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.woff2': 'font/woff2', '.svg': 'image/svg+xml' };
+// the client page itself: video and audio may also come from the R2 bucket (presigned links, clientview.mjs), once it's set up
+const pageCSP = () => { const o = mediaOrigin(); return SECURITY['Content-Security-Policy'].replace("media-src 'self' blob:", `media-src 'self' blob:${o ? ` ${o}` : ''}`); };
+const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.woff2': 'font/woff2', '.svg': 'image/svg+xml', '.wasm': 'application/wasm', '.ttf': 'font/ttf', '.pfb': 'application/octet-stream', '.bcmap': 'application/octet-stream', '.icc': 'application/vnd.iccprofile' };
 // the only files this server hands out
 const d = (...p) => path.join(DASHBOARD_DIR, ...p);
+// the file viewer's vendored pdf.js: its build, worker and data files, listed once at start (no subfolders below these)
+const PDFJS = 'pdfjs-6.3.289';
+function pdfjsFiles() {
+  const out = {};
+  const add = rel => { if (/\.(mjs|bcmap|pfb|ttf|wasm|icc)$/i.test(rel)) out[`/vendor/${PDFJS}/${rel}`] = d('vendor', PDFJS, ...rel.split('/')); };
+  for (const sub of ['', 'cmaps', 'standard_fonts', 'wasm', 'iccs']) {
+    try { for (const e of fs.readdirSync(d('vendor', PDFJS, sub), { withFileTypes: true })) if (e.isFile()) add(sub ? `${sub}/${e.name}` : e.name); } catch {}
+  }
+  return out;
+}
 const STATIC = {
   '/styles/tokens.css': d('styles', 'tokens.css'), '/styles/app.css': d('styles', 'app.css'), '/styles/client.css': d('styles', 'client.css'),
   '/js/client.mjs': d('js', 'client.mjs'), '/js/attach.mjs': d('js', 'attach.mjs'), '/js/pixel.mjs': d('js', 'pixel.mjs'), '/js/util.mjs': d('js', 'util.mjs'),
   '/vendor/marked.js': path.join(ROOT, 'node_modules', 'marked', 'lib', 'marked.esm.js'),
   '/js/clientcall.mjs': d('js', 'clientcall.mjs'),
+  // the same viewer as the owner's dashboard (no fork); windows.mjs only because viewer.mjs imports it (the page mounts the viewer inline)
+  '/js/viewer.mjs': d('js', 'viewer.mjs'), '/js/viewers/media.mjs': d('js', 'viewers', 'media.mjs'), '/js/viewers/pdf.mjs': d('js', 'viewers', 'pdf.mjs'), '/js/windows.mjs': d('js', 'windows.mjs'),
+  ...pdfjsFiles(),
   ...Object.fromEntries(['client-1.25.0.js', 'rawAudioProcessor.js', 'audioConcatProcessor.js', 'libsamplerate-2.1.2.worklet.js'].map(f => [`/vendor/elevenlabs/${f}`, d('vendor', 'elevenlabs', f)])),
   '/fonts/Silkscreen-400.woff2': d('fonts', 'Silkscreen-400.woff2'), '/fonts/AtkinsonHyperlegibleNext.woff2': d('fonts', 'AtkinsonHyperlegibleNext.woff2'),
   '/fonts/AtkinsonHyperlegibleMono.woff2': d('fonts', 'AtkinsonHyperlegibleMono.woff2'),
@@ -318,9 +346,9 @@ function send(res, status, body, headers = {}) {
   res.writeHead(status, { ...SECURITY, 'Content-Type': json ? 'application/json; charset=utf-8' : 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
   res.end(json ? JSON.stringify(body) : body);
 }
-function serveFile(res, file, cache = 'no-cache') {
+function serveFile(res, file, cache = 'no-cache', extra = {}) {
   if (!fs.existsSync(file)) return send(res, 404, { error: 'Not found' });
-  res.writeHead(200, { ...SECURITY, 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control': cache });
+  res.writeHead(200, { ...SECURITY, 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control': cache, ...extra });
   fs.createReadStream(file).pipe(res);
 }
 const escHTML = s => String(s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -375,7 +403,7 @@ function events(req, res, c, token) {
 
 async function handle(req, res) {
   const { pathname } = new URL(req.url, 'http://x');
-  if (req.method === 'GET' && STATIC[pathname]) return serveFile(res, STATIC[pathname], pathname.startsWith('/fonts/') ? 'max-age=86400' : 'no-cache');
+  if (req.method === 'GET' && STATIC[pathname]) return serveFile(res, STATIC[pathname], pathname.startsWith('/fonts/') || pathname.startsWith(`/vendor/${PDFJS}/`) ? 'max-age=86400' : 'no-cache');
   const m = pathname.match(/^\/c\/([A-Za-z0-9_-]{20,100})(\/.*)?$/);
   if (!m) return gone(res);
   const [, token, rest = '/'] = m;
@@ -383,10 +411,10 @@ async function handle(req, res) {
   try { c = await who(req, token); }
   catch (e) { if (rest === '/') return notice(res, e.status, 'Not open yet', e.message); throw e; }
   if (!c) return gone(res);
-  if (req.method === 'GET' && rest === '/') return serveFile(res, d('client.html'), 'no-store');
+  if (req.method === 'GET' && rest === '/') return serveFile(res, d('client.html'), 'no-store', { 'Content-Security-Policy': pageCSP() });
   const api = rest.match(/^\/api\/(.+)$/)?.[1];
   if (!api) return gone(res);
-  const [a, b, x] = api.split('/');
+  const [a, b, x, y] = api.split('/');
   if (req.method === 'GET' && api === 'state') return send(res, 200, stateFor(c));
   if (req.method === 'GET' && api === 'events') return events(req, res, c, token);
   if (req.method === 'POST' && api === 'runs') return send(res, 200, await startTask(c, await readBody(req)));
@@ -411,10 +439,41 @@ async function handle(req, res) {
       const r = mine(c, b);
       const file = taskFile(workspace(r.workspace), r, new URL(req.url, 'http://x').searchParams.get('path'));
       if (!file) throw err(404, 'That file isn’t there.');
-      return sendTaskFile(res, file, { 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'X-Robots-Tag': 'noindex, nofollow' });
+      if (STREAMED.has(kindFor(file))) throw err(403, NO_TUNNEL); // Cloudflare's terms: no video through the tunnel
+      return sendTaskFile(res, file, { 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'X-Robots-Tag': 'noindex, nofollow' }, { req });
     }
     if (req.method === 'POST' && x === 'reply') return send(res, 200, await followUp(c, b, await readBody(req)));
     if (req.method === 'POST' && x === 'stop') { mine(c, b); return send(res, 200, clientRun(db().runs[runner.stopRun(b, { by: c.name }).id])); }
+  }
+  // the file viewer: only this client's own files, from their own folder (clientview.mjs#guard), scrubbed
+  if (req.method === 'GET' && a === 'artifacts') {
+    const q = new URL(req.url, 'http://x').searchParams;
+    if (!b) {
+      const r = mine(c, String(q.get('run') || ''));
+      return send(res, 200, clientview.listFor(c, r, { ended: !!r.endedAt && !runner.isLive(r.id) }));
+    }
+    if (!x) return send(res, 200, { artifact: clientview.clientArtifact(c, clientview.guard(c, b).a) });
+    if (x === 'raw' && !y) {
+      const { a: art, file } = clientview.guard(c, b);
+      if (STREAMED.has(art.kind) || STREAMED.has(kindFor(file))) throw err(403, NO_TUNNEL);
+      return sendTaskFile(res, file, FILE_HEADERS, { req, media: true, types: VIEW_TYPES, download: q.has('download'), name: art.name });
+    }
+    if (x === 'preview' && !y) {
+      const { a: art, file } = clientview.guard(c, b);
+      let p;
+      try { p = await previewFile(file, art.name); } catch (e) { throw err(e.status && e.status < 500 ? e.status : 500, scrubber(c.workspace, c.id)(e.message)); }
+      return send(res, 200, { ...p, version: art.version });
+    }
+    // posters, thumbs, fit views and HEIC/TIFF previews are small images: fine through the tunnel. Never `play`.
+    if (x === 'media' && ['poster', 'thumb', 'fit', 'preview'].includes(y)) {
+      const { a: art } = clientview.guard(c, b);
+      const file = mediaFile(art.id, y);
+      if (!file) throw err(404, 'That preview isn’t ready.');
+      return sendTaskFile(res, file, FILE_HEADERS, { req, media: true, types: VIEW_TYPES, name: `${y}.webp`, cache: 'private, max-age=86400' });
+    }
+    // a video or audio file: a short-lived link to its copy in R2, or why it can't play yet
+    if (x === 'play' && !y) { allow(c, 'play'); return send(res, 200, clientview.playFor(c, b)); }
+    throw err(404, 'Not found');
   }
   if (req.method === 'POST' && a === 'inbox' && b && x === 'answer') return send(res, 200, answer(c, b, await readBody(req)));
   if (a === 'voice' && req.method === 'POST') {
@@ -433,7 +492,19 @@ async function handle(req, res) {
   throw err(404, 'Not found');
 }
 
+/** Client video isn't switched on (no R2 keys): the owner hears it once, the first time a client tries to play one. */
+function videoOff(c) {
+  const st = db();
+  if (st.notices?.clientVideoOff) return;
+  (st.notices ||= {}).clientVideoOff = new Date().toISOString();
+  save();
+  const sid = ensureSession(null, { text: 'Client video isn’t switched on', origin: 'client-setup' }).id;
+  orchy.say(`${c.name} tried to play a video on their client page, but client video isn't switched on yet, so they only see its poster. To switch it on: in Cloudflare, turn on R2, make a private bucket and an Object Read & Write API token for just that bucket, then put R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_BUCKET in .env (no restart needed; README → Client pages has the steps).`, { workspace: c.workspace, session: sid });
+}
+
 export function startPortal() {
+  clientview.configureClientView({ onOff: videoOff });
+  clientview.startClientView();
   const port = CLIENT_PORT();
   const server = http.createServer(async (req, res) => {
     try { await handle(req, res); }

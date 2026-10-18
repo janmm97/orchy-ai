@@ -7,8 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, save } from './store.mjs';
-import { expandPath, ROOT, env, ownerName } from './env.mjs';
+import { expandPath, ROOT, env, ownerName, readText } from './env.mjs';
 import { workspaces, RETIRED_DIR } from './workspaces.mjs';
+import { agyRoot } from './engines/antigravity.mjs';
 import { fencedDirs, guardedFile, rootRel, LOCK_MARKERS } from './backend.mjs';
 
 const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS', 'WebSearch', 'WebFetch', 'TodoWrite', 'Task', 'Agent', 'NotebookRead', 'ToolSearch', 'Skill', 'ListMcpResourcesTool', 'ReadMcpResourceTool', 'SendUserMessage']);
@@ -283,8 +284,10 @@ const ONE_HEAD = /^(?:npx\s+)?(?:[^\s'"]*[\\/])?one(?:\.cmd|\.ps1|\.exe)?\s/i;
 // `node …/@withone/cli/bin/cli.js …` (the path lib/one.mjs resolves). Rewritten to the bare word `one` so the One
 // parser reads the action from the args that follow.
 // The path starts at a word start, so a long word is scanned once, not once per character.
-const WITHONE = /(?:(?:npx|pnpx|bunx)\s+(?:-y\s+|--yes\s+)?|(?:npm|pnpm)\s+(?:exec|dlx)\s+(?:-y\s+)?(?:--\s+)?|node\s+)?(?<![^\s=(&;|])(['"]?)[^\s'"]*@withone[\\/]cli(?:@[\w.-]+)?(?:[\\/][^\s'"]*cli\.js)?\1(?:\s+--(?=\s))?/gi;
-const unwrapOneCli = line => /@withone/i.test(line) ? String(line).replace(WITHONE, 'one') : String(line);
+const WITHONE = /(?:(?:npx|pnpx|bunx|bun\s+x)\s+(?:-y\s+|--yes\s+)?|(?:npm|pnpm)\s+(?:exec|x|dlx)\s+(?:-y\s+)?(?:--\s+)?|yarn\s+dlx\s+|node\s+)?(?<![^\s=(&;|])(['"]?)[^\s'"]*@withone[\\/]cli(?:@[\w.-]+)?(?:[\\/][^\s'"]*cli\.js)?\1(?:\s+--(?=\s))?/gi;
+// …and the package named as an option, its program after it: `npx -p @withone/cli one …`, `npm exec --package=@withone/cli -- one …`
+const WITHONE_PKG = /(?:npx|pnpx|bunx|bun\s+x|(?:npm|pnpm)\s+(?:exec|x|dlx)|yarn\s+dlx)\s+(?:-y\s+|--yes\s+)?(?:-p|--package)(?:=|\s+)(['"]?)@withone[\\/]cli(?:@[\w.-]+)?\1\s+(?:-y\s+|--yes\s+)?(?:--\s+)?(?:one|cli)(?=\s|$)/gi;
+const unwrapOneCli = line => /@withone/i.test(line) ? String(line).replace(WITHONE_PKG, 'one').replace(WITHONE, 'one') : String(line);
 // The real One CLI, not a copy: a cli.js path must be outside the agent's folders (it can write freely only inside
 // them), and npx @withone/cli must not find a node_modules/@withone the agent could have put in its own folders.
 function realOneCli(seg, cwd, roots) {
@@ -322,12 +325,13 @@ function oneCallsIn(command, shell) {
     const starts = [...scanShell(s, shell).code.matchAll(ONE_CALL)].map(m => ({ at: m.index, end: m.index + m[0].length }));
     starts.forEach((m, i) => {
       const rest = s.slice(m.end, starts[i + 1]?.at ?? s.length).replace(/--agent\s*/gi, '').trim();
-      const exec = rest.match(/^(?:actions|a)\s+execute\s+(\S+)\s+(\S+)\s+(\S+)/i);
+      // (`a` and `x` are the CLI's own short names for actions and execute)
+      const exec = rest.match(/^(?:actions?|a)\s+(?:execute|x)\s+(\S+)\s+(\S+)\s+(\S+)/i);
       if (exec) {
         const clean = x => x.replace(/^['"]|['"),;]+$/g, '');
         out.push({ kind: 'execute', platform: clean(exec[1]), actionId: clean(exec[2]), connectionKey: clean(exec[3]), raw: s });
       } else {
-        out.push({ kind: ONE_READ.some(r => r.test(rest)) ? 'read' : 'other', sub: rest.split(/\s+/).slice(0, 2).join(' '), raw: s });
+        out.push({ kind: ONE_READ.some(r => r.test(rest)) ? 'read' : 'other', sub: rest.split(/\s+/).slice(0, 2).join(' '), raw: s, rest });
       }
     });
   }
@@ -565,13 +569,32 @@ const absPaths = s => [...(s.match(DRIVE_PATH) || []),
 // its provider too (FileSystem::\\host\share).
 const UNC_PATH = /(?<=^|[\s'"`=(,>]|::)(?:\\{2,}|\/\/)[^\s\\/'"`]+[\\/]/;
 const UNC_IN_CODE = /(?<=^|[\s'"`=(,])\\{2,}[^\s\\/'"`]+\\/;
-function outsidePaths(text, roots, { code = false } = {}) {
+// climbsOk: every climb (..) in the text was read word by word and stays inside (climbsInside)
+function outsidePaths(text, roots, { code = false, climbsOk = false } = {}) {
   const s = POSIX ? String(text).replace(TEMP_REF, (_, a, b, lead) => `${lead || ''}${os.tmpdir()}`)
     : String(text).replace(TEMP_REF, '$1').replace(/(^|[\s'"=(])\/([a-zA-Z])\//g, '$1$2:/');
-  if (/(^|[\s'"=])\.\.([\\/]|$|\s)|(^|[\s'"])~[\\/]/.test(s)) return true;
+  if ((!climbsOk && /(^|[\s'"=])\.\.([\\/]|$|\s)/.test(s)) || /(^|[\s'"])~[\\/]/.test(s)) return true;
   if ((code ? UNC_IN_CODE : UNC_PATH).test(s)) return true;
   if (code ? /homedir\(\)|process\.env\.(USERPROFILE|HOME|APPDATA|LOCALAPPDATA)|expanduser|os\.environ/.test(s) : /\$env:|\$HOME\b|%\w+%/i.test(s)) return true;
   return absPaths(s).some(p => !inRoots(p, roots));
+}
+/**
+ * Do the climbs (..) in a piece all land back inside `roots`, from every folder it may run from (2026-10-15:
+ * `cd studio && ls ../projects` is still its own work)? Each word is read as the shell reads it; a climb word that is
+ * more than a plain path (quoted text with spaces, a variable, a wildcard, code) or a folder Orchy can't name says no.
+ */
+function climbsInside(seg, shell, dirs, roots) {
+  if (!dirs.length || dirs.some(d => !d || /[$`%~]/.test(d) || d === ELSEWHERE)) return false;
+  let any = false;
+  for (const { word } of shellWords(seg, shell)) {
+    if (!/(^|[^.])\.\.(?![^\\/])/.test(word)) continue;
+    any = true;
+    const m = word.match(/^(?:-{1,2}[\w-]+=|[A-Za-z_]\w*=)?([^\s'"`$*?~{}()=,;]+)$/);
+    if (!m) return false;
+    const p = POSIX ? m[1].replace(/\\/g, '/') : m[1];
+    if (!dirs.every(d => inRoots(path.resolve(d, p), roots))) return false;
+  }
+  return any;
 }
 
 // Scripts an agent writes to shape data (parse JSON, build a request body) run on their own. One that
@@ -615,14 +638,19 @@ const SCRIPT_DECISIONS = {
   share: /\bshare(?:[A-Z_]\w*)?\s*\(|\bpermissions\.create\b|\/permissions\b|addCollaborator|\binvite(?:[A-Z_]\w*)?\s*\(/i,
 };
 // Orchy's own dashboard: a change there already needs the owner's paired browser (lib/owner.mjs), and a script
-// that talks to it asks as well, Scripts setting or not. Orchy's screenshot script only loads the page.
+// that talks to it asks as well, Scripts setting or not, and so does a command in "Scripts and commands" (curl, wget,
+// Invoke-RestMethod… to it). Orchy's screenshot script only loads the page.
 const DASHBOARD_WHY = 'talks to Orchy’s own dashboard, where your approvals and settings live';
-const LOCAL_HOST = /\b(localhost|127\.0\.0\.1|0\.0\.0\.0)\b|\[::1\]/i;
+// this PC by any of its loopback spellings: localhost, 127.x.x.x, 0.0.0.0, http://0:…, [::1], [0:0:…:1], [::ffff:127…],
+// 0x7f000001, 2130706433
+const LOCAL_HOST = /\b(?:localhost|127(?:\.\d{1,3}){1,3}|0\.0\.0\.0|0x7f[0-9a-f]*|2130706433)\b|\[(?:0{0,4}:){2,7}0{0,3}1\]|\[::ffff:(?:127\.|7f)|\/\/0(?=[:/])/i;
+// the port read from Orchy's own setting rather than written out: $PORT, $env:PORT, %PORT%, process.env.PORT, os.environ['PORT']
+const PORT_REF = /\$\{?PORT\b|\$env:PORT\b|%PORT%|env\.PORT\b|environ(?:\.get\(\s*|\[\s*)['"]PORT['"]|getenv\(\s*['"]PORT['"]/i;
 const CDP_SCRIPT = path.join(ROOT, 'orchestrator', 'scripts', 'cdp.mjs').toLowerCase();
 function talksToDashboard(n) {
   if (n.file && [path.resolve(n.file), path.resolve(ROOT, n.file)].some(p => p.toLowerCase() === CDP_SCRIPT)) return false;
   const port = new RegExp(`(^|\\D)${Number(env('PORT', '8008'))}(\\D|$)`);
-  return [n.code, n.piece].some(t => t && LOCAL_HOST.test(t) && port.test(t));
+  return [n.code, n.piece].some(t => t && LOCAL_HOST.test(t) && (port.test(t) || PORT_REF.test(t)));
 }
 // a One send from a script, with the `actions`=`a` and `execute`=`x` aliases, and after --agent: `a x`, `actions x`,
 // `a execute`. Tested on code with string concatenation ('act'+'ions') joined up first.
@@ -660,6 +688,124 @@ async function scriptDecision(n, ctx) {
     }
   }
   return null;
+}
+
+// ── Settings → "Scripts and commands" (2026-10-15): in the owner's own runs, commands, scripts and One CLI calls run on
+// their own; one asks only when it visibly does a decision the owner keeps (askFor). Never in a client's run, a head's
+// hand-off or Orchy fixing himself, and never for Orchy's dashboard, setup, sign-ins, other folders or system changes.
+// The kinds of shell work (shellNeedsOwner) that may run there:
+const FREE_KINDS = new Set(['network', 'program', 'outside', 'link', 'delete']);
+// RISKY_HEADS by what they do: the network, starting programs, file modes; the rest (stopping processes, the registry,
+// scheduled tasks, installers, environment, disks, admin rights, sending mail) changes the system and always asks
+const NET_HEADS = new Set(['curl', 'wget', 'invoke-webrequest', 'invoke-restmethod', 'iwr', 'irm', 'ssh', 'scp', 'sftp', 'ftp', 'rsync', 'telnet', 'nc', 'ncat']);
+const PROGRAM_HEADS = new Set(['start-process', 'start', 'saps', 'start-job', 'invoke-command', 'icm', 'xargs', 'forfiles', 'winpty', 'setsid']);
+const FILE_MODE_HEADS = new Set(['chmod', 'chown', 'attrib']);
+// RISKY_ANYWHERE's plain network part: .NET web clients, and git reaching a remote with no -c setting (which can name
+// a program to run). The rest of it (starting processes, deleting through .NET, git config and aliases) changes the system.
+const NET_ANYWHERE = /Net\.WebClient|System\.Net\.(?:WebClient|Http\w*)|HttpClient|\bgit\s+(?:--[\w-]+(?:=\S+)?\s+)*(?:push|clone|fetch|pull)\b/gi;
+const writeKind = (why, ws) => (why === SETUP_WHY(ws) ? 'setup' : /outside its folder/.test(why) ? 'outside' : 'unclear');
+/** A decision a command line spells as code does (curl …/v1/refunds, chat.postMessage…), as { why }, or null. */
+function pieceDecision(text, ctx) {
+  for (const x of DECISIONS) if (SCRIPT_DECISIONS[x.key]?.test(text) && asked(x, ctx)) return { why: `looks like ${x.label.toLowerCase()} (${x.hint})` };
+  return null;
+}
+/** The One actions named in some text (conn_mod_def::…), judged like any action: { why } for the first decision, or null. */
+async function idsDecision(text, ctx, { none = null } = {}) {
+  const ids = [...new Set(String(text).match(/conn_mod_def::[\w-]+::[\w-]+/g) || [])];
+  if (!ids.length) return none;
+  for (const id of ids) {
+    const a = await ctx.resolveAction?.(id);
+    if (!a?.title) return { why: 'runs a One action Orchy couldn’t look up' };
+    if (isReadOnlyAction(a.method, a.title)) continue;
+    const d = decisionFor(a.title, a.platform);
+    if (asked(d, ctx)) return { why: `runs "${a.title}": ${d.label.toLowerCase()} (${d.hint})` };
+  }
+  return null;
+}
+/** A flow's file: <dir>/.one/flows/<key>/flow.json or <key>.flow.json, from where the command runs or the workspace. */
+function flowText(key, dirs) {
+  for (const d of dirs) for (const p of [path.join(d, '.one', 'flows', key, 'flow.json'), path.join(d, '.one', 'flows', `${key}.flow.json`)]) {
+    try { return readText(p); } catch {}
+  }
+  return null;
+}
+// the One subcommands free mode lets run (flows and actions, judged by what they run; memory, sync and cache are
+// One's own records). Anything else (init, login, add, config, relay…) can change which account or connections the
+// folder uses, or set up something that runs later outside the gate: it asks as before.
+const ONE_FREE = /^(?:flow|f|actions?|a|mem|sync|cache)\b/i;
+/** A `one …` call that isn't a plain read or a parsed action: what it does that the owner keeps, as { why }, or null. */
+async function oneOtherDecision(c, command, cwd, ws, ctx) {
+  const rest = String(c.rest ?? '').trim();
+  if (/(^|\s)(--help|-h)(\s|$)/.test(rest)) return null;
+  if (!ONE_FREE.test(rest)) return { why: `runs \`one ${c.sub}\`, which can change this workspace’s One account, connections or relays` };
+  const flow = rest.match(/^(?:flow|f)\s+(?:execute|run|exec)\s+['"]?([\w.-]+)/i);
+  if (flow) {
+    const text = flowText(flow[1], [cwd, ws.dir]);
+    if (text == null) return { why: `runs the One flow "${flow[1]}", which Orchy couldn’t find to read first` };
+    return pieceDecision(text, ctx) || idsDecision(text, ctx);
+  }
+  // `one actions execute` with its action in a variable or a loop: judged by the IDs the line names
+  if (/^(?:actions?|a)\s+(?:execute|x)\b/i.test(rest)) return idsDecision(command, ctx, { none: { why: 'runs a One action without naming it, so Orchy can’t tell what it does' } });
+  return null;
+}
+/** Can a line run a One action or flow at all (`which one`, `cat $(which one)` and `--help` can't)? */
+const mayRunOne = command => /\b(execute|exec|run|create|trigger|x)\b(?!\s+(--help|-h)\b)/i.test(String(command));
+/** Does a delete name the workspace's setup, or the folder that holds it (rm -rf ., rm -rf ../ws, rm -rf *)? */
+function deletesSetup(seg, cwd, ws, ctx, shell) {
+  return shellWords(seg, shell).slice(1).some(w => {
+    if (/^-/.test(w.word) || /^\/[a-z]$/i.test(w.word)) return false;
+    const abs = realPath(w.word, cwd);
+    return inRoots(ws.dir, [abs]) || setupFile(abs, ws, ctx) || setupPattern(w.raw, cwd, ws, ctx, shell) || setupPattern(w.word, cwd, ws, ctx, shell);
+  });
+}
+/**
+ * A delete whose targets all land in the run's folder or the temp folder, read the way the line spells them:
+ * variables set earlier in the line ($R, ${D}) and $TEMP/$TMP filled in, `..` followed. Its setup, .git and other
+ * clients' sandboxes stay out, and so does a target Orchy still can't read (an unknown variable).
+ */
+function deleteInWork(seg, cwd, command, ws, ctx) {
+  const vars = {};
+  for (const m of String(command).matchAll(/(?:^|[;&|\s])([A-Za-z_]\w*)=("[^"$`]*"|'[^']*'|[^\s"'$`;|&]+)(?=[\s;|&]|$)/g)) vars[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
+  const fill = t => t.replace(/\$\{?([A-Za-z_]\w*)\}?/g, (m, v) => (/^(TEMP|TMP)$/i.test(v) ? os.tmpdir() : vars[v] ?? m));
+  const tokens = seg.match(/"[^"]*"|'[^']*'|[^\s]+/g) || [];
+  if (!DELETES.test(headOf(tokens[0] || ''))) return false;
+  const targets = tokens.slice(1).filter(t => !/^-/.test(t) && !/^\/[a-z]$/i.test(t)).map(t => fill(t.replace(/^['"]|['"]$/g, '')));
+  if (!targets.length) return false;
+  const roots = [ctx.home || ws.dir, ...workRoots(ws).slice(1)];
+  return targets.every(t => {
+    if (/[$%`~]/.test(t)) return false;
+    const abs = realPath(t, cwd);
+    if (!roots.some(r => insideDir(abs, r))) return false;
+    if (/(^|[\\/])(\.clients|\.git|\.claude|\.jos|\.codex)([\\/]|$)/i.test(path.relative(ws.dir, abs)) || setupFile(abs, ws, ctx)) return false;
+    return !/[*?[]/.test(t) || path.basename(t).replace(/[*?[\]]/g, '').replace(/[^A-Za-z0-9]/g, '').length >= 2;
+  });
+}
+/**
+ * The settings of the harness this run uses (its Claude or Codex profile, ~/.claude.json): hooks and permissions there
+ * run in every later run, past the approval gate. Not the run's own session folder, where Claude parks tool results.
+ */
+function harnessPlace(piece, dirs, ws) {
+  const home = os.homedir();
+  const places = [...profileDirs(ws), path.join(home, '.claude.json'), ...(ws.claudeConfigDir ? [path.join(expandPath(ws.claudeConfigDir), '.claude.json')] : [])];
+  const work = [workRoots(ws)[2]]; // its own session folder
+  for (const t of String(piece).match(/"[^"]*"|'[^']*'|[^\s;|&()<>=,]+/g) || []) {
+    if (/^['"]?[a-z][\w+.-]*:\/\//i.test(t)) continue; // a URL
+    for (const d of dirs) {
+      const abs = realPath(t, d);
+      if (inRoots(abs, places) && !inRoots(abs, work)) return true;
+    }
+  }
+  return false;
+}
+/** Free mode: why a piece of shell work that may run on its own still asks, as { why }, or null. */
+function freeDecision(n, command, ws, ctx, cwd) {
+  const del = DECISIONS.find(x => x.key === 'delete');
+  if (harnessPlace(n.piece, [...new Set([n.cwd || cwd, cwd])], ws)) return { why: 'changes the settings of the harness this run uses, which every later run loads' };
+  // deleting: files in its folder or the temp folder go; elsewhere it's the "Deleting" decision
+  if (n.kind === 'delete') return asked(del, ctx) && !(n.seg && deleteInWork(n.seg, n.cwd || cwd, command, ws, ctx)) ? { why: 'deletes files outside its folder' } : null;
+  // a program that runs a delete it's handed (xargs rm, setsid rm -rf …) can't be checked for where: Deleting decides
+  if (n.kind === 'program' && /(^|[\s'"(;&|])(rm|del|erase|rmdir|rd|remove-item|ri)(?=[\s'")]|$)/i.test(n.piece) && asked(del, ctx)) return { why: 'deletes files Orchy can’t check first' };
+  return pieceDecision(n.piece, ctx);
 }
 
 const WRITE_HEADS = new Set(['cp', 'mv', 'copy', 'move', 'mkdir', 'md', 'touch', 'tee', 'tee-object', 'install', 'dd', 'set-content', 'add-content', 'out-file', 'new-item', 'ni', 'copy-item', 'cpi', 'move-item', 'mi', 'rename-item', 'rni', 'ren', 'export-csv', 'export-clixml']);
@@ -742,7 +888,7 @@ function writeHeadExtra(seg, shell, cwd) {
       for (const s of srcs) out.push(place(join(dest, s)));
       // a whole folder's contents copied in (cp -r x/. ., cp x/* .): the files are unknown, so could be setup
       const contents = /(?:^|\s)-\S*[rRa]|--recursive\b/.test(seg) || srcs.some(s => /[*?[]|[\\/]\.?\*?$/.test(s));
-      if (contents) for (const name of ['CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', '.claude', '.codex', '.one', '.agents', '.mcp.json', '.jos']) out.push(place(join(dest, name)));
+      if (contents) for (const name of ['CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', 'GEMINI.md', '.claude', '.codex', '.one', '.agents', '.mcp.json', '.jos', 'Resources']) out.push(place(join(dest, name)));
     }
   } else if (head === 'git' && /\bgit\s+(?:-[cC]\s+\S+\s+)*(?:checkout|restore)\b/i.test(seg)) {
     // git checkout <ref> -- <paths> / git restore <paths>: each path is overwritten from another version
@@ -803,31 +949,34 @@ function writtenInline(file, segs, i, shell) {
 /** In decisions mode: the pieces of a shell line that need the owner, as [{ why, piece }] (none: it may run). Starts in cwd. */
 function shellNeedsOwner(command, ws, ctx, cwd, shell, out = []) {
   const roots = workRoots(ws);
+  let cands = [cwd]; // cands: every place a piece may run from (a cd might not run)
   const { text, docs } = heredocs(command, shell);
   const segs = splitShell(text, shell);
   const vars = {};
   const nested = (s, at) => { for (const b of scanShell(s, shell).subs) if (b.trim() && !VALUE.test(b.trim()) && !shellIsSafe(b, shell)) shellNeedsOwner(b, ws, ctx, at, shell, out); };
-  if (RISKY_ANYWHERE.test(text)) out.push({ why: 'reaches the network or changes the system', piece: segs.find(s => RISKY_ANYWHERE.test(s)) || command });
-  if (OPAQUE.test(text)) out.push({ why: 'runs code worked out at run time that Orchy can’t read first', piece: segs.find(s => OPAQUE.test(s)) || command });
+  // kind: what Settings → "Scripts and commands" weighs (decideOnce's free mode): network, program, outside, link and
+  // delete may run there; setup, system, opaque and unclear always ask
+  if (RISKY_ANYWHERE.test(text)) out.push({ why: 'reaches the network or changes the system', kind: RISKY_ANYWHERE.test(text.replace(NET_ANYWHERE, ' ')) ? 'system' : 'network', cwd, piece: segs.find(s => RISKY_ANYWHERE.test(s)) || command });
+  if (OPAQUE.test(text)) out.push({ why: 'runs code worked out at run time that Orchy can’t read first', kind: 'opaque', cwd, piece: segs.find(s => OPAQUE.test(s)) || command });
   // a here-document without quotes around its EOF runs the $(…) and `…` in it
   for (const d of docs) if (!d.literal && !d.script) nested(`"${d.body.replace(/"/g, ' ')}"`, cwd);
   segs.forEach((piece, i) => {
-    const add = why => { out.push({ why, piece }); };
+    const add = (why, kind, more = {}) => { out.push({ why, piece, kind, cwd, ...more }); };
     const nc = cdResolve(piece, cwd, shell);
-    if (nc != null) { cwd = nc; return; } // where it works decides what its writes touch
+    if (nc != null) { cwd = nc; cands = nextDirs(cands, piece, i, shell) || [ELSEWHERE]; return; } // where it works decides what its writes touch
     const set = shell !== 'PowerShell' && piece.match(/^([A-Za-z_]\w*)=(?:"([^"$`]*)"|'([^']*)'|([^\s"'$`]*))$/);
     if (set) vars[set[1]] = set[2] ?? set[3] ?? set[4];
     nested(piece, cwd); // what it nests runs too: $(…), (…), {…}, `…`
     // past `do`, `time`, `timeout 30`, `env`…, and a Bash variable naming the program, as set earlier in the line
     const seg = piece.replace(WRAPPER, '').replace(/^"?\$\{?([A-Za-z_]\w*)\}?"?(?=\s|$)/, (m, v) => vars[v] ?? m);
-    if (computedHead(seg, shell)) return add('runs a program Orchy can’t name first');
+    if (computedHead(seg, shell)) return add('runs a program Orchy can’t name first', 'program');
     // FOO=1 curl …: the program after the assignments is judged as well
     const rest = shell === 'PowerShell' ? '' : bashRest(seg);
     if (rest && rest !== seg.trim()) shellNeedsOwner(rest, ws, ctx, cwd, shell, out);
     const away = !inRoots(cwd, roots);
     // where its redirects write, whatever it runs (a script, a One call): each target as the shell reads it
     const sent = writeWordWhy(redirectTargets(seg, shell).map(w => ({ ...w, target: true })), cwd, roots, ws, ctx, shell);
-    if (sent) add(sent); // and judge what it runs too, so a network or script reason (and its outward flag) stays
+    if (sent) add(sent, writeKind(sent, ws), { writes: true }); // and judge what it runs too, so a network or script reason (and its outward flag) stays
     if (ONE_HEAD.test(seg) || (ONE_HEAD.test(unwrapOneCli(seg)) && realOneCli(seg, cwd, roots))) return; // judged action by action above (@withone/cli too)
     const words = commandWords(seg, shell);
     if (INTERPRETERS.has(headOf(words[0] || ''))) {
@@ -851,7 +1000,8 @@ function shellNeedsOwner(command, ws, ctx, cwd, shell, out = []) {
       const head = headOf(w);
       if (RISKY_HEADS.has(head)) {
         if (w === words[0] && freeDelete(seg, cwd, ws, ctx)) continue; // tidying files in its own folder
-        return add(DELETES.test(head) ? 'deletes files' : 'reaches the network or changes the system');
+        if (DELETES.test(head)) return add('deletes files', deletesSetup(seg, cwd, ws, ctx, shell) ? 'setup' : 'delete', { seg });
+        return add('reaches the network or changes the system', NET_HEADS.has(head) ? 'network' : PROGRAM_HEADS.has(head) ? 'program' : FILE_MODE_HEADS.has(head) ? 'outside' : 'system');
       }
       if (SCRIPT_HEADS.has(head) || /\.(ps1|sh|bat|cmd|js|mjs|py)$/i.test(w)) {
         let file = seg.split(/\s+/).map(x => x.replace(/^['"]|['"]$/g, '')).find(x => /\.(ps1|sh|bash|bat|cmd|js|mjs|cjs|py)$/i.test(x));
@@ -865,28 +1015,29 @@ function shellNeedsOwner(command, ws, ctx, cwd, shell, out = []) {
       }
     }
     if (/^find\b/i.test(seg)) {
-      if (/\s-delete\b/i.test(seg)) return add('deletes files');
+      if (/\s-delete\b/i.test(seg)) return add('deletes files', 'delete');
       const run = seg.match(/\s-(?:exec|execdir|ok|okdir)\s+(.+?)(?:\s+\\?;|\s+\+)?\s*$/i);
       if (run) shellNeedsOwner(run[1], ws, ctx, cwd, shell, out);
     }
-    if (words.some(w => /^(ln|mklink)$/.test(headOf(w))) || /\b(junction|symboliclink|hardlink)\b/i.test(seg)) return add('makes a link to somewhere else');
-    if (outsidePaths(ownWordsOut(seg, shell, cwd, roots), roots)) return add('touches files outside its folder');
+    if (words.some(w => /^(ln|mklink)$/.test(headOf(w))) || /\b(junction|symboliclink|hardlink)\b/i.test(seg)) return add('makes a link to somewhere else', 'link');
+    // a climb (..) that keeps inside from every place the piece may run from (a cd before it might not have run) is its own work
+    if (outsidePaths(ownWordsOut(seg, shell, cwd, roots), roots, { climbsOk: climbsInside(seg, shell, cands, roots) })) return add('touches files outside its folder', 'outside');
     const sedIn = /^sed\b/i.test(seg) && /\s(?:-[a-zA-Z]*i|--in-place\b)/.test(seg), heads = words.some(w => WRITE_HEADS.has(headOf(w)));
     const extra = writeHeadExtra(seg, shell, cwd); // cp/mv into a folder, tar -C, unzip -d, 7z -o, split, patch, awk -i
-    if (extra.why) return add(extra.why);
+    if (extra.why) return add(extra.why, 'unclear');
     const outs = optionTargets(seg, shell);
     const writes = writesViaRedirect(seg, shell) || sedIn || heads || outs.length > 0 || extra.words.length > 0;
-    if (writes && away) return add('writes files outside its folder');
+    if (writes && away) return add('writes files outside its folder', 'outside', { writes: true });
     // a PowerShell write that works its path out at run time (a parent, a drive, $pwd, a .NET call) can't be checked
-    if (writes && shell === 'PowerShell' && (PATH_BUILD.test(seg) || /\$(?:pwd|PWD)\b[\\/]/.test(seg))) return add('works out a path Orchy can’t check');
-    if (writes && setupNamed(seg.replace(/^\S+/, ''), cwd, ws, ctx)) return add(SETUP_WHY(ws));
+    if (writes && shell === 'PowerShell' && (PATH_BUILD.test(seg) || /\$(?:pwd|PWD)\b[\\/]/.test(seg))) return add('works out a path Orchy can’t check', 'unclear');
+    if (writes && setupNamed(seg.replace(/^\S+/, ''), cwd, ws, ctx)) return add(SETUP_WHY(ws), 'setup');
     // what it writes to, read as the shell reads it: an --output file, sed -i's files, every word of a command that writes
     if (writes) {
       // (dd writes only its of=: if=/dev/zero is what it reads)
       const dd = !sedIn && words.some(w => headOf(w) === 'dd') && words.every(w => !WRITE_HEADS.has(headOf(w)) || headOf(w) === 'dd');
       const all = shellWords(seg, shell).slice(1).filter(w => !(dd && /^(?!of=)[a-z]+=/i.test(w.word)));
       const why = writeWordWhy([...outs, ...extra.words, ...(sedIn ? sedTargets(all) : heads ? all : []), ...(sedIn || heads ? bashSubWords(seg, shell) : [])], cwd, roots, ws, ctx, shell);
-      if (why) return add(why);
+      if (why) return add(why, writeKind(why, ws), { writes: true });
     }
   });
   return out;
@@ -1034,10 +1185,14 @@ function writeWordWhy(words, cwd, roots, ws, ctx, shell) {
 // ── A workspace's own setup: what its agents load (settings, hooks, skills, agents, instructions, MCP servers) ──
 // Agents keep working files in .jos (tmp/, state/, ledgers) and .agents (notes the marketing skills share, like
 // product-marketing.md): only .jos's mcp.json and retired/, and .agents/skills, are setup there. Changing
-// setup asks the owner in every run, except the AI Agent Builder writing agent files (and retiring them).
-const SETUP_FILES = /^(\.claude|\.codex|\.one|\.agents\/skills)(\/|$)|^\.jos\/(mcp\.json|retired)(\/|$)|^(CLAUDE|CLAUDE\.local|AGENTS)\.md$|^\.mcp\.json$/i;
-const BUILDER_FILES = /^\.claude\/agents(\/[^/]*)?$|^\.jos\/retired(\/|$)/i;
-const SETUP_NAMES = /\.claude\b|\.codex\b|\.agents\b|\.jos\b|(^|[\s'"\\/])\.one\b|\bCLAUDE(\.local)?\.md\b|\bAGENTS\.md\b|\bmcp\.json\b|\bsettings(\.local)?\.json\b|\bretired\b/i;
+// setup asks the owner in every run, except the AI Agent Builder writing agent files (and retiring them) and Resources/.
+// .agents also holds hooks, plugins and rules some harnesses load (.agents/{plugins,rules}/, .agents/{hooks,plugins,skills}.json),
+// and GEMINI.md is an instructions file like CLAUDE.md. Resources/ (the workspace's skills, MCP servers and CLIs in one
+// place) is setup too. .one/flows are flows an agent writes for its work: what they run is judged when they run
+// (oneOtherDecision), so they aren't setup.
+const SETUP_FILES = /^(\.claude|\.codex|\.one(?!\/flows(\/|$))|\.agents\/(skills|plugins|rules)|\.agents\/(hooks|plugins|skills)\.json)(\/|$)|^\.jos\/(mcp\.json|retired)(\/|$)|^(CLAUDE|CLAUDE\.local|AGENTS|GEMINI)\.md$|^\.mcp\.json$|^Resources(\/|$)/i;
+const BUILDER_FILES = /^\.claude\/agents(\/[^/]*)?$|^\.jos\/retired(\/|$)|^Resources(\/|$)/i;
+const SETUP_NAMES = /\bResources\b|\.claude\b|\.codex\b|\.agents\b|\.jos\b|(^|[\s'"\\/])\.one\b|\bCLAUDE(\.local)?\.md\b|\bAGENTS\.md\b|\bGEMINI\.md\b|\bmcp\.json\b|\bsettings(\.local)?\.json\b|\bretired\b/i;
 const SETUP_WHY = ws => `changes ${ws.name}'s own setup (its settings, skills, agents, instructions or connections)`;
 /** A path inside the folder as Windows reads it ("CLAUDE.md ", ".claude./x" and "x::$DATA" name the same files), or null. */
 function wsRel(p, dir) {
@@ -1055,7 +1210,7 @@ function setupFile(p, ws, ctx) {
 // The setup a name could reach once the shell or Windows fills it in: a wildcard (.clau?e, CLAU*.md, AGENT[S].md), an
 // expansion (.clau$()de, .clau${x}de), braces (.clau{de,}) or a short name (CLAUDE~1). A part that is one whole
 // variable ("$f", "$OUT/x.md") is judged as written, as it always was.
-const SETUP_TOPS = ['.claude', '.codex', '.one', '.agents/skills', '.jos/mcp.json', '.jos/retired', 'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', '.mcp.json'].map(t => t.split('/'));
+const SETUP_TOPS = ['.claude', '.codex', '.one', '.agents/skills', '.agents/plugins', '.agents/rules', '.agents/hooks.json', '.agents/plugins.json', '.agents/skills.json', '.jos/mcp.json', '.jos/retired', 'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', 'GEMINI.md', '.mcp.json', 'Resources'].map(t => t.split('/'));
 const ANY = '\u0001';
 const FILLED = /\$\([^)]*\)?|\$\{[^}]*\}?|\$(?:[\w:]+|[@*#?!$-]|$)/g;
 const SHORT_NAME = /(^|\/)[^/~]{1,6}~\d+(\.[^./]{0,3})?(\/|$)/i;
@@ -1136,7 +1291,8 @@ function freeDelete(seg, cwd, ws, ctx) {
 }
 
 // ── Sign-ins on this PC: another workspace's Claude or Codex profile, any Claude or Codex login file, One's logins ──
-const profileDirs = w => [w.claudeConfigDir ? expandPath(w.claudeConfigDir) : path.join(os.homedir(), '.claude'), w.codexHome ? expandPath(w.codexHome) : path.join(os.homedir(), '.codex')];
+// (each workspace's Antigravity folders too: its agents' agy settings and conversations, engines/antigravity.mjs)
+const profileDirs = w => [w.claudeConfigDir ? expandPath(w.claudeConfigDir) : path.join(os.homedir(), '.claude'), w.codexHome ? expandPath(w.codexHome) : path.join(os.homedir(), '.codex'), agyRoot(w)];
 const samePath = (a, b) => path.relative(path.resolve(a), path.resolve(b)) === '';
 /** Which sign-in a path reaches, or null. */
 function signInArea(p, ws, ctx) {
@@ -1192,8 +1348,8 @@ function josArea(p, ws, ctx) {
 // It never hands work to the workspace's agents that aren't shared with the client, and never changes the
 // workspace's own setup (agents, instructions, connections): that waits for the owner (rule keys outside one:/conn:/mcp:
 // go to the owner, see clients.mjs#askFields). Claude Code runs also get matching deny rules (clients.mjs#clientDenyRules).
-const SETUP_REL = /(^|\/)(\.claude|\.codex|\.agents|\.jos|\.one)(\/|$)|(^|\/)(CLAUDE|AGENTS)\.md$|^\.mcp\.json$/i;
-const SETUP_WORDS = /\.claude\b|\.codex\b|\.agents\b|\.jos\b|(^|[\s'"\\/])\.one\b|CLAUDE\.md|AGENTS\.md|\.mcp\.json/i;
+const SETUP_REL = /(^|\/)(\.claude|\.codex|\.agents|\.jos|\.one)(\/|$)|(^|\/)(CLAUDE|AGENTS|GEMINI)\.md$|^\.mcp\.json$/i;
+const SETUP_WORDS = /\.claude\b|\.codex\b|\.agents\b|\.jos\b|(^|[\s'"\\/])\.one\b|CLAUDE\.md|AGENTS\.md|GEMINI\.md|\.mcp\.json/i;
 function setupPath(p, ws) {
   const rel = wsRel(p, ws.dir);
   return !!rel && SETUP_REL.test(rel);
@@ -1308,18 +1464,49 @@ function clientFence(toolName, input, ctx, ws) {
 }
 
 /** Orchy's own files or another workspace's folder named in a command (the owner's runs: these ask, as Read does), with the piece naming it. */
+/**
+ * The folders the next piece of a line may run from, after `piece` (the i-th). A first-piece cd into a folder that is
+ * there always runs and lands there; any other cd may not run (`false && cd x`, `cd x || …`, a cd that fails), so its
+ * target joins the folders it may be in (ELSEWHERE for one Orchy can't follow, so no climb from there is trusted).
+ */
+function nextDirs(dirs, piece, i, shell) {
+  const to = dirs.map(d => cdResolve(piece, d, shell));
+  if (to.every(t => t == null)) return dirs;
+  if (i === 0 && dirs.length === 1 && to[0] !== ELSEWHERE) { try { if (fs.statSync(to[0]).isDirectory()) return [to[0]]; } catch {} }
+  const out = [...dirs];
+  for (const t of to) if (t != null && !out.includes(t)) out.push(t);
+  return out.length > 16 ? null : out; // more places than Orchy follows: the caller asks
+}
+// `..` is read from every folder the piece may run from (2026-10-15: `cd studio && cat ../../LOGS.md` reaches Orchy's
+// LOGS.md): where the line starts, and each `cd` before it, which may or may not have run. A plain read of a path that
+// isn't there reads nothing (often a spaced path cut short), so it doesn't ask; anything else that names one still does,
+// as it could create it.
 function shellJosArea(command, ws, ctx, cwd, shell) {
   const drive = new RegExp(DRIVE_PATH.source);
-  for (const piece of splitShell(command, shell)) {
-    for (const t of piece.replace(TEMP_REF, '$1').match(/"[^"]*"|'[^']*'|[^\s;|&()<>]+/g) || []) {
+  const exists = ctx.exists ?? fs.existsSync;
+  let dirs = [cwd];
+  for (const [i, piece] of splitShell(command, shell).entries()) {
+    const reads = pieceIsSafe(piece, shell, true);
+    // after a cd out of the folder, a plain relative name can land in Orchy too (cd /home/me && cat orchy/LOGS.md)
+    const away = dirs.filter(d => !inRoots(d, [ws.dir]));
+    for (const [k, t] of (piece.replace(TEMP_REF, '$1').match(/"[^"]*"|'[^']*'|[^\s;|&()<>]+/g) || []).entries()) {
       const p = t.replace(/^['"]|['"]$/g, '').replace(/^file:\/+(?=[A-Za-z]:)/i, '');
+      if (/^[a-z]+:\/\//i.test(p)) continue;
       const posixAbs = POSIX && /^\/(?!\/)/.test(p);
-      if (/^[a-z]+:\/\//i.test(p) || !(drive.test(p) || posixAbs || CLIMB.test(` ${p}`))) continue;
-      // a whole (maybe quoted, maybe spaced) path, or the path inside a token like --file=C:/…
-      const target = /^[A-Za-z]:[\\/]/.test(p) || posixAbs ? p : (p.match(drive)?.[0] || p);
-      const area = josArea(realPath(target, cwd), ws, ctx);
-      if (area) return { area, piece };
+      const placed = drive.test(p) || posixAbs || CLIMB.test(` ${p}`);
+      // (a relative word only when it reads as a path: not the program's name, an option or a line of code)
+      if (!placed && (!away.length || !k || !/^[\w.@+-][\w .@+-]*(?:[\\/][\w .@+-]*)*$/.test(p) || /^-/.test(p))) continue;
+      // a whole (maybe quoted, maybe spaced) path, or the path inside a token like --file=C:/… or --out=../x
+      const target = /^[A-Za-z]:[\\/]/.test(p) || posixAbs ? p : (p.match(drive)?.[0] || p.replace(/^(?:-{1,2}[\w-]+|[A-Za-z_]\w*)=(?=\.\.)/, ''));
+      for (const d of placed ? dirs : away) {
+        const abs = realPath(target, d);
+        if (reads && !exists(abs)) continue;
+        const area = josArea(abs, ws, ctx);
+        if (area) return { area, piece };
+      }
     }
+    dirs = nextDirs(dirs, piece, i, shell);
+    if (!dirs) return { area: null, piece };
   }
   return null;
 }
@@ -1366,7 +1553,7 @@ const BACKEND_CHECK = /^(?:node(?:\.exe)?\s+(?:--check|-c)\s+[^\s;|&<>`$]+|node(
 const backendCheck = seg => BACKEND_CHECK.test(seg) && !/--live\b/.test(seg); // --live asks real Jev and One
 const STOPS_ORCHY = s => /^(taskkill|stop-process|spps|kill|pkill|killall)\b/i.test(s)
   || (/^(node|npm|npx)\b/i.test(s) && /server\.mjs|\bnpm\s+(run\s+)?(start|dev)\b/i.test(s) && !/\s--check\b/.test(s))
-  || /(start|stop)-jos\.ps1|Start Orchy\.cmd/i.test(s);
+  || /(start|stop)-jos\.ps1|Start Orchy\.(cmd|command|sh)/i.test(s);
 const lockCount = s => (String(s ?? '').match(new RegExp(LOCK_MARKERS.source, 'gi')) || []).length;
 
 /** Does an edit to Orchy's server code take out text naming one of his locks (fewer mentions after than before)? */
@@ -1432,7 +1619,8 @@ async function backendLimits(toolName, input, ctx) {
  * Decide on a tool call.
  * ctx: { run, ws, agent (summary or null), connections: [...], resolveAction(actionId), oneScoped, remembered(ruleKey),
  *        mode: 'decisions' (default: only real decisions ask) | 'all' (every change asks), askFor: { money, send, … },
- *        home (a client's run: its own folder), readRoots (more folders it may read: the workspace's skills) }
+ *        home (a client's run: its own folder), readRoots (more folders it may read: the workspace's skills),
+ *        scriptsFree (Settings → Scripts and commands), exists(path) (fs.existsSync unless a test stands in) }
  * returns { decision: 'allow'|'ask'|'deny', reason, summary, detail, ruleKey, outward }
  * `outward` marks an ask that reaches beyond the workspace (a decision, the network, an unknown action):
  * in a run a head handed over, those always ask the owner, even with an "always allow" rule (gate.mjs).
@@ -1483,9 +1671,13 @@ async function decideOnce(toolName, input, ctx) {
   if (READ_TOOLS.has(toolName)) {
     // reads in its own folder never reach here (Claude Code allows them itself); elsewhere in Orchy is other clients' ground
     const glob = toolName === 'Glob' && input.pattern ? path.resolve(ws.dir, input.path || '', String(input.pattern).split(/[*?[{]/)[0]) : null;
+    const exists = ctx.exists ?? fs.existsSync;
     for (const p of [input.file_path, input.notebook_path, input.path, glob, fileUrlPath(input.url)].filter(Boolean)) {
       if (ctx.readRoots && inRoots(path.resolve(ws.dir, p), ctx.readRoots)) continue; // a client's run reading the workspace's skills
       const abs = path.resolve(ws.dir, p);
+      // a guessed path that isn't there reads nothing: the harness answers "does not exist", no point asking the owner
+      // (not the Glob prefix, which can be half a file name)
+      if (p !== glob && !exists(abs)) continue;
       const sign = signInArea(abs, ws, ctx);
       if (sign) return { decision: 'ask', reason: `This reads ${sign}`, summary: `${toolName} a sign-in: ${path.basename(abs)}`, detail: abs, ruleKey: `read:${abs}`, outward: true };
       const area = josArea(p, ws, ctx);
@@ -1524,7 +1716,7 @@ async function decideOnce(toolName, input, ctx) {
     // without its own One login the CLI would quietly use the orchestrator's account: never let that happen
     // (nor a One call Orchy can't read, or a program named by a variable, which could be it)
     if (ctx.oneScoped === false && (calls.length || hidden || segs.some(s => computedHead(s, shell)))) {
-      return { decision: 'deny', reason: `${ws.name} isn't signed in to its own One account yet, so the One CLI is off here${calls.length ? '' : ' (and so is a program called through a variable or alias, which could be it: call programs by name)'}. Do the task without One, or tell ${ownerName()} (mcp__jos__ask_user) that One needs signing in from the Workspace window.` };
+      return { decision: 'deny', reason: `${ws.name} isn't signed in to its own One account yet, so the One CLI is off here${calls.length ? '' : ' (and so is a program called through a variable or alias, which could be it: call programs by name)'}. Do the task without One, or tell ${ownerName()} (mcp__jos__ask_user) that One needs signing in from the Workspaces window.` };
     }
     // each ask names the piece of the line that needs it; one the owner always allows passes and the next one asks
     // (never an outward one in a run a head handed over)
@@ -1540,7 +1732,7 @@ async function decideOnce(toolName, input, ctx) {
     if (other && (v = askPiece(`This reaches into ${other}, another client's folder`, segs.find(s => otherClientIn(s, ws, ctx)) || command))) return v;
     // reading Orchy's own files (LOGS.md, its records) from a shell asks, the same as the Read tool does
     const area = ctx.home ? null : shellJosArea(command, ws, ctx, cwd, shell);
-    if (area && (v = askPiece(area.area === 'Orchy' ? `This reaches Orchy's own files (logs and records that cover every client), outside ${ws.name}'s folder` : `This reaches into ${area.area}, another client's folder`, area.piece))) return v;
+    if (area && (v = askPiece(!area.area ? 'This command changes folder more ways than Orchy can follow' : area.area === 'Orchy' ? `This reaches Orchy's own files (logs and records that cover every client), outside ${ws.name}'s folder` : `This reaches into ${area.area}, another client's folder`, area.piece))) return v;
     // a `cd`/`Set-Location` in the line moves where the writes land, which this fast path doesn't track: hand those to
     // the full check (shellNeedsOwner follows the cd)
     if (!segs.some(s => cdResolve(s, cwd, shell) != null) && segs.some(s => psWriteInside(s, cwd, ws, ctx)) && !writesViaRedirect(command, shell) && segs.every(s => psWriteInside(s, cwd, ws, ctx) || pieceIsSafe(s, shell))) {
@@ -1560,7 +1752,9 @@ async function decideOnce(toolName, input, ctx) {
       // the agent's grant follows a reconnected app to its new key (same platform and name, old key gone)
       const grant = agent?.connections?.find(x => x.key === c.connectionKey)
         || agent?.connections?.find(x => !live.has(x.key) && x.platform === conn.platform && x.name === conn.name);
-      const action = await ctx.resolveAction(c.actionId, c.platform);
+      // an action ID held in a variable (A=conn_mod_def::…; … execute gmail $A …): the one ID the line names is it
+      const named = /^\$/.test(c.actionId) ? [...new Set(command.match(/conn_mod_def::[\w-]+::[\w-]+/g) || [])] : [];
+      const action = await ctx.resolveAction(named.length === 1 ? named[0] : c.actionId, c.platform);
       const method = action?.method || null;
       const title = action?.title || 'an action';
       const readOnly = isReadOnlyAction(method, title);
@@ -1596,21 +1790,41 @@ async function decideOnce(toolName, input, ctx) {
         if (v) return v;
       }
     }
+    // Settings → "Scripts and commands" (on by default): in the owner's own runs, commands, scripts and One CLI calls run
+    // on their own; only a decision the owner keeps (askFor) still asks. Not in a client's run, Orchy fixing himself, or
+    // a run a head handed over (there every outward step asks the owner), nor in "Every change" mode.
+    const free = decisionsOnly && ctx.scriptsFree === true && !run?.backend && !run?.delegatedBy && !run?.client && !ctx.home && !run?.huddleTalk;
     for (const c of calls.filter(c => c.kind === 'other')) {
+      if (free) {
+        const d = await oneOtherDecision(c, command, cwd, ws, ctx);
+        if (d && (v = need({ decision: 'ask', reason: `This ${d.why}`, summary: `Run One CLI: one ${c.sub}`, detail: command, ruleKey: `one-sub:${c.sub}`, outward: true }))) return v;
+        continue;
+      }
       if ((v = need({ decision: 'ask', reason: `\`one ${c.sub}\` can change things`, summary: `Run One CLI: one ${c.sub}`, detail: command, ruleKey: `one-sub:${c.sub}`, outward: true }))) return v;
     }
-    // never remembered: what it runs can change from one call to the next
-    if (hidden) return { decision: 'ask', reason: 'This starts the One CLI in a way Orchy can’t read (an alias, a variable, xargs, find -exec or another shell), so it can’t tell which action runs', summary: `Run a command: ${firstWords(command)}`, detail: command, ruleKey: null, outward: true };
+    // never remembered: what it runs can change from one call to the next. In free mode it's judged by the action IDs the
+    // line names; a line that names none and could run one (execute, run, x…) still asks
+    if (hidden) {
+      const d = !free ? null : !mayRunOne(command) ? false
+        : await idsDecision(command, ctx, { none: { why: 'starts the One CLI in a way Orchy can’t read (an alias, a variable, xargs or another shell) and names no action, so it can’t tell which one runs' } });
+      if (d !== false && (!free || d)) return { decision: 'ask', reason: d ? `This ${d.why}` : 'This starts the One CLI in a way Orchy can’t read (an alias, a variable, xargs, find -exec or another shell), so it can’t tell which action runs', summary: `Run a command: ${firstWords(command)}`, detail: command, ruleKey: null, outward: true };
+    }
     if (shellIsSafe(command, shell)) return { decision: 'allow', reason: calls.length ? 'One read/allowed action' : 'read-only shell command' };
     const needs = shellNeedsOwner(command, ws, ctx, cwd, shell);
     // the network, or a script or program Orchy can't vet, could reach outside this PC
     const reaches = why => /network|script|program/.test(why || '');
     if (decisionsOnly) {
       for (const n of needs) {
+        // Orchy's own dashboard (approvals, settings) never runs on its own: curl, Invoke-RestMethod, a script's fetch…
+        if ((free || (ctx.scriptsFree && n.script)) && talksToDashboard({ ...n, piece: command }) && (v = askPiece(`This command ${DASHBOARD_WHY}`, n.piece, { outward: true }))) return v;
         if (ctx.scriptsFree && n.script) {
-          if (talksToDashboard(n) && (v = askPiece(`This command ${DASHBOARD_WHY}`, n.piece, { outward: true }))) return v;
           // Settings → Scripts: it runs on its own unless it looks like a decision the owner keeps
           const d = await scriptDecision(n, ctx);
+          if (d && (v = askPiece(`This command ${d.why}`, n.piece, { outward: true }))) return v;
+          continue;
+        }
+        if (free && FREE_KINDS.has(n.kind)) {
+          const d = freeDecision(n, command, ws, ctx, cwd);
           if (d && (v = askPiece(`This command ${d.why}`, n.piece, { outward: true }))) return v;
           continue;
         }

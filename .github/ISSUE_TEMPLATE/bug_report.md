@@ -4,7 +4,7 @@ about: Something in Orchy does not work as it should
 labels: bug
 ---
 
-<!-- Security problem? Do not open an issue. See SECURITY.md. -->
+<!-- Security problem? Do not open an issue. See docs/SECURITY.md. -->
 <!-- Remove personal data before posting: emails, names, keys, tunnel domains, workspace or client names. -->
 
 **What happened**

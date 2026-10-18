@@ -1,0 +1,28 @@
+Orchy
+Copyright 2026 The Orchy contributors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party components, each under its own license:
+- ElevenLabs web client 1.25.0 (MIT), vendored in dashboard/vendor/elevenlabs/, with the code bundled
+  into it: livekit-client, @livekit/protocol, @livekit/mutex, @bufbuild/protobuf (Apache-2.0),
+  webrtc-adapter (BSD-3-Clause), sdp, sdp-transform, loglevel, events, machina, wavefile (MIT) and
+  tslib (0BSD). License texts: dashboard/vendor/elevenlabs/LICENSE-elevenlabs-client.txt and
+  dashboard/vendor/elevenlabs/THIRD_PARTY_NOTICES.txt
+- libsamplerate-js 2.1.2 (MIT and BSD-2-Clause), dashboard/vendor/elevenlabs/LICENSE-libsamplerate-js.txt
+- Silkscreen, Atkinson Hyperlegible Next and Atkinson Hyperlegible Mono typefaces (SIL Open Font
+  License 1.1), dashboard/fonts/. License texts: dashboard/fonts/OFL-*.txt
+- marked (MIT) and yaml (ISC), installed with npm
+- pdf.js (pdfjs-dist) 6.3.289 (Apache-2.0, Mozilla Foundation), vendored in dashboard/vendor/pdfjs-6.3.289/ for the
+  file viewer's PDF pages (pinned as a devDependency). The folder keeps each bundled part's license next to it:
+  Adobe CMaps (BSD-3-Clause, cmaps/LICENSE), the ICC profile (CC0-1.0, iccs/LICENSE), the Foxit standard fonts
+  (BSD-3-Clause, standard_fonts/LICENSE_FOXIT), the Liberation fonts (GPL-2.0 with the font exception,
+  standard_fonts/LICENSE_LIBERATION), and the WebAssembly decoders: OpenJPEG (BSD-2-Clause), PDFium's JBIG2
+  (BSD-3-Clause) and qcms (MIT), with pdf.js's own wrappers (wasm/LICENSE_*). pdf.js's scripting engine is not included
+- mammoth 1.13.0 (BSD-2-Clause), installed with npm: Word (.docx) previews in the file viewer. Its own
+  dependencies: lop, option, dingbat-to-unicode (BSD-2-Clause), duck (BSD), sprintf-js (BSD-3-Clause),
+  jszip (dual MIT OR GPL-3.0-or-later; used under MIT), pako (MIT and Zlib), @xmldom/xmldom, argparse,
+  base64-js, underscore, xmlbuilder, lie, immediate, setimmediate, readable-stream, string_decoder,
+  safe-buffer, core-util-is, isarray, process-nextick-args, util-deprecate (MIT) and inherits (ISC)
+- ffmpeg and ffprobe are not shipped with Orchy. When they are installed on the machine (optional), Orchy runs
+  them as separate programs to make previews; their own licenses (LGPL/GPL, depending on the build) apply to them

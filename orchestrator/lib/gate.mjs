@@ -2,8 +2,11 @@
 // through the bridge's permission-prompt tool, Codex's through its app-server approval requests.
 // Reads and own-folder work pass; outward actions become an Approve/Deny pop-up for the owner (in a client's
 // run, the ones about the client's own apps go to the client's page instead: see clients.mjs#askFields).
+import fs from 'node:fs';
+import path from 'node:path';
+import { DATA_DIR } from './env.mjs';
 import { db, save } from './store.mjs';
-import { emit } from './bus.mjs';
+import { emit, bus } from './bus.mjs';
 import { workspace, allConnections, oneScope } from './workspaces.mjs';
 import { getAgent, listAgents } from './agents.mjs';
 import { decide, ruleMatches, parseOneCommands } from './policy.mjs';
@@ -37,11 +40,52 @@ export function runCtx(runId) {
 }
 
 /**
+ * The folder a Claude Code command runs in, as its PreToolUse hook saw it (mcp/cwd-hook.mjs), or null. Only one inside
+ * the workspace counts: anywhere else (or no report) the command is judged from the workspace folder, as before.
+ */
+export function shellCwd(run, ws, toolUseId) {
+  if (!toolUseId) return null;
+  let lines = [];
+  try { lines = fs.readFileSync(path.join(DATA_DIR, 'runs', `${run.id}.cwd.jsonl`), 'utf8').trim().split('\n'); } catch { return null; }
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let e;
+    try { e = JSON.parse(lines[i]); } catch { continue; }
+    if (e.id !== toolUseId) continue;
+    const rel = path.relative(path.resolve(ws.dir), path.resolve(String(e.cwd || '')));
+    return e.cwd && !rel.startsWith('..') && !path.isAbsolute(rel) ? path.resolve(e.cwd) : null;
+  }
+  return null;
+}
+
+// A run that reads image after image (a frame-by-frame check of a video) fills its context fast: after this many in
+// one run, the next asks the owner, and an OK allows this many more.
+export const IMAGE_READ_LIMIT = 60;
+const IMAGE_RULE = 'image-reads:over-limit';
+const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|bmp|tiff?|avif|heic)$/i;
+export function isImageRead(toolName, input = {}) {
+  if (toolName !== 'Read') return false;
+  return IMAGE_EXT_RE.test(String(input?.file_path || input?.path || '').trim());
+}
+// an OK on that ask raises the run's cap by IMAGE_READ_LIMIT, wherever it was answered (dashboard, voice, client page)
+bus.on('event', e => {
+  if (e.type !== 'inbox.answered' || e.item?.ruleKey !== IMAGE_RULE || !e.item.answer?.approve) return;
+  const r = db().runs[e.item.runId];
+  if (r) { r.imageReadCap = Math.max(r.imageReadCap || IMAGE_READ_LIMIT, r.imageReads || 0) + IMAGE_READ_LIMIT; save(); }
+});
+
+/**
  * Decide on one tool call. Returns { decision: 'allow'|'deny'|'ask', reason, itemId? }.
  * 'ask' has already put an approval pop-up in the owner's inbox; the caller waits for it.
+ * toolUseId (Claude Code's permission prompt sends it) finds where a shell command runs.
  */
-export async function gate(runId, toolName, input = {}) {
+export async function gate(runId, toolName, input = {}, { toolUseId } = {}) {
   const { run, ws, agent, who } = runCtx(runId);
+  // Claude Code's shell keeps a `cd` between commands: judge the command from where it runs (Codex says so itself).
+  // Not for a client's run (its fence reads every climb as leaving) or Orchy's own fix runs.
+  if ((toolName === 'Bash' || toolName === 'PowerShell') && !input.cwd && !run.client && !run.backend) {
+    const at = shellCwd(run, ws, toolUseId);
+    if (at) input = { ...input, cwd: at };
+  }
   let connections = (await allConnections(ws)).one;
   // a key the cached list doesn't know may be an app reconnected minutes ago: look again before refusing it
   const keys = parseOneCommands(String(input.command || ''), toolName).filter(c => c.kind === 'execute').map(c => c.connectionKey);
@@ -71,7 +115,27 @@ export async function gate(runId, toolName, input = {}) {
   });
   // the run ended (or is being stopped) while this was decided: nothing more runs, and no pop-up for it
   if (run.endedAt || run.status === 'stopping') return { decision: 'deny', reason: 'This run has ended.' };
-  if (verdict.decision === 'allow') return { decision: 'allow' };
+  if (verdict.decision === 'allow') {
+    if (isImageRead(toolName, input)) {
+      run.imageReads = (run.imageReads || 0) + 1;
+      const cap = run.imageReadCap || IMAGE_READ_LIMIT;
+      save();
+      if (run.imageReads > cap && !remembered(IMAGE_RULE)) {
+        const file = path.basename(String(input.file_path || input.path || 'image'));
+        const item = inbox.createItem('approval', {
+          runId: run.id, workspace: ws.id, agent: who,
+          title: `Read image #${run.imageReads} (${file})`,
+          message: `${run.agentName} has already read ${run.imageReads - 1} images in this run. Reading frame after frame fills its context fast (a contact sheet is cheaper). Allow another ${IMAGE_READ_LIMIT} image reads?`,
+          detail: String(input.file_path || input.path || ''),
+          ruleKey: IMAGE_RULE, tool: toolName, action: null,
+          delegatedBy: run.delegatedByName || null, noRemember: !!run.client,
+          ...askFields(run, IMAGE_RULE),
+        });
+        return { decision: 'ask', itemId: item.id };
+      }
+    }
+    return { decision: 'allow' };
+  }
   if (verdict.decision === 'deny') {
     emit('run.event', { runId: run.id, workspace: ws.id, event: { t: new Date().toISOString(), kind: 'denied', text: verdict.reason } });
     return { decision: 'deny', reason: verdict.reason };

@@ -7,8 +7,11 @@ import { engine } from './engines/index.mjs';
 import { db } from './store.mjs';
 import { DECISIONS } from './policy.mjs';
 import { nameOf, teamNames } from './voiceagents.mjs';
-import { teamFor, huddlePartners, huddleInvitees, MAX_RUN_HUDDLES, MAX_HUDDLE_AGENTS } from './delegation.mjs';
+import { teamFor, huddlePartners, huddleInvitees, MAX_RUN_HUDDLES } from './delegation.mjs';
+import { rulesText } from './rules.mjs';
 import { clientById } from './clients.mjs';
+import { getAgent, homeOf, departmentOf, departmentsOf } from './agents.mjs';
+import { taskRel } from './clientspace.mjs';
 
 /** The rules every agent run gets, whatever runs it. */
 export function protocolText(ws, run, planText = '') {
@@ -19,7 +22,7 @@ export function protocolText(ws, run, planText = '') {
     ? `- Folder: this working directory${run.client ? `, ${run.clientName}'s own folder in ${ws.name}` : ''}. Only use **this workspace's** One connections: run \`one --agent list\` here to see them.
 - Use the One CLI for every third-party app: \`one --agent actions find\` → read the docs → \`one --agent actions execute\`.`
     : `- Folder: this working directory.
-- **One isn't set up for this workspace yet**, so don't run the \`one\` CLI here (it would use the wrong account and is blocked). If a task needs a third-party app, say so in your report: ${ownerName()} signs the workspace in to One from Orchy's Workspace window.`;
+- **One isn't set up for this workspace yet**, so don't run the \`one\` CLI here (it would use the wrong account and is blocked). If a task needs a third-party app, say so in your report: ${ownerName()} signs the workspace in to One from Orchy's Workspaces window.`;
   return `
 # You are running inside Orchy (${ownerName()}'s orchestrator)
 
@@ -29,11 +32,7 @@ ${nameSection(ws, run)}
 ## Your workspace
 ${one}
 - Never touch another client's data, folder or accounts.
-${run.client ? clientFolderText(ws, run) : `- **Tasks/** (in this folder) keeps every task ${ws.name}'s generalist has done: one folder per task, named \`<date>-<first words>\`, with \`TASK.md\` (${ownerName()}'s request, what was done, outputs, follow-ups) and the files made for it. When ${ownerName()} mentions an earlier task ("the triage the generalist did", "check that task"), look there first: list \`Tasks/\`, open the matching \`TASK.md\`, then the files next to it. This folder's Tasks are the only task history you use; other workspaces' are off-limits.
-${run.taskDir ? `
-## This task's folder: \`Tasks/${run.taskDir}/\`
-You're ${ws.name}'s generalist. Save every file you make for this task there (drafts, exports, data, scratch scripts), not elsewhere in the workspace, and list the ones ${ownerName()} needs in report_done outputs. Orchy writes \`TASK.md\` in that folder when you finish, so don't write that file yourself.${run.parentRunId ? ' This is a follow-up: the folder already holds the earlier rounds and their files.' : ''}
-` : ''}`}
+${run.client ? clientFolderText(ws, run) : workText(ws, run)}
 ${planText ? `
 ${planText}
 ` : ''}${run.client ? clientSection(ws, run) : ''}${run.huddleTalk ? huddleSection(ws, run) : `${run.delegatedBy ? handedSection(run) : `${teamSection(ws, run)}${huddleStartSection(ws, run)}`}
@@ -41,11 +40,23 @@ ${planText}
 - **ask_user** (\`mcp__jos__ask_user\`) — when anything material is unclear (which recipient, which account, ambiguous scope, missing info, a judgement call), ask ONE clear question, give options when you can, and wait for the answer. Don't guess on things that matter.
 - **Approvals happen automatically.** ${db().settings.approvals === 'all'
     ? `Before anything that sends, posts, creates, updates, deletes or spends, the orchestrator pops an approval window for ${who}.`
-    : `Routine work (reading, drafting, labelling, notes, docs, files in this folder) just runs. ${who}'s decisions pause for an approval window: ${DECISIONS.filter(d => run.delegatedBy || db().settings.askFor?.[d.key] !== false).map(d => `${d.label.toLowerCase()} (${d.hint})`).join('; ') || 'none right now'}. ${run.client ? `Network tools, deleting files, running scripts and touching other folders wait for ${ownerName()} instead, so avoid them and use the One CLI for apps.` : `Network tools, deleting files, running scripts, touching other folders and changing this workspace's own setup (\`.claude/\`, \`.jos/mcp.json\`, CLAUDE.md, AGENTS.md${run.isBuilder ? '; agent files are yours' : ', agent files'}) also ask, so use the One CLI for apps.`} Prefer drafts over sends unless ${who} said otherwise.`} If an approval is denied, don't retry it another way; adapt or ask.
-- **report_done** (\`mcp__jos__report_done\`) — call it **exactly once** at the very end (also when blocked or failed) with a detailed, honest report: what you did, what you found or produced (with links/IDs), what you could not do and why, and follow-ups. Orchy logs it to LOGS.md and tells ${run.client ? `${ownerName()}; ${run.clientName} reads it on their page` : ownerName()}.
+    : `Routine work (reading, drafting, labelling, notes, docs, files in this folder) just runs. ${who}'s decisions pause for an approval window: ${DECISIONS.filter(d => run.delegatedBy || db().settings.askFor?.[d.key] !== false).map(d => `${d.label.toLowerCase()} (${d.hint})`).join('; ') || 'none right now'}. ${run.client ? `Network tools, deleting files, running scripts and touching other folders wait for ${ownerName()} instead, so avoid them and use the One CLI for apps.` : db().settings.scriptsFree !== false && !run.delegatedBy && !run.huddleTalk
+      ? `Commands and scripts run without asking (Settings → Scripts and commands): the One CLI, your own scripts, network tools, and deleting your own scratch files in this folder. Don't ask ${ownerName()} for permission to run a command (no ask_user for that): Orchy asks only when a command visibly does one of the decisions above. So in a script that runs One actions, name each action ID in it (Orchy reads them; a script that hides them asks ${ownerName()}). Still asking every time: Orchy's own dashboard API, system changes (stopping processes, scheduled tasks, installers), sign-ins, other workspaces' and clients' folders, Orchy's own files, and this workspace's own setup (\`.claude/\`, \`.jos/mcp.json\`, \`Resources/\`, CLAUDE.md, AGENTS.md${run.isBuilder ? '; agent files are yours' : ', agent files'}).`
+      : `Network tools, deleting files, running scripts, touching other folders and changing this workspace's own setup (\`.claude/\`, \`.jos/mcp.json\`, CLAUDE.md, AGENTS.md${run.isBuilder ? '; agent files are yours' : ', agent files'}) also ask, so use the One CLI for apps.`} Prefer drafts over sends unless ${who} said otherwise.`} If an approval is denied, don't retry it another way; adapt or ask.
+- **report_done** (\`mcp__jos__report_done\`) — call it **exactly once** at the very end (also when blocked or failed) with a detailed, honest report: what you did, what you found or produced (with links/IDs), what you could not do and why, and follow-ups. If the task was to fetch, find or show something (an email, a list, an answer), put the thing itself, in full, in \`result\` (Markdown): it's shown as is under Orchy's report, so don't just say you saved it. Orchy logs it to LOGS.md and tells ${run.client ? `${ownerName()}; ${run.clientName} reads it on their page` : ownerName()}.
 - **note** (\`mcp__jos__note\`) — optional short progress notes for long tasks (${who} sees them live).
 ${!run.client && db().settings.callAsk !== false ? `- **call_owner** (\`mcp__jos__call_owner\`) — rings ${ownerName()} in the dashboard for a live voice call with you; you get the transcript back. **If ${ownerName()} asked you to call** ("call me when you're done", "call me if you're stuck"), do it: when done, ring right before report_done and tell ${ownerName()} what you found. Otherwise only when something urgent can't wait for an ask_user question. At most twice per task.
 ` : ''}`}${engine(engineId)?.protocolNotes?.({ ownerName: ownerName() }) || ''}
+${run.huddleTalk ? '' : `## Skills come first
+- Before you start the work, look through the skills you have (the Skill tool's list, or \`.claude/skills/\`) for every one that fits this task, and use them: they are ${ownerName()}'s chosen way to do that work. Your own instructions naming a skill means you must use it.
+- In report_done, name the skills you used in \`actions_taken\` (and any that fit but you couldn't use, with why).
+
+`}## Efficiency: keep your context small
+- **Grep or ranged reads first**: search, or read a part of a file (an offset and a limit, or pages for PDFs), before reading a whole file. Never pull huge files or logs into context at once.
+- **Filter One CLI output**: limit \`one --agent\` output to the fields and rows you need (\`--limit\`, \`jq\`) instead of dumping full JSON payloads into context.
+- **Don't reload planned docs**: when "Jev's plan for this task" above already has an action's doc, don't load it again.
+- **Video and images**: to check video frames, build an \`ffmpeg\` contact sheet (a tile grid of scene cuts or intervals) and read that, never frame by frame.${run.delegatedBy ? '\n- **Turn cap (80 turns)**: this handed-over run has a cap of 80 turns. If you reach about 80 turns without finishing, stop and call `report_done` with `status: "partial"`, what you completed, and what is left.' : run.routing?.source === 'schedule' ? '\n- **Turn cap (60 turns)**: this scheduled run has a cap of 60 turns. If you reach about 60 turns without finishing, stop and call `report_done` with `status: "partial"`, what you completed, and what is left.' : ''}
+
 ## Style
 - Do the work, don't narrate. Keep your final chat message to one or two sentences; the report carries the detail.
 - Today is ${new Intl.DateTimeFormat('en-CA', { timeZone: config.timezone }).format(new Date())}; ${ownerName()} works ${config.timezone.replace('_', ' ')} hours.
@@ -68,7 +79,7 @@ ${ownerName()} runs Orchy, their AI agent orchestrator, from its dashboard. Some
 
 ## Fix it
 - The smallest change that fixes the cause, not the symptom, written like the code around it (its naming, comment style, plain-English copy). No new dependencies unless ${ownerName()} agrees.
-- Check it: \`node --check <file>\` for every file you change, the test scripts that cover the area (\`node orchestrator/scripts/test-*.mjs\`: policy, routing, jev-routing, livejev, actionplan, huddle) and \`npm run check\`. These run without asking. Never pass \`--live\` (it calls real Jev and One).
+- Check it: \`node --check <file>\` for every file you change, the test scripts that cover the area (\`node orchestrator/scripts/test-*.mjs\`: policy, routing, jev-routing, livejev, actionplan, huddle, coach) and \`npm run check\`. These run without asking. Never pass \`--live\` (it calls real Jev and One).
 - Update CLAUDE.md or README.md when you change how something works.
 - Files you make that aren't part of the fix (screenshots, scratch scripts) go in your temp folder, not the Orchy folder.
 
@@ -104,16 +115,34 @@ function huddleSection(ws, run) {
     : builder ? ` ${builder.name} is the AI Agent Builder: changes to agents (your own file included) are theirs to make, so tell them what you need changed.` : '';
   const invitees = h ? huddleInvitees(h) : [];
   const invite = invitees.length ? `
-- **Bring someone in** when the talk needs another of ${ws.name}'s agents (what they know, or a part only they can do): add \`invite\` (\`agent\` slug + \`why\`) to your huddle_reply. They join at once, read everything said so far and speak next. Only when it's really needed, up to ${MAX_HUDDLE_AGENTS} in a huddle. Who can join:
+- **Bring someone in** when the talk needs another of ${ws.name}'s agents (what they know, a part only they can do, or a view nobody here holds): add \`invite\` (\`agent\` slug + \`why\`) to your huddle_reply. They join at once, read everything said so far and speak next. Who can join:
 ${invitees.map(a => `  - ${nameOf(ws.id, a.slug) || a.callName || a.displayName} · ${a.displayName} (\`${a.slug}\`): ${a.isBuilder ? `Creates and updates ${ws.name}'s agents.` : String(a.description || '').replace(/\s+/g, ' ').slice(0, 160)}`).join('\n')}` : '';
+  const me = h?.agents.find(a => a.slug === run.agentSlug);
+  let rules = '';
+  try { rules = rulesText(ws.id).trim(); } catch {}
+  const who = ownerName();
+  const roster = os.length ? `
+Who's in the room, and what each covers (challenge each of them where your role sees further):
+${os.map(o => `- ${o.name} · ${o.role}${o.does ? `: ${o.does}` : ''}`).join('\n')}
+` : '';
   return `
 ## You're in a huddle: talk only
-Orchy put you together with ${others} to work out a task for ${ownerName()}, turn by turn. Orchy passes what each of you says to the ${many ? 'others' : 'other'}; ${ownerName()} reads along and may jump in (shown as **${ownerName()}:**), and Orchy says when someone joins (shown as **Orchy:**).
-- **Talk, don't do.** Reading and looking things up is fine when it helps you answer (files here, \`one\` reads and lookups, the web). Anything that changes something (files, apps, agents, messages) is refused until ${ownerName()} approves your agreement: put it in the plan instead.
-- **End every turn with huddle_reply** (\`mcp__jos__huddle_reply\`). \`message\` is what you say to ${them}: short and concrete (aim for under 150 words). Set \`ready: true\` once you ${many ? 'all' : 'two'} agree on what to do and who does it. Anything only ${ownerName()} can answer (a preference, a decision, a fact you can't look up) goes in \`questions_for_owner\`: don't guess it and don't hold the talk up for it. ${ownerName()} answers when approving.
-- Ask for what you need from ${them}, answer what they ask you, and don't repeat yourselves: if you agree, say so.${invite}
+Orchy put you together with ${others} to work out a task for ${who}, turn by turn. Orchy passes what each of you says to the ${many ? 'others' : 'other'}; ${who} reads along and may jump in (shown as **${who}:**). Orchy says when someone joins, and now and then steps in himself with a challenge or a suggestion (shown as **Orchy:**).
+${roster}
+- **Talk, don't do.** Reading and looking things up is fine when it helps you answer (files here, \`one\` reads and lookups, the web). Anything that changes something (files, apps, agents, messages) is refused until ${who} approves your agreement: put it in the plan instead.
+- **End every turn with huddle_reply** (\`mcp__jos__huddle_reply\`). \`message\` is what you say to ${them}: short and concrete (aim for under 150 words). Anything only ${who} can answer (a preference, a decision, a fact you can't look up) goes in \`questions_for_owner\`: don't guess it and don't hold the talk up for it. ${who} answers when approving. Ask each thing once, only if nobody has asked it yet, and never what the rules below already settle.${rules ? `\n\n${rules}` : ''}
+
+### Challenge each other: ${who} wants a tested plan, not a polite one
+You're here for what you see from your seat${me ? ` as ${me.role}` : ''}, so test every proposal against it. Don't agree just to be agreeable, and don't defer to rank: a Chief's plan gets the same scrutiny as anyone's.
+- **Push back from your role.** In \`challenge\`, name whose idea you're testing and the weakest point you see in it: what's wrong, missing, risky, too costly or too slow, what it would demand from your area that nobody has accounted for, or a better option, with your reason (data you looked up beats opinion). One sharp point beats a list.
+- **Answer challenges aimed at you.** Concede when they're right and say what changes, defend with reasons when they're not, or offer a revised version. Don't just restate your plan.
+- **\`ready: true\` has to be earned.** It only counts once you've challenged something, and a new challenge from anyone reopens the talk: everyone says ready again after it. Set it once the plan has survived your pushback and you all agree on what to do and who does it.
+- **If you really have no objection**, say why from your role, and still add a condition, a risk to watch, or an improvement in \`challenge\`.
+- When you can't settle a point, don't fake agreement: it goes in the agreement as \`dissent\` (who holds what view, and why) and ${who} decides.
+- **Orchy's points are a teammate's.** When Orchy challenges something, answer it before you say ready (a challenge from him reopens the talk too): agree and change course, or push back with your reasons and name Orchy in \`challenge\`. His suggestions you may take or leave. Orchy can't approve anything or hand out work: ${who} still does both.
+- Don't repeat yourselves, and keep it civil: argue the plan, not the agent.${invite}
 - When Orchy asks, write the agreement: what you decided and each agent's part as a complete task.${builderNote}
-- Nothing is built until ${ownerName()} approves. Then each of you does your part in this same conversation.
+- Nothing is built until ${who} approves. Then each of you does your part.
 - **note** (\`mcp__jos__note\`) is there for a long lookup; you have no other jos tools in a huddle.
 `;
 }
@@ -151,7 +180,7 @@ function huddleStartSection(ws, run) {
   if (!partners.length) return '';
   return `
 ## Huddles: think it through with a colleague first
-As one of ${ws.name}'s C-suite, you can start a **huddle** (\`mcp__jos__huddle\`): you and one other agent talk something through, turn by turn, and you write up what you agree. Who you can huddle with:
+As one of ${ws.name}'s C-suite, you can start a **huddle** (\`mcp__jos__huddle\`): you and one or more other agents (\`agents\`, as many as the decision needs) talk something through, turn by turn, challenging each other's proposals from your roles, and you write up what you agree. Who you can huddle with:
 ${partners.map(a => `- ${nameOf(ws.id, a.slug) || a.callName ? `${nameOf(ws.id, a.slug) || a.callName} · ` : ''}${a.displayName} (\`${a.slug}\`)${a.isBuilder ? ': creates and updates agents' : ''}`).join('\n')}
 - Huddle when you need their thinking before you decide (a plan, a trade-off, what they need from you); hand off work with delegate instead.
 - Give a complete topic: the goal, the facts from your task (names, links, IDs) and the decision to reach. They can't see your conversation.
@@ -169,6 +198,33 @@ ${head}, your department head, handed you this task from their own run. Do it un
 - ${ownerName()} still approves every decision (sending, posting, money, calendar, deleting, sharing), each time.
 - You can't hand this task on or start other agents. If something material is unclear, ask ${ownerName()} with ask_user.
 `;
+}
+
+/** The owner's own runs: where this agent's work goes (its home and Tasks, its department, Resources/). */
+function workText(ws, run) {
+  const who = ownerName();
+  let agent = null;
+  if (run.agentSlug) { try { agent = getAgent(ws.id, run.agentSlug); } catch {} }
+  const home = run.agentSlug && !agent ? null : homeOf(ws, agent);
+  const dept = departmentOf(ws, agent);
+  const depts = departmentsOf(ws);
+  const tasks = home ? `${home}/Tasks` : 'Tasks';
+  const q = s => (/\s/.test(s) ? ' (it has a space: quote the path in commands)' : '');
+  const out = [];
+  if (home) out.push(`- **Your home is \`${home}/\`**${q(home)}: your reference files and working files live there, and \`${tasks}/\` keeps every task you've done: one folder per task, named \`<date>-<first words>\`, with \`TASK.md\` (${who}'s request, what was done, outputs, follow-ups) and the files made for it. When ${who} mentions an earlier task, look there first: list \`${tasks}/\`, open the matching \`TASK.md\`, then the files next to it.`);
+  else out.push(`- **Tasks/** (in this folder) keeps every task done here: one folder per task, named \`<date>-<first words>\`, with \`TASK.md\` (${who}'s request, what was done, outputs, follow-ups) and the files made for it. When ${who} mentions an earlier task ("the triage the generalist did", "check that task"), look there first: list \`Tasks/\`, open the matching \`TASK.md\`, then the files next to it.`);
+  if (dept) out.push(`- **\`${dept}/\`** is your department: \`${dept}/Tasks/\` holds its huddles and missions, and its other shared folders are your team's.`);
+  if (depts.length) out.push(`- ${ws.name} is laid out by department (${depts.map(d => `\`${d}/\``).join(', ')}), each agent's home inside its department. Other agents' homes are theirs: read them when the task needs it, never write there. ${who}'s attached files land in \`Uploads/\`.`);
+  if (fs.existsSync(path.join(ws.dir, 'Resources', 'INDEX.md'))) out.push('- **`Resources/INDEX.md`** lists every skill, MCP server and CLI this workspace has, what each is for and which agents use it. The skills themselves are in `Resources/Skills/` (the same folders Claude Code loads from `.claude/skills/`). Only the AI Agent Builder adds or changes anything in `Resources/`.');
+  out.push("- This workspace's Tasks are the only task history you use; other workspaces' are off-limits.");
+  if (run.taskDir) {
+    const rel = taskRel(run);
+    out.push(`
+## This task's folder: \`${rel}/\`${q(rel)}
+${run.agentSlug ? '' : `You're ${ws.name}'s generalist. `}Save every file you make for this task there (drafts, exports, data, scratch scripts), not elsewhere in the workspace, and list the ones ${who} needs in report_done outputs. Orchy writes \`TASK.md\` in that folder when you finish, so don't write that file yourself.${run.parentRunId ? ' This is a follow-up: the folder already holds the earlier rounds and their files.' : ''}
+`);
+  }
+  return out.join('\n');
 }
 
 /** A client's run: its own folder and task history (clientspace.mjs), and nothing else of the workspace's. */
@@ -241,7 +297,7 @@ ${body ? `
 # Your job: ${run.agentName}
 These are your standing instructions as ${run.agentName}. Follow them exactly.
 
-${meta ? `Your definition (connections and limits are enforced at runtime):\n\`\`\`yaml\n${meta}\n\`\`\`\n\n` : ''}${body}
+${meta ? `Your definition (${engine(run.runtime || ws.runtime)?.capabilities?.gated === false ? 'follow these connections and limits yourself: this harness does not hold every tool for approval' : 'connections and limits are enforced at runtime'}):\n\`\`\`yaml\n${meta}\n\`\`\`\n\n` : ''}${body}
 ` : `
 ---
 # Your job: ${ws.name} generalist
@@ -256,8 +312,12 @@ function builderAddendum(ws) {
 - **Before writing an agent, confirm its connections with mcp__jos__request_connections** unless ${ownerName()} named every account exactly. Any assumption about which account, inbox or drive is meant means ask. ${ownerName()} sees every connection in this workspace with toggles; your suggestions come pre-switched-on. Use exactly what ${ownerName()} picks.
 - If the job is recurring and ${ownerName()} said when ("every morning"), add \`schedule\` and \`schedule_task\` to the frontmatter so Orchy runs it automatically.
 - Write agents to \`.claude/agents/<slug>.md\` following the Orchy Agent Spec in your instructions. Read existing agents first so you don't duplicate one.
+- **Research the role first (creating or updating):** search the web (or any search tool you have) for a proven, current framework for that specific role: responsibilities, workflows, quality bar, common failure modes, from sources you actually open. Base the agent on it, cite the sources in its \`## Notes\`, and confirm the framework with ${ownerName()} via mcp__jos__ask_user before you save the file. Only purely administrative edits skip it (see steps 2a–2b in your instructions).
+- **Keep each agent file lean: at most about 20,000 characters** (every request of every run re-sends it). Playbooks, frameworks and examples go in ${departmentsOf(ws).length ? 'its home\'s \`reference/\` (\`<home>/reference/*.md\`)' : '\`<slug>/reference/*.md\`'}, listed in How to work as "Read … before …". Measure the file before you report.
 - **You build the voice agent too:** once the file is written and validated, call mcp__jos__voice_agent with its slug (also after an update that changes role, description or call_name). It creates or updates the agent's ElevenLabs voice agent. Report the name and voice it got; if it fails, report the error as not done. Never tell ${ownerName()} to edit voice-agents.json or run a voice script.
-- In report_done, put the agent file path in outputs.
+${departmentsOf(ws).length ? `- **Departments and homes:** ${ws.name} is laid out by department (${departmentsOf(ws).join(', ')}). **Every agent you create or update must have** \`department\` and \`home\` (\`<department>/<call name>\`, e.g. \`${departmentsOf(ws)[0]}/Avery\`) in its frontmatter: Orchy's check fails your run otherwise, and Orchy opens its task folders in \`<home>/Tasks/\`. A new department is fine: name it in \`department\` and Orchy adds the folder. Give the agent a short "Where things live" block (home, its Tasks, its department's shared folders, \`Resources/INDEX.md\`), and tell it to save files only in its home, its task folder or its department's shared folders. **Sub-agents count too:** a helper agent file that a skill, plugin or team setup drops into \`.claude/agents/\` gets a department + home like any agent, or is retired (moved to \`.jos/retired/\`) when the skill works without it.
+` : ''}${fs.existsSync(path.join(ws.dir, 'Resources')) ? `- **Resources:** skills live in \`Resources/Skills/<name>/\` (Orchy links each into \`.claude/skills/\` and \`.agents/skills/\`, and moves a skill installed straight into either there on his own), MCP servers in \`Resources/MCPs/<name>/\`, CLIs in \`Resources/CLIs/<name>/README.md\`; Orchy rewrites \`Resources/INDEX.md\` from the agent files, so name every skill, MCP server and CLI an agent uses in its file. Never put a secret or a sign-in token in Resources/.
+` : ''}- In report_done, put the agent file path in outputs.
 `;
 }
 
@@ -296,7 +356,7 @@ export function orchyPersona() {
   const all = workspaces();
   const on = all.filter(w => w.enabled);
   const off = all.filter(w => !w.enabled);
-  // a workspace for the owner's own work ("the owner Manalo (personal)") isn't a client
+  // a workspace for the owner's own work ("Sam Rivera (personal)") isn't a client
   const clients = on.filter(w => !/\(personal\)/i.test(w.client || '')).length;
   return `You are Orchy, ${ownerName()}'s orchestrator: a small black-and-white pixel robot with an antenna.
 ${ownerName()} is a virtual assistant who works for ${clients === 1 ? 'one client' : `${clients} clients`}, each with its own workspace and agents${clients < on.length ? `, plus a workspace for ${ownerName()}'s own work` : ''}:
@@ -309,7 +369,7 @@ How you talk:
 - When ${ownerName()} says "for <name>" or another of the names above, that is the workspace ${ownerName()} means; use the workspace's name in your reply.
 - When ${ownerName()}'s message reaches you for a reply, it did not go to any agent: work goes out on a routing card, not through your replies. If ${ownerName()} asks you to *do* something in a client's apps, say it hasn't been sent and that ${ownerName()} can send it as a task (naming the client helps, e.g. "for One: …"); never say you sent or handed it on, and don't pretend you did it yourself.
 - You can fix yourself: when ${ownerName()} says something in Orchy is broken or should change (a button, a window, an error you showed, routing, voice), it goes out on a "Fix Orchy" card, and once ${ownerName()} presses Fix it, a run works on your own code, then you restart if needed (rolling back by yourself if the new code won't start). Like any other work, that never happens through your replies: if ${ownerName()}'s message reached you for a reply, nothing was started, so suggest he says what's wrong with Orchy as a fix (e.g. "Orchy's Logs window is blank, fix it").
-- New workspaces are added from the Workspace window (the + Add tab), where you ask for a name and set the folder up.
+- New workspaces are added from the Workspaces window (the + Add tab), where you ask for a name and set the folder up.
 - ${ownerName()} can give you files (the Files button, a paperclip, by the chat box, or by dropping or pasting them in). They're saved in the Uploads folder, your working folder, and you open them with the Read tool: documents, PDFs, images, spreadsheets, slides. When ${ownerName()} asks about a file mentioned earlier in the session, open it again rather than answering from memory. Read only reaches that folder.
 - Call ${ownerName()} "${ownerName()}" sparingly.`;
 }

@@ -42,7 +42,9 @@ function oneRun(runId) {
   const what = clip(r.report?.summary || r.resultText || r.error || '', 700);
   const head = r.outcome === 'stopped' ? 'was stopped' : r.status === 'failed' ? 'ran into trouble' : r.report?.status === 'blocked' ? 'got blocked' : 'finished';
   const follow = (r.report?.follow_ups || []).slice(0, 2).map(f => clip(f, 160));
-  return `${name} ${head} ${since(r.endedAt || r.lastActivity || r.startedAt)} ago${what ? `: ${what}` : '.'}${follow.length ? ` Follow-ups: ${follow.join('; ')}` : ''}`;
+  const outs = (r.report?.outputs || []).slice(0, 5).map(o => clip(o, 240));
+  const resSnippet = !outs.length && r.report?.result ? clip(r.report.result, 400) : '';
+  return `${name} ${head} ${since(r.endedAt || r.lastActivity || r.startedAt)} ago${what ? `: ${what}` : '.'}${outs.length ? ` Outputs: ${outs.join(' · ')}` : resSnippet ? ` Result: ${resSnippet}` : ''}${follow.length ? ` Follow-ups: ${follow.join('; ')}` : ''}`;
 }
 
 /**

@@ -59,26 +59,39 @@ function safeURL(v, img) {
     return ['http:', 'https:', 'mailto:'].includes(u.protocol) ? u.href : null;
   } catch { return null; }
 }
-function cleanTree(node) {
+// a Word file's own pictures, which the server inlines (viewer.mjs): only plain raster data, never SVG
+const DATA_IMG = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=\s]+$/;
+function cleanTree(node, opts = {}) {
   for (const n of [...node.childNodes]) {
     if (n.nodeType === 3) continue;
     const tag = n.localName;
     if (n.nodeType !== 1 || n.namespaceURI !== HTML_NS || MD_DROP.has(tag)) { n.remove(); continue; }
-    cleanTree(n);
+    cleanTree(n, opts);
     if (!MD_TAGS.has(tag)) { n.replaceWith(...n.childNodes); continue; }
     for (const { name, value } of [...n.attributes]) {
       if (name !== 'title' && !MD_ATTRS[tag]?.includes(name)) { n.removeAttribute(name); continue; }
       if (name !== 'href' && name !== 'src') continue;
+      if (opts.dataImages && tag === 'img' && DATA_IMG.test(value)) continue;
       const url = safeURL(value, tag === 'img');
       if (url) n.setAttribute(name, url); else n.removeAttribute(name);
     }
     if (tag === 'a') { n.setAttribute('target', '_blank'); n.setAttribute('rel', 'noopener noreferrer'); }
   }
 }
+/** What the owner asked to see (the email, the list), as the agent sent it; with no report at all, its last message. */
+export const runResult = run => String(run?.report?.result || (run && !run.report && run.outcome === 'completed' ? run.resultText : '') || '').trim();
+
 export function md(text) {
   const t = document.createElement('template');
   t.innerHTML = marked.parse(String(text || ''));
   cleanTree(t.content);
+  return t.innerHTML;
+}
+/** HTML from elsewhere (a Word file through mammoth) through the same allowlist; `dataImages` keeps its own pictures. */
+export function cleanHTML(html, { dataImages = false } = {}) {
+  const t = document.createElement('template');
+  t.innerHTML = String(html || '');
+  cleanTree(t.content, { dataImages });
   return t.innerHTML;
 }
 
@@ -173,7 +186,22 @@ export function wsInk(id) {
   drawHue(k);
   return { bg: `var(--tint-${k})`, fg: `var(--on-tint-${k})` };
 }
-export function wsModels(id) { return findWs(id)?.models || ['haiku', 'sonnet', 'opus']; }
+export function wsModels(id) {
+  const w = findWs(id);
+  return w?.availableModels?.length ? w.availableModels : w?.models || ['haiku', 'sonnet', 'opus'];
+}
+export function wsPlan(id) {
+  const w = findWs(id);
+  return w?.plan || w?.account?.plan || w?.account?.subscription || null;
+}
+export function wsRuntime(id) { return findWs(id)?.runtime || 'claude'; }
+/** The dropdown's options: "default" (the harness picks) first, then the account's models, and the current pick even if it isn't listed. */
+export const dropdownModels = (ms, current) => [...new Set(['default', ...ms.filter(m => m && m !== 'default'), ...(current ? [current] : [])])];
+/** Hermes and OpenCode expose tier-dependent model lists via a dropdown instead of 3 segmented buttons. */
+export function wsUsesModelDropdown(id, agent = null) {
+  const rt = agent?.engine || findWs(id)?.runtime;
+  return rt === 'hermes' || rt === 'opencode' || wsModels(id).length > 3;
+}
 /** The model buttons to show: each distinct model once (an engine whose three tiers are all "default" shows one button). */
 export const modelChoices = ms => [...new Set(ms)];
 /** An engine whose models are all "default" lets the owner type a model id (e.g. provider/model); the server passes it through. */
@@ -196,7 +224,8 @@ export function nameRole(name, role) { return role && role !== name ? `${name} Â
 
 export const STAGES = ['queued', 'routed', 'working', 'waiting', 'done'];
 export function stageOf(run) {
-  if (!run) return { idx: 0, label: 'queued' };
+  if (!run || run.status === 'queued') return { idx: 0, label: 'queued', wait: true };
+  if (run.status === 'paused-limit') return { idx: 0, label: 'paused (usage limit)', wait: true };
   if (run.status === 'starting') return { idx: 1, label: 'routed' };
   if (run.status === 'working') return { idx: 2, label: 'working' };
   if (run.status === 'waiting') return { idx: 3, label: 'waiting on you', wait: true };
@@ -207,7 +236,7 @@ export function stageOf(run) {
 }
 export function stripHTML(run) {
   const st = stageOf(run);
-  const live = ['starting', 'working', 'waiting', 'stopping'].includes(run?.status);
+  const live = ['queued', 'paused-limit', 'starting', 'working', 'waiting', 'stopping'].includes(run?.status);
   const cells = STAGES.map((_, i) => {
     let cls = i < st.idx ? 'on' : '';
     if (i === st.idx) cls = st.wait ? 'wait' : live ? 'now' : 'on';

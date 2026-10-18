@@ -5,34 +5,104 @@
 // This file holds what every engine shares (the run record, the feed, finishing, stopping); each engine's launch code
 // lives in its engines/ module and gets the `RT` object below.
 // Wires the Orchy MCP bridge, streams events, logs the result.
+// Runs on one account wait their turn: at most `maxLivePerAccount` live at once per account (Settings, default 3),
+// approved huddle work one after another, and a run that hits its account's session/usage limit pauses (with the
+// runs queued behind it) until the window resets. "Run now" jumps the queue.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { ORCH_DIR, DATA_DIR, ownerName } from './env.mjs';
+import { ROOT, ORCH_DIR, DATA_DIR, ownerName } from './env.mjs';
 import { db, save, id, runEventsPath } from './store.mjs';
 import { emit } from './bus.mjs';
-import { workspace, accountCheck, readMcp, allConnections, modelFor, modelsFor, accountFor, engineFor, runtimeLabel } from './workspaces.mjs';
-import { engine, ungatedRefusal } from './engines/index.mjs';
+import { workspace, workspaces, accountCheck, readMcp, allConnections, modelFor, modelsFor, accountFor, engineFor, runtimeLabel, oneScope } from './workspaces.mjs';
+import { engine, engines, ungatedRefusal, offeredRefusal } from './engines/index.mjs';
+import { profilePath, shellLine } from './engines/shared.mjs';
 import { getAgent, listAgents, agentFingerprint, BUILDER_SLUG } from './agents.mjs';
 import { protocolFile, builderBrief, codexInstructions } from './prompts.mjs';
 import { namingBrief, nameOf } from './voiceagents.mjs';
 import { expireForRun, itemsForRun, createItem } from './inbox.mjs';
-import { appendRunLog } from './logs.mjs';
+import { appendRunLog, appendCostLine } from './logs.mjs';
 import { hasTaskDir, openTaskDir, saveTask } from './tasks.mjs';
-import { ensureHome, clientSettingsFile, clientReadDirs, adoptUploads, copyIntoTask, filesNote } from './clientspace.mjs';
+import { syncResources } from './resources.mjs';
+import { serversWithAuth } from './mcpauth.mjs';
+import { ensureHome, clientSettingsFile, clientReadDirs, adoptUploads, copyIntoTask, filesNote, taskRoot, tasksBase, taskRootRel, taskRel } from './clientspace.mjs';
 import { gateAndWait, waitAnswered } from './gate.mjs';
 import { askFields, clientDenyRules } from './clients.mjs';
 import { teamFor, huddlePartners, nativeAgentDenyRules } from './delegation.mjs';
 import { planFor, planLine } from './actionplan.mjs';
 import { splitShell } from './policy.mjs';
 import { snapshot, changes, backendSettingsFile } from './backend.mjs';
+import { unroutedModel } from './router.mjs';
+import { redactEvent, nextActivity, briefFor, huddleWith } from './activity.mjs';
+import { moving } from './recover.mjs';
 
 export const BRIDGE_TOKEN = crypto.randomBytes(16).toString('hex');
-const live = new Map(); // runId -> { child, fingerprint, stop, acted, lookups (tool_use ids of One lookups) }
+const live = new Map(); // runId -> { child, fingerprint, stop, acted, lookups (tool_use ids of One lookups), tools, queued, launch }
+const runAcct = new Map(); // runId -> the account key its usage counts against (accountKey), while it's live or queued
+const launchers = new Map(); // runId -> start (or start again) this run on its engine, while it's live or queued
+const accountLimits = new Map(); // account key -> { until, reason, timer, announced }: a session/usage limit was hit
 let orchyReporter = null;
+let limitReporter = null;
 export function onRunFinished(fn) { orchyReporter = fn; }
+/** fn({ ws, run, reason, until }) once per limit window: an account hit its session/usage limit (server.mjs says so). */
+export function onSessionLimit(fn) { limitReporter = fn; }
 let serverPort = 8008;
 export function setPort(p) { serverPort = p; }
+
+/**
+ * The account a run's usage counts against, per engine: an email engine's login (two workspaces on one login share
+ * its limits), a profile engine's profile folder (its provider keys live there).
+ */
+export function accountKey(ws, runtime = ws.runtime) {
+  const eng = engine(runtime);
+  const a = accountFor(ws, runtime);
+  let prof = '';
+  if (a.profileDir) {
+    prof = path.resolve(profilePath(a.profileDir)).replace(/[\\/]+$/, '');
+    if (process.platform === 'win32') prof = prof.toLowerCase();
+  }
+  const who = eng?.accountModel === 'profile' ? prof || 'default' : String(a.email || '').toLowerCase().trim() || prof || 'default';
+  return `${runtime}:${who}`;
+}
+
+/** Is any run of this workspace live or queued? */
+export function liveIn(wsId) {
+  for (const runId of live.keys()) if (db().runs[runId]?.workspace === wsId) return true;
+  return false;
+}
+
+/** How many runs are really working right now (queued and paused ones don't count), across all workspaces. */
+export function liveCount() {
+  let n = 0;
+  for (const e of live.values()) if (!e.queued) n++;
+  return n;
+}
+
+/**
+ * The runs working on one account (huddle talk doesn't count: it only talks, and never waits in the queue), and whether
+ * one of them is approved huddle work. `forRun`'s own head is left out: it waits on its team, so its hand-offs can
+ * start even when the limit is 1.
+ */
+function activeOnAccount(acctKey, forRun = null) {
+  let count = 0, huddleWorkActive = false;
+  for (const [rid, e] of live.entries()) {
+    if (e.queued || runAcct.get(rid) !== acctKey) continue;
+    const r = db().runs[rid];
+    if (!r || r.huddleTalk || (forRun?.delegatedBy && rid === forRun.delegatedBy)) continue;
+    count++;
+    if (r.fromHuddle) huddleWorkActive = true;
+  }
+  return { count, huddleWorkActive };
+}
+
+/** Settings → Concurrency: live runs per account, 1–10 (default 3). */
+export const maxLivePerAccount = () => Math.max(1, Math.min(10, Math.round(Number(db().settings?.maxLivePerAccount)) || 3));
+
+/** Must this run wait? Approved huddle work starts one after another, and only once nothing else runs on the account. */
+function mustWait(run, acctKey) {
+  const { count, huddleWorkActive } = activeOnAccount(acctKey, run);
+  return { count, wait: count >= maxLivePerAccount() || (!!run.fromHuddle && (huddleWorkActive || count >= 1)) };
+}
 
 export function getRun(runId) {
   const run = db().runs[runId];
@@ -50,11 +120,16 @@ export function runEvents(runId) {
   return fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
 }
 
+// Every event gets `n` (the run's own counter, run.evN) and goes through the redaction pass (activity.mjs) before
+// it's written or sent; the run's activity (what it's doing now) rides along in the same `run.event`.
 function record(run, evt) {
-  const e = { t: new Date().toISOString(), ...evt };
+  run.evN = (run.evN || 0) + 1;
+  const e = { t: new Date().toISOString(), n: run.evN, ...redactEvent(evt) };
   fs.appendFileSync(runEventsPath(run.id), JSON.stringify(e) + '\n');
   run.lastActivity = e.t;
-  emit('run.event', { runId: run.id, workspace: run.workspace, event: e });
+  run.activity = nextActivity(run, e);
+  if (run.stalledAt && !run.endedAt) moving(run); // flagged as stuck (recover.mjs#checkStalls), and it isn't
+  emit('run.event', { runId: run.id, workspace: run.workspace, event: e, activity: run.activity });
 }
 
 const FINAL = new Set(['done', 'failed', 'stopped']);
@@ -62,6 +137,7 @@ export function setRunStatus(run, status) {
   // an ended run keeps its outcome, and a stopping one only ever ends (a late answer or Codex start can't revive it)
   if (run.status === status || run.endedAt || (run.status === 'stopping' && !FINAL.has(status))) return;
   run.status = status;
+  run.activity = nextActivity(run, null, { statusChanged: true });
   save();
   emit('run.updated', { run: publicRun(run) });
 }
@@ -127,7 +203,7 @@ function describeTool(name, input, run = null) {
   if (name === 'mcp__jos__report_done') return 'Reporting back to Orchy';
   if (name === 'mcp__jos__call_owner') return `Ringing ${ownerName()}`;
   if (name === 'mcp__jos__delegate') return `Handing work to ${String(input.agent || 'a teammate').slice(0, 40)}`;
-  if (name === 'mcp__jos__huddle') return `Huddling with ${String(input.agent || 'a colleague').slice(0, 40)}`;
+  if (name === 'mcp__jos__huddle') return `Huddling with ${huddleWith(input)}`;
   if (name === 'mcp__jos__note') return String(input.text || 'Progress note').slice(0, 90);
   if (name.startsWith('mcp__')) return `Using ${name.split('__').slice(1).join(' › ')}`;
   return `Using ${name}`;
@@ -142,7 +218,7 @@ function describeTool(name, input, run = null) {
 export async function startRun(opts) {
   const ws = workspace(opts.workspace);
   if (!ws.enabled) {
-    throw Object.assign(new Error(`${ws.name} is switched off, so Orchy isn't sending it work. Switch it back on in Workspace → ${ws.name}.`), { status: 409, code: 'WORKSPACE_DISABLED' });
+    throw Object.assign(new Error(`${ws.name} is switched off, so Orchy isn't sending it work. Switch it back on in Workspaces → ${ws.name}.`), { status: 409, code: 'WORKSPACE_DISABLED' });
   }
   // Orchy fixing his own code (backend.mjs): no agent, no client, Claude Code in the Orchy folder
   const backend = !!ws.builtin;
@@ -161,6 +237,12 @@ export async function startRun(opts) {
   // (allowUngated in config.json). Every run can change files or run commands, so every run is refused.
   const ungated = ungatedRefusal(ws, eng);
   if (ungated) throw Object.assign(new Error(ungated), { status: 409, code: 'UNGATED_ENGINE' });
+  // an opt-in engine (Antigravity) the owner hasn't switched on in .env
+  const off = offeredRefusal(eng);
+  if (off) throw Object.assign(new Error(off), { status: 409, code: 'ENGINE_OFF' });
+  // Orchy doesn't see every command an ungated engine runs, so it could reach the apps of whatever One login the CLI
+  // falls back to: a workspace without its own One login never runs on one
+  if (!eng.capabilities.gated && !backend && !oneScope(ws).own) throw Object.assign(new Error(`${ws.name} isn't signed in to its own One account yet, and ${eng.label}'s commands aren't all checked by Orchy, so it could reach another account's apps. Sign it in to One first (Workspaces → ${ws.name} → Sign in to One).`), { status: 409, code: 'ONE_SCOPE' });
 
   // the dashboard's account checks are cached for a minute; a run start wants one at most 10s old
   await eng.account(accountFor(ws, runtime).profileDir, { maxAge: 10_000 });
@@ -184,14 +266,40 @@ export async function startRun(opts) {
   // `claude --resume` only looks in the profile it runs under: "No conversation found". Start fresh instead.
   let lostSession = false;
   if (resume && eng.canResume && !eng.canResume(ws, resume)) { resume = null; lostSession = true; }
-  // A resumed session keeps the model it started on: a long Opus session reopened on a smaller model
-  // can fail at once (Sadie's "Proceed", 2026-10-13), so a follow-up never down-shifts it.
-  const model = resume && parent?.model && modelsFor(ws, runtime).includes(parent.model)
-    ? parent.model
-    : agent?.engine && !isBuilder
-      ? modelFor(ws, modelsFor(ws, runtime).includes(opts.model) ? opts.model : own || opts.model, runtime)
-      : modelFor(ws, opts.model || own, runtime);
-  const effort = !isBuilder && agent?.effort ? agent.effort : null;
+  // Long-chain reset: a follow-up chain past 60 turns (or whose last turn re-read over 120k input tokens) starts a fresh
+  // session seeded with the task file and the last report, instead of re-reading a huge transcript on every turn.
+  let chainTurns = 0;
+  for (let cur = parent, seen = new Set(); cur && !seen.has(cur.id); cur = cur.parentRunId ? db().runs[cur.parentRunId] : null) {
+    seen.add(cur.id);
+    chainTurns += Number(cur.numTurns) || 0;
+  }
+  const lastInput = Number(parent?.lastInputTokens || parent?.tokens?.uncachedInput || 0);
+  let chainReset = false;
+  if (resume && !opts.huddleTalk && (chainTurns > 60 || lastInput > 120_000)) { resume = null; chainReset = true; }
+  // the owner started it (not a hand-off, a client, a huddle or a schedule)
+  const ownerStarted = !opts.delegatedBy && !opts.client && !parent?.client && !opts.huddle && !opts.fromHuddle && opts.routing?.source !== 'schedule';
+  // A resumed session keeps the model it started on: a long session on the strong model reopened on a smaller one
+  // can fail at once, so a follow-up never down-shifts it. Jev's pick (routed) or the owner's own pick wins next;
+  // anything else (a pane's task, a hand-off, a schedule) gets router.mjs#unroutedModel: the agent's own model, or
+  // a tier from the size of the ask for the generalist and agents without one.
+  const model = opts.huddleTalk && opts.model
+    ? modelFor(ws, opts.model, runtime)
+    : resume && parent?.model && modelsFor(ws, runtime).includes(parent.model)
+      ? parent.model
+      : agent?.engine && !isBuilder
+        ? modelFor(ws, modelsFor(ws, runtime).includes(opts.model) ? opts.model : own || opts.model, runtime)
+        : (opts.routing && opts.routing.source !== 'schedule' && opts.model) || (ownerStarted && opts.model && opts.model !== own)
+          ? modelFor(ws, opts.model || own, runtime)
+          : unroutedModel(ws, agent, opts.instruction, {
+              kind: isBuilder ? 'build' : 'task',
+              isScheduled: opts.routing?.source === 'schedule',
+              isDelegated: !!opts.delegatedBy,
+              isFollowUp: !!opts.parentRunId,
+              runtime,
+            });
+  // high/max effort only on runs the owner started: hand-offs, schedules and huddles work at medium at most
+  const rawEffort = !isBuilder && agent?.effort ? agent.effort : null;
+  const effort = rawEffort && !ownerStarted && /^(high|max)$/i.test(rawEffort) ? 'medium' : rawEffort;
   const head = opts.delegatedBy ? db().runs[opts.delegatedBy] : null;
   // a client's task stays theirs whoever follows it up: the owner's reply (dashboard or voice) runs in the client's
   // folder under the same limits, and shows on their page labelled the owner
@@ -230,6 +338,12 @@ export async function startRun(opts) {
     huddleTalk: !!opts.huddleTalk,
     // the work an agent does once the owner approved its huddle's agreement
     fromHuddle: opts.fromHuddle || null,
+    // Orchy starting a failed run again (recover.mjs): the run it repeats, and how many automatic tries so far
+    retryOf: opts.retryOf || null,
+    retries: Number(opts.retries) || 0,
+    // a step of a mission (missions.mjs): it reports to the mission, which checks it and decides what comes next
+    missionId: opts.missionId || null,
+    stepId: opts.stepId || null,
     files: [],
     sessionId: resume || crypto.randomUUID(),
     status: 'starting',
@@ -238,11 +352,21 @@ export async function startRun(opts) {
     report: null,
     notes: [],
     createdAgents: [],
+    liveAtStart: liveCount(), // how many runs were working when it started (the Usage tab's spend at >=4 live)
   };
-  // a generalist's task, and every client's, gets its own folder in Tasks/ (a follow-up keeps its parent's);
+  // a skill installed since the last sync is filed into Resources/ and linked before the agent loads its skills
+  if (!backend) { try { syncResources(ws, { moves: !liveIn(ws.id), index: 'auto' }); } catch (e) { console.warn('[resources]', e.message); } }
+  // a task gets its own folder in its agent's Tasks (tasks.mjs; a follow-up keeps its parent's);
   // a client's lives in the client's own corner of the workspace (clientspace.mjs)
   if (run.client) ensureHome(ws, run.client);
-  if (hasTaskDir(run)) run.taskDir = openTaskDir(ws, run, parent);
+  // a mission's steps all share the mission's folder (a plain name under the mission's Tasks, never a client's)
+  const shared = run.missionId && !run.client && !backend && !run.huddleTalk && typeof opts.taskDir === 'string'
+    && /^[\w][\w .-]{0,80}$/.test(opts.taskDir) && !opts.taskDir.includes('..') && !/[. ]$/.test(opts.taskDir) ? opts.taskDir : null;
+  if (shared) {
+    run.taskRoot = taskRootRel({ taskRoot: opts.taskRoot });
+    fs.mkdirSync(path.join(tasksBase(ws, run), shared), { recursive: true });
+    run.taskDir = shared;
+  } else if (hasTaskDir(run)) run.taskDir = openTaskDir(ws, run, parent);
   // files the client uploaded (staged on their page) or the owner attached to a reply on the client's task
   if (run.client) {
     const paths = [...adoptUploads(ws, run, opts.uploads || []), ...copyIntoTask(ws, run, opts.ownerFiles || [])];
@@ -265,6 +389,10 @@ export async function startRun(opts) {
     prompt += `\n\n(Orchy: the conversation this follows up on isn't available under this workspace's current Claude account, so you're starting fresh. Pick the work up from the files in the folder and Notion${parent?.taskDir ? `, starting with the task folder ${parent.taskDir}` : ''}, and check what's already done before redoing anything.)`;
     record(run, { kind: 'system', text: "The earlier conversation isn't under this workspace's current Claude account, so this starts a fresh one." });
   }
+  if (chainReset) {
+    prompt += `\n\n${chainSeed(ws, run, parent, { chainTurns, lastInput })}`;
+    record(run, { kind: 'system', text: `Long conversation chain (${chainTurns} turns): starting a fresh session seeded with the task file and the last report.` });
+  }
   if (isBuilder && !resume && !opts.huddle) {
     const conns = await allConnections(ws);
     let naming = null;
@@ -274,7 +402,7 @@ export async function startRun(opts) {
   run.prompt = prompt;
 
   // MCP: the Orchy bridge + the external servers this agent may use (all of them for the builder/generalist).
-  const servers = readMcp(ws);
+  const servers = await serversWithAuth(ws, readMcp(ws)); // servers signed in with OAuth carry their token as a header (mcpauth.mjs)
   const allowedMcp = agent && !isBuilder && agent.mcpServers.length ? agent.mcpServers : (agent && !isBuilder ? [] : null);
   const bridge = {
     command: process.execPath,
@@ -301,14 +429,122 @@ export async function startRun(opts) {
   const agentMarkdown = isBuilder ? getAgent(ws.id, BUILDER_SLUG).markdown : agent?.markdown || null;
   // each engine turns Orchy's bridge + the allowed servers into its own MCP config and starts the run itself
   const mcp = eng.mcpConfig({ servers, allowed: allowedMcp, bridge });
-  try {
-    eng.launch(run, ws, { prompt, agentSlug, agentMarkdown, mcp, resume, fingerprint, planText }, RT);
-  } catch (e) {
-    // a launch that throws must not leave a run that is "starting" for ever
-    record(run, { kind: 'error', text: e.message });
-    finish(run, ws, 1, e.message);
+  const acctKey = accountKey(ws, runtime);
+  runAcct.set(run.id, acctKey);
+  // `again` (a run paused on its account's limit, started again): the conversation it was in, if it had one
+  const launchNow = (again = resume) => {
+    run.liveAtStart = liveCount();
+    try {
+      eng.launch(run, ws, { prompt, agentSlug, agentMarkdown, mcp, resume: again, fingerprint, planText }, RT);
+    } catch (e) {
+      // a launch that throws must not leave a run that is "starting" for ever
+      record(run, { kind: 'error', text: e.message });
+      finish(run, ws, 1, e.message);
+    }
+  };
+  launchers.set(run.id, launchNow);
+
+  // the account's queue: a huddle turn only talks and never waits; "Run now" (opts.runNow) skips it
+  if (!run.huddleTalk && !opts.runNow) {
+    const lim = accountLimits.get(acctKey);
+    if (lim && Date.now() >= lim.until) { clearTimeout(lim.timer); accountLimits.delete(acctKey); }
+    const paused = accountLimits.get(acctKey);
+    const { count, wait } = mustWait(run, acctKey);
+    if (paused || wait) {
+      run.status = paused ? 'paused-limit' : 'queued';
+      if (paused) run.limitError = paused.reason;
+      record(run, { kind: 'system', text: paused
+        ? `Paused: ${ws.name}'s ${eng.label} account hit its usage limit. Queued to start by itself when the window resets (or press Run now).`
+        : `Queued on ${ws.name}'s ${eng.label} account (${count} live${run.fromHuddle ? ', huddle work starts one after another' : ''}). Press Run now to start it at once.` });
+      live.set(run.id, { queued: true, fingerprint, launch: () => launchNow(), stop: () => finish(run, ws, null, '') });
+      run.activity = nextActivity(run, null, { statusChanged: true });
+      save();
+      emit('run.updated', { run: publicRun(run) });
+      return publicRun(run);
+    }
   }
+  launchNow();
   return publicRun(run);
+}
+
+/** What a follow-up that starts fresh after a long chain is told: the task file, the last report, what's open. */
+function chainSeed(ws, run, parent, { chainTurns, lastInput }) {
+  const holder = run.taskDir ? run : parent?.taskDir ? parent : null;
+  const file = holder ? path.join(taskRoot(ws, holder), 'TASK.md') : null;
+  const shown = holder ? `${taskRel(holder)}/TASK.md` : null;
+  let taskDoc = '';
+  try { if (file && fs.existsSync(file)) taskDoc = fs.readFileSync(file, 'utf8').slice(0, 2500).trim(); } catch {}
+  const lastSummary = String(parent?.report?.summary || parent?.resultText || '').slice(0, 1500).trim();
+  const outputs = (parent?.report?.outputs || []).slice(0, 10);
+  const followUps = (parent?.report?.follow_ups || []).slice(0, 10);
+  return [
+    `(Orchy: the earlier conversation reached ${chainTurns} turns${lastInput > 120_000 ? ` (${Math.round(lastInput / 1000)}k input tokens)` : ''}, so this follow-up starts a fresh session to keep it fast.`,
+    shown ? `Task file: ${shown}` : 'Check the Tasks/ folder for the earlier task files.',
+    lastSummary ? `Last report summary:\n${lastSummary}` : '',
+    outputs.length ? `Outputs so far:\n- ${outputs.join('\n- ')}` : '',
+    followUps.length ? `Open follow-ups:\n- ${followUps.join('\n- ')}` : '',
+    taskDoc ? `Current TASK.md excerpt:\n${taskDoc}` : '',
+    'Pick up from these files without redoing finished work.)',
+  ].filter(Boolean).join('\n\n');
+}
+
+// ── session/usage limits ──
+// A run that fails on its account's session or usage limit doesn't fail: it pauses (`paused-limit`), and the runs
+// queued behind it on that account wait too, until the window resets (the time the harness names, else 30 minutes).
+export const SESSION_LIMIT_RE = /session limit|usage limit|rate limit.*reset|hit your limit|out of .*usage|exceeded.*(?:plan|usage).*limit|usage cap/i;
+const SESSION_LIMIT_WAIT_MS = 30 * 60_000;
+
+export function parseResetWaitMs(text) {
+  const min = String(text || '').match(/in\s+(\d{1,3})\s*(?:min|minute)/i);
+  if (min) return Math.max(60_000, Math.min(4 * 3600_000, Number(min[1]) * 60_000));
+  const hr = String(text || '').match(/in\s+(\d{1,2})\s*(?:hr|hour)/i);
+  if (hr) return Math.max(60_000, Math.min(6 * 3600_000, Number(hr[1]) * 3600_000));
+  return SESSION_LIMIT_WAIT_MS;
+}
+
+/** A run that hit its account's limit: park it (and the account) until the window resets; `relaunch` starts it again. */
+function pauseForSessionLimit(run, ws, reason, relaunch) {
+  const acctKey = runAcct.get(run.id) || accountKey(ws, run.runtime);
+  const waitMs = parseResetWaitMs(reason);
+  const until = Date.now() + waitMs;
+  const prevEntry = live.get(run.id);
+  run.status = 'paused-limit';
+  run.limitError = String(reason).slice(0, 400);
+  run.apiError = null;
+  record(run, { kind: 'system', text: `Paused: ${ws.name}'s ${engine(run.runtime)?.label || run.runtime} account hit its session/usage limit (${String(reason).slice(0, 200)}). It starts again by itself when the window resets (or press Run now).` });
+  live.set(run.id, { queued: true, fingerprint: prevEntry?.fingerprint || null, launch: relaunch, stop: () => finish(run, ws, null, '') });
+  run.activity = nextActivity(run, null, { statusChanged: true });
+  save();
+  emit('run.updated', { run: publicRun(run) });
+
+  const prev = accountLimits.get(acctKey);
+  if (prev?.timer) clearTimeout(prev.timer);
+  const timer = setTimeout(() => { accountLimits.delete(acctKey); drainQueue(acctKey); }, waitMs);
+  timer.unref?.();
+  accountLimits.set(acctKey, { until, reason: run.limitError, timer, announced: true });
+  if (!prev?.announced && limitReporter) {
+    try { limitReporter({ ws, run: publicRun(run), reason: run.limitError, until: new Date(until).toISOString() }); } catch {}
+  }
+}
+
+/** Start what's waiting on an account, as far as its limit allows (after a run ends, or the limit window resets). */
+function drainQueue(acctKey) {
+  const lim = accountLimits.get(acctKey);
+  if (lim && Date.now() < lim.until) return;
+  if (lim) { clearTimeout(lim.timer); accountLimits.delete(acctKey); }
+  for (const [rid, entry] of [...live.entries()]) {
+    if (!entry.queued || runAcct.get(rid) !== acctKey) continue;
+    const r = db().runs[rid];
+    if (!r) { live.delete(rid); runAcct.delete(rid); continue; }
+    const { count, wait } = mustWait(r, acctKey);
+    if (count >= maxLivePerAccount()) break;
+    if (wait) continue; // huddle work waits for the account to be free
+    entry.queued = false;
+    r.limitError = null;
+    setRunStatus(r, 'starting');
+    record(r, { kind: 'system', text: 'Starting from the queue.' });
+    entry.launch();
+  }
 }
 
 // The workspace's own setup (settings, hooks, skills, agents, instructions, MCP servers). acceptEdits takes edits in
@@ -316,13 +552,27 @@ export async function startRun(opts) {
 // The AI Agent Builder writes agent files (and retires them), so .claude/agents and .jos/retired stay open to it.
 const SETUP_ASK = ['.claude/**', '.codex/**', '.agents/skills/**', '.one/**', '.jos/mcp.json', '.jos/retired/**', 'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', '.mcp.json'];
 const BUILDER_ASK = ['.claude/*', '.claude/skills/**', '.claude/hooks/**', '.claude/commands/**', '.claude/rules/**', '.claude/output-styles/**', '.codex/**', '.agents/skills/**', '.one/**', '.jos/mcp.json', 'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', '.mcp.json'];
-function setupSettingsFile(ws, run) {
+// image reads reach the gate too, so it can count them (gate.mjs: a run reading frame after frame asks after 60)
+const IMAGE_ASK = ['**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.webp', '**/*.gif'];
+const fwd = p => String(p).replace(/\\/g, '/');
+/** The files in Orchy's own folder that a run must never load as its instructions (Claude Code walks up from the run's folder). */
+export const ROOT_INSTRUCTIONS = ['CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md'];
+/** The PreToolUse hook that tells Orchy where each shell command runs (mcp/cwd-hook.mjs), as a command line for the harness's shell. */
+export const cwdHookCommand = runId => shellLine([process.execPath, path.join(ORCH_DIR, 'mcp', 'cwd-hook.mjs'), runId]);
+export function setupSettingsFile(ws, run) {
   // relative to the run's folder, and by absolute path in Claude Code's form (//c/Users/…). Edit rules cover every
   // built-in edit (Write, NotebookEdit…); a match only hands the call to the gate, which lets nested look-alikes through
   const root = `//${path.resolve(ws.dir).replace(/\\/g, '/').replace(/^([A-Za-z]):\//, (_, d) => `${d.toLowerCase()}/`)}`;
-  const ask = (run.isBuilder ? BUILDER_ASK : SETUP_ASK).flatMap(g => [`Edit(./${g})`, `Edit(${root}/${g})`]);
+  const ask = [
+    ...(run.isBuilder ? BUILDER_ASK : SETUP_ASK).flatMap(g => [`Edit(./${g})`, `Edit(${root}/${g})`]),
+    ...IMAGE_ASK.flatMap(g => [`Read(./${g})`, `Read(${root}/${g})`]),
+  ];
   const file = path.join(DATA_DIR, 'runs', `${run.id}.settings.json`);
-  fs.writeFileSync(file, JSON.stringify({ permissions: { ask } }, null, 2));
+  // the folder each command runs in (the shell keeps a `cd` between commands), for the gate's checks (gate.mjs#shellCwd)
+  const cwdHook = { type: 'command', command: cwdHookCommand(run.id), timeout: 10 };
+  // Orchy's own CLAUDE.md is for people and agents working on Orchy, never for a workspace's agents (both path forms)
+  const claudeMdExcludes = [...new Set(ROOT_INSTRUCTIONS.flatMap(f => [fwd(path.join(ROOT, f)), path.join(ROOT, f)]))];
+  fs.writeFileSync(file, JSON.stringify({ claudeMdExcludes, permissions: { ask }, hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [cwdHook] }] } }, null, 2));
   return file;
 }
 
@@ -335,8 +585,10 @@ function hooksFor(run, ws) {
   return {
     record: evt => {
       if (evt.kind !== 'tool') return record(run, evt);
+      const entry = live.get(run.id);
+      if (entry) entry.acted = true; // from here on a failure isn't safe to start over blindly
       const summary = describeTool(evt.tool, evt.input || {}, run) + (evt.extra ? ` (+${evt.extra} more)` : '');
-      record(run, { kind: 'tool', tool: evt.tool, summary, input: trimInput(evt.input) });
+      record(run, { kind: 'tool', tool: evt.tool, ...(evt.toolUseId ? { toolUseId: evt.toolUseId } : {}), summary, input: trimInput(evt.input) });
     },
     started: ({ threadId }) => { run.sessionId = threadId; save(); setRunStatus(run, 'working'); },
     gate: async (tool, input) => {
@@ -355,11 +607,26 @@ function hooksFor(run, ws) {
       }
       return out;
     },
+    // an engine that can't ask on the way (Antigravity) asks the owner once, before it starts; never remembered
+    approveRun: async ({ title, message }) => {
+      const item = createItem('approval', { runId: run.id, workspace: ws.id, agent: who, title, message, detail: run.instruction, noRemember: true, ...askFields(run) });
+      setRunStatus(run, 'waiting');
+      const it = await waitAnswered(item.id);
+      const ok = it.status === 'answered' && !!it.answer?.approve;
+      if (ok) setRunStatus(run, 'starting');
+      return ok;
+    },
     usage: tokens => { run.tokens = tokens; },
     cost: usd => { run.costUsd = usd; },
     done: ({ code, status, error, resultText }) => {
       if (resultText) run.resultText = resultText;
       run.apiError = code === 0 ? null : status === 'interrupted' ? 'Interrupted' : (error || `The ${runtimeLabel(run.runtime)} turn failed`);
+      // the account's session/usage limit: pause instead of failing, and start again (in the same conversation if it acted)
+      if (code !== 0 && status !== 'interrupted' && run.status !== 'stopping' && !run.report && !run.huddleTalk && SESSION_LIMIT_RE.test(`${error || ''}\n${resultText || ''}`)) {
+        const again = live.get(run.id)?.acted ? run.sessionId : undefined;
+        const launch = launchers.get(run.id);
+        if (launch) return pauseForSessionLimit(run, ws, String(error || 'Session/usage limit reached').trim(), () => { run.apiError = null; launch(again); });
+      }
       finish(run, ws, code, error || '');
     },
   };
@@ -367,12 +634,19 @@ function hooksFor(run, ws) {
 
 /** What an engine's launch() gets besides the run (engines/index.mjs): the shared run machinery and the modules it needs. */
 const RT = {
-  live, record, finish, save,
+  live, record, finish, save, briefFor,
+  // a Claude Code run that hit its account's session/usage limit (engines/claude.mjs): pause it, `relaunch` later
+  SESSION_LIMIT_RE,
+  limitPause: (run, ws, reason, relaunch) => pauseForSessionLimit(run, ws, reason, relaunch),
   handleLine: (run, ws, line) => handleLine(run, ws, line), // Claude Code's stream-json lines
   hooks: hooksFor,
   setupSettingsFile: (ws, run) => setupSettingsFile(ws, run),
   instructions: (ws, run, agentMarkdown, planText) => codexInstructions(ws, run, agentMarkdown, planText),
-  deps: { ensureHome, clientSettingsFile, clientReadDirs, backendSettingsFile, nativeAgentDenyRules, clientDenyRules, listAgents, protocolFile },
+  deps: {
+    allWorkspaces: () => workspaces(),
+    // every harness profile folder of the other workspaces, and this one's for its other engines (Antigravity's deny rules)
+    profileDirs: (ws, others = [], except = null) => [...others.flatMap(w => engines().map(e => w[e.fields.profile])), ...engines().filter(e => e.id !== except).map(e => ws[e.fields.profile])].filter(Boolean).map(profilePath),
+    ensureHome, clientSettingsFile, clientReadDirs, backendSettingsFile, nativeAgentDenyRules, clientDenyRules, listAgents, protocolFile },
 };
 
 function handleLine(run, ws, line) {
@@ -385,13 +659,16 @@ function handleLine(run, ws, line) {
     return;
   }
   if (msg.type === 'assistant') {
+    const u = msg.message?.usage;
+    if (u) run.lastInputTokens = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
     for (const block of msg.message?.content || []) {
       if (block.type === 'text' && block.text?.trim()) record(run, { kind: 'text', text: block.text.trim() });
       if (block.type === 'tool_use') {
         const entry = live.get(run.id);
         if (entry) entry.acted = true; // from here on a failure isn't safe to retry blindly
         if (entry && (block.name === 'Bash' || block.name === 'PowerShell') && oneLookup(block.input?.command)) (entry.lookups ||= new Set()).add(block.id);
-        record(run, { kind: 'tool', tool: block.name, summary: describeTool(block.name, block.input || {}, run), input: trimInput(block.input) });
+        if (entry && block.id) (entry.tools ||= new Map()).set(block.id, block.name); // for the result's tool_done
+        record(run, { kind: 'tool', tool: block.name, toolUseId: block.id, summary: describeTool(block.name, block.input || {}, run), input: trimInput(block.input) });
       }
     }
     return;
@@ -400,8 +677,13 @@ function handleLine(run, ws, line) {
     for (const block of msg.message?.content || []) {
       if (block.type !== 'tool_result') continue;
       const text = Array.isArray(block.content) ? block.content.map(c => c.text || '').join('\n') : String(block.content || '');
-      if (live.get(run.id)?.lookups?.delete(block.tool_use_id) && !block.is_error) harvestActions(text);
-      if (block.is_error) record(run, { kind: 'tool_error', text: text.slice(0, 600) });
+      const entry = live.get(run.id);
+      if (entry?.lookups?.delete(block.tool_use_id) && !block.is_error) harvestActions(text);
+      const tool = entry?.tools?.get(block.tool_use_id);
+      entry?.tools?.delete(block.tool_use_id);
+      if (block.is_error) record(run, { kind: 'tool_error', toolUseId: block.tool_use_id, tool, text: text.slice(0, 600) });
+      // success: a safe digest only (counts), never the output itself
+      else record(run, { kind: 'tool_done', toolUseId: block.tool_use_id, tool, ok: true, brief: briefFor(tool, block.content) });
     }
     return;
   }
@@ -412,6 +694,12 @@ function handleLine(run, ws, line) {
     run.apiError = msg.is_error ? (msg.result || msg.subtype) : null;
     if (msg.session_id) run.sessionId = msg.session_id;
     if (msg.permission_denials?.length) run.permissionDenials = msg.permission_denials.length;
+    if (msg.usage) {
+      const u = msg.usage;
+      const input = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+      const output = u.output_tokens || 0;
+      run.tokens = { input, output, total: input + output, uncachedInput: u.input_tokens || 0, cacheRead: u.cache_read_input_tokens || 0, cacheCreate: u.cache_creation_input_tokens || 0 };
+    }
     save();
   }
 }
@@ -424,16 +712,21 @@ function trimInput(input) {
 
 async function finish(run, ws, code, stderr) {
   const entry = live.get(run.id);
+  const acctKey = runAcct.get(run.id);
   live.delete(run.id);
+  runAcct.delete(run.id);
+  launchers.delete(run.id);
   run.endedAt = new Date().toISOString();
   run.durationMs = Date.parse(run.endedAt) - Date.parse(run.startedAt);
   if (run.status === 'stopping') run.outcome = 'stopped';
+  // a huddle turn that already said its piece (huddle_reply) and was ended early (endHuddleTurn) completed
+  else if (run.huddleTalk && run.huddleReply) run.outcome = 'completed';
   else if (run.report?.status) run.outcome = run.report.status;
   else if (code === 0 && !run.apiError) run.outcome = 'completed';
   else run.outcome = 'failed';
   if (run.outcome === 'failed' && !run.report) {
     // a bare result subtype ("error_during_execution") says nothing: add what Claude printed on stderr
-    const tail = stderr.trim().split('\n').slice(-6).join('\n');
+    const tail = String(stderr || '').trim().split('\n').slice(-6).join('\n');
     const bare = run.apiError && /^error_[a-z_]+$/.test(run.apiError);
     run.error = ((bare && tail ? `${run.apiError}: ${tail}` : run.apiError) || tail || `${runtimeLabel(run.runtime)} exited with code ${code}`).slice(0, 1500);
     record(run, { kind: 'error', text: run.error });
@@ -463,9 +756,11 @@ async function finish(run, ws, code, stderr) {
     try { appendRunLog(run, ws, items); run.logged = true; } catch (e) { console.error('[logs] append failed', e); }
     try { saveTask(run, ws); } catch (e) { console.error('[tasks] save failed', e); }
   }
+  try { appendCostLine(run, ws); } catch (e) { console.error('[costs] append failed', e.message); }
   save();
   record(run, { kind: 'system', text: `Finished: ${run.outcome}` });
   emit('run.ended', { run: publicRun(run) });
+  if (acctKey) drainQueue(acctKey); // a slot on its account is free
   if (orchyReporter && !run.huddle) orchyReporter(run, ws).catch(e => console.error('[orchy] report failed', e));
 }
 
@@ -480,6 +775,31 @@ export function stopRun(runId, { by = null } = {}) {
   return publicRun(run);
 }
 
+/** End a huddle turn once its huddle_reply has landed (server.mjs, the bridge), so it doesn't take extra trailing turns. */
+export function endHuddleTurn(runId) {
+  const entry = live.get(runId);
+  const run = db().runs[runId];
+  if (!entry || entry.queued || !run?.huddleTalk || !run.huddleReply) return;
+  entry.huddleDone = true;
+  entry.stop();
+}
+
+/** Start a queued or limit-paused run at once (the owner's "Run now"). A limit pause on its account is lifted for it. */
+export function runNow(runId) {
+  const run = getRun(runId);
+  const entry = live.get(runId);
+  if (!entry || !entry.queued) return publicRun(run);
+  const acctKey = runAcct.get(runId);
+  const lim = acctKey && accountLimits.get(acctKey);
+  if (lim) { clearTimeout(lim.timer); accountLimits.delete(acctKey); }
+  entry.queued = false;
+  run.limitError = null;
+  setRunStatus(run, 'starting');
+  record(run, { kind: 'system', text: `Started at once by ${ownerName()} (jumped the queue).` });
+  entry.launch();
+  return publicRun(run);
+}
+
 /** Stop the team runs a head handed work to (when the head stops or ends). */
 function stopSubRuns(parentId) {
   for (const r of Object.values(db().runs)) {
@@ -491,14 +811,18 @@ function stopSubRuns(parentId) {
 
 export function isLive(runId) { return live.has(runId); }
 
+/** Runs cut off by a restart (queued and paused ones too) are failed; their ids are returned. */
 export function markInterruptedRuns() {
+  const cut = [];
   for (const run of Object.values(db().runs)) {
-    if (['starting', 'working', 'waiting', 'stopping'].includes(run.status)) {
+    if (['queued', 'paused-limit', 'starting', 'working', 'waiting', 'stopping'].includes(run.status)) {
+      cut.push(run.id);
       run.status = 'failed';
       run.outcome = 'failed';
       run.error = 'The orchestrator stopped while this run was in progress, so the agent was cut off. Re-send the task if it still needs doing.';
       run.endedAt = run.endedAt || run.lastActivity || new Date().toISOString();
       run.durationMs = Date.parse(run.endedAt) - Date.parse(run.startedAt);
+      run.activity = nextActivity(run);
       if (!run.logged) {
         try { appendRunLog(run, workspace(run.workspace), itemsForRun(run.id)); run.logged = true; } catch (e) { console.error('[logs]', e.message); }
         try { saveTask(run, workspace(run.workspace)); } catch (e) { console.error('[tasks]', e.message); }
@@ -506,6 +830,7 @@ export function markInterruptedRuns() {
     }
   }
   save();
+  return cut;
 }
 
 /** A line on the run's timeline only the owner sees (a client's page shows notes, not these). */

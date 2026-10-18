@@ -1,6 +1,6 @@
 // Checks that Orchy recognises the names the owner uses for workspaces ("for Alpha", "314", "Main")
 // without confusing everyday words ("build one agent", "the main problem"). Run: node orchestrator/scripts/test-routing.mjs
-import { namedTargets, offTarget, route } from '../lib/router.mjs';
+import { namedTargets, offTarget, route, missionShape } from '../lib/router.mjs';
 
 const wss = [
   { id: 'alpha', name: 'Alpha Studio', client: 'Alpha Studio Ltd', blurb: 'Support inbox and invoices.', aliases: ['Alp'] },
@@ -80,5 +80,28 @@ for (const [text, want] of heuristicCases) {
   if (got !== want) fail++;
   console.log(`${got === want ? 'ok  ' : 'FAIL'} offline: ${JSON.stringify(text)} → ${got}${got === want ? '' : ` (want ${want})`}`);
 }
-console.log(fail ? `\n${fail} failing` : `\nall ${cases.length + offCases.length + heuristicCases.length} pass`);
+// missions (router.mjs#missionShape): Jev's "mission" only stands when the words read as work in a row; one piece
+// of work (or chat) never does, so ordinary messages can't become missions
+const shapeCases = [
+  ['Research the latest on AI agents and make a short PDF report', true],
+  ['For Alpha: research the latest on AI agents this week, then have Ada turn it into a short designed PDF report', true],
+  ['Find 10 podcasts, then have the designer make a one-pager pitching our studio', true],
+  ['Research our three competitors and turn the findings into a slide deck', true],
+  ['Pull last week’s signups, then write a summary for the newsletter', true],
+  ['Scrape the pricing pages and, based on that, draft a comparison table', true],
+  ['check the support inbox for Alpha', false],
+  ['draft a reply to the supplier and send it', false],
+  ['write a blog post about agents', false],
+  ['summarise yesterday\'s payouts', false],
+  ['check the inbox and reply to the supplier', false],
+  ['make a PDF of the report', false],
+  ['how are you doing today?', false],
+  ['Then what happened with the invoice?', false],
+];
+for (const [text, want] of shapeCases) {
+  const got = missionShape(text);
+  if (got !== want) fail++;
+  console.log(`${got === want ? 'ok  ' : 'FAIL'} mission shape: ${JSON.stringify(text)} → ${got}${got === want ? '' : ` (want ${want})`}`);
+}
+console.log(fail ? `\n${fail} failing` : `\nall ${cases.length + offCases.length + heuristicCases.length + shapeCases.length} pass`);
 process.exit(fail ? 1 : 0);

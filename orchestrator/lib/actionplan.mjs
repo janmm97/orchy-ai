@@ -15,8 +15,8 @@ import { isReadOnlyAction } from './policy.mjs';
 
 export const LIMITS = {
   threshold: 0.5,       // Jev's yes-probability an action needs to make the plan
-  maxActions: 5,        // actions in a plan
-  docsChars: 30_000,    // docs in the prompt, all actions together (~7.5k tokens)
+  maxActions: 3,        // actions in a plan (top 3)
+  docsChars: 12_000,    // docs in the prompt, all actions together (~3k tokens), each one trimmed (trimActionDoc)
   maxCandidates: 40,    // action IDs from an agent file Jev looks at
   maxPlatforms: 3,      // platforms Orchy searches for an agent without IDs
   batch: 20,            // questions per Jev call
@@ -123,13 +123,67 @@ export function choose(items, answers, prefix, { threshold = LIMITS.threshold, m
 
 // ── the plan ──
 
-/** Which actions get their docs in the prompt: most likely first, until the size budget is used up. */
+const DROP_HEADING_RE = /^#{1,5}\s*(?:errors?|error\s+(?:codes?|responses?|handling|table|messages?)|status\s+codes?|http\s+status|troubleshooting|rate\s+limits?|common\s+(?:errors|issues|mistakes)|response\s+(?:schema|fields|body|format)|full\s+response|additional\s+examples?|more\s+examples?)\b/i;
+
+/**
+ * Trim an action doc to what the agent needs to execute: method, URL, required params, and at most one short sample.
+ * Drops error tables, response-schema dumps, troubleshooting sections, and second/long code blocks.
+ */
+export function trimActionDoc(doc) {
+  if (!doc) return doc;
+  const lines = String(doc).split(/\r?\n/);
+  const out = [];
+  let inFence = false;
+  let fenceLines = [];
+  let samplesKept = 0;
+  let dropLevel = 0; // >0 while inside a dropped heading section
+  for (const line of lines) {
+    const fenceMatch = /^\s*(```|~~~)/.exec(line);
+    if (fenceMatch) {
+      if (!inFence) {
+        inFence = true;
+        fenceLines = [line];
+      } else {
+        inFence = false;
+        if (!dropLevel && samplesKept < 1) {
+          samplesKept++;
+          const body = fenceLines.slice(1).join('\n');
+          const trimmedBody = body.length > 600 ? `${body.slice(0, 590).trimEnd()}\n// …` : body;
+          out.push(fenceLines[0], trimmedBody, line);
+        }
+        fenceLines = [];
+      }
+      continue;
+    }
+    if (inFence) {
+      fenceLines.push(line);
+      continue;
+    }
+    const hMatch = /^(#{1,5})\s+/.exec(line);
+    if (hMatch) {
+      const level = hMatch[1].length;
+      if (DROP_HEADING_RE.test(line)) {
+        dropLevel = dropLevel ? Math.min(dropLevel, level) : level;
+        continue;
+      }
+      if (dropLevel && level <= dropLevel) dropLevel = 0;
+    }
+    if (dropLevel) continue;
+    // Skip markdown table rows that look like HTTP error status code rows (| 400 | ... |, | 401 | ... |, | 429 | ... |, | 500 | ... |)
+    if (/^\s*\|\s*`?(?:4\d\d|5\d\d)`?\s*\|/.test(line)) continue;
+    out.push(line);
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** Which actions get their docs in the prompt: most likely first, trimmed, until the size budget is used up. */
 export function budgetDocs(picks, budget = LIMITS.docsChars) {
   let used = 0;
   return picks.map(a => {
-    const fits = !!a.docs && used + a.docs.length <= budget;
-    if (fits) used += a.docs.length;
-    return { ...a, withDocs: fits };
+    const docs = a.docs ? trimActionDoc(a.docs) : a.docs;
+    const fits = !!docs && used + docs.length <= budget;
+    if (fits) used += docs.length;
+    return { ...a, docs, withDocs: fits };
   });
 }
 
@@ -148,13 +202,13 @@ export function planText(actions, conns) {
   const keysFor = a => conns.filter(c => c.platform === a.platform);
   const keyCell = a => keysFor(a).map(c => `\`${c.key}\` (${c.name})`).join(', ') || 'one of yours for this app';
   return `## Jev's plan for this task
-Before you started, Orchy asked Jev which One actions this task needs and loaded their docs below. **These count as found and read**: run them straight away with \`one --agent actions execute <platform> <actionId> <connectionKey> ...\`, without \`actions find\` or \`actions load\` for them first. Send every field a doc marks required, where it says (many want the connection key inside \`-d\` as \`connectionKey\` too). The plan is Jev's best guess: skip an action the task turns out not to need, and if it needs one that isn't here (or a doc says a section you need was left out), find or load it as usual. Approvals work as always.
+Before you started, Orchy asked Jev which One actions this task needs and loaded their docs below. **These count as found and read**: run them straight away with \`one --agent actions execute <platform> <actionId> <connectionKey> ...\`, without \`actions find\` or \`actions load\` (and never \`actions load --full\`) for them first. Send every field a doc marks required, where it says (many want the connection key inside \`-d\` as \`connectionKey\` too). The plan is Jev's best guess: skip an action the task turns out not to need, and if it needs one that isn't here (or a doc says a section you need was left out), find or load it as usual. Approvals work as always.
 
 | Action | Platform | Action ID | Connection key |
 |---|---|---|---|
 ${actions.map(a => `| ${a.title || a.label}${a.kind ? ` (${a.kind})` : ''} | ${a.platform || '?'} | \`${a.actionId}\` | ${keyCell(a)} |`).join('\n')}
 ${actions.map(a => a.withDocs
-    ? `\n### ${a.title || a.label} · \`${a.actionId}\`\n${demote(a.docs.trim())}\n`
+    ? `\n### ${a.title || a.label} · \`${a.actionId}\`\n${demote(trimActionDoc(a.docs).trim())}\n`
     : `\n### ${a.title || a.label} · \`${a.actionId}\`\nDocs not included (over the size limit): run \`one --agent actions load ${a.actionId}\` before using it.\n`).join('')}`;
 }
 

@@ -19,4 +19,4 @@ npm test          # every test script: no network, no keys, no harness needed
 npm run check     # health check of this machine's setup (accounts, One CLI, keys)
 ```
 
-See CONTRIBUTING.md for the guard files.
+See docs/CONTRIBUTING.md for the guard files.

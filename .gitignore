@@ -16,6 +16,11 @@ Retired/
 .jos/mcp.json
 */.jos/mcp.json
 
+# The launcher setup copies from launchers/ for this computer
+/Start Orchy.cmd
+/Start Orchy.command
+/Start Orchy.sh
+
 # Local tooling
 .claude/settings.local.json
 .DS_Store
