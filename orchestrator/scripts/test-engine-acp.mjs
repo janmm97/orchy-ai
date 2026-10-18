@@ -1,5 +1,5 @@
 // The shared ACP client (engines/acp.mjs) against a FAKE ACP agent (a Node script spawned as the subprocess; no real
-// harness, no network), plus the Hermes and DeepSeek generated configs:
+// harness, no network), plus the Hermes generated config:
 //   node orchestrator/scripts/test-engine-acp.mjs
 // Checks: initialize declines fs/terminal; a read-like tool is approved once; `git push`, an unknown tool and an
 // outward kind are refused by the REAL policy (no pop-up decision is made: the stub gate refuses whatever would need

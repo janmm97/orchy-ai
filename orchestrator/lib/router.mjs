@@ -7,6 +7,7 @@ import { config, ORCH_DIR, ownerName } from './env.mjs';
 import { ask } from './jev.mjs';
 import { askViaHarness } from './brain.mjs';
 import { workspaces, tierModel, modelsFor, modelFor, handles, BACKEND_ID } from './workspaces.mjs';
+import { engine } from './engines/index.mjs';
 import { listAgents, BUILDER_SLUG } from './agents.mjs';
 import { db } from './store.mjs';
 import { nameOf } from './voiceagents.mjs';
@@ -524,7 +525,8 @@ export function ceilingTierModel(ws, agent, tier, runtime = agent?.engine || ws.
   const list = modelsFor(ws, runtime);
   if (agent?.model && agent.model !== 'inherit') {
     const exact = modelFor(ws, agent.model, runtime);
-    if (list.includes(exact)) return exact;
+    // an engine that takes any model id (OpenCode, Hermes, Antigravity) keeps the one the agent names
+    if (list.includes(exact) || (exact !== 'default' && engine(runtime)?.openModels)) return exact;
   }
   return tierModel(ws, Math.max(0, Math.min(tier, list.length - 1)), runtime);
 }
@@ -550,7 +552,9 @@ export function unroutedModel(ws, agent, instruction = '', { kind = 'task', isSc
 
 /** When the owner moves a card to another workspace, keep the same strength of model on its engine. */
 export function remodel(fromWs, toWs, model) {
-  const i = fromWs ? modelsFor(fromWs).indexOf(model) : -1;
+  const from = fromWs ? modelsFor(fromWs) : [];
+  // an engine whose tiers are all the same ("default": OpenCode, Hermes) says nothing about strength: the middle one
+  const i = new Set(from).size > 1 ? from.indexOf(model) : -1;
   return tierModel(toWs, i >= 0 ? i : 1);
 }
 

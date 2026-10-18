@@ -66,7 +66,7 @@ const codex = [
   [T('Bash', { command: 'Get-Content -Raw C:/work/skills/one/SKILL.md' }, 'Running `Get-Content'), 'running-command'],
   [T('WebSearch', { query: 'remotion docs' }, 'Searching the web: remotion docs'), 'searching-web'],
 ];
-// ACP (Hermes, DeepSeek) and OpenCode map their tools to the same names (engines/acp.mjs#feedTool, opencode-config#mapTool)
+// ACP (Hermes) and OpenCode map their tools to the same names (engines/acp.mjs#feedTool, opencode-config#mapTool)
 const acp = [
   [T('Read', { file_path: 'notes/open-loops.md' }, 'read'), 'reading-files'],
   [T('Bash', { command: 'one --agent list' }, 'one --agent list'), 'looking-up-actions'],

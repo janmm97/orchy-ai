@@ -6,7 +6,7 @@ import { startCall } from './call.mjs';
 import { mountLeadHuddle, openNewHuddle } from './huddles.mjs';
 import { openConnections, openSettings } from './panels.mjs';
 import { openViewer, embedOf, kindIcon, fsize } from './viewer.mjs';
-import { esc, api, md, wsName, wsClass, wsModels, wsPlan, wsUsesModelDropdown, dropdownModels, modelChoices, modelIsFree, agentName, runName, nameRole, timeShort, dateTime, dur, stripHTML, voiceOf, runResult } from './util.mjs';
+import { esc, api, md, wsName, wsClass, wsPlan, wsUsesModelDropdown, pickModels, takesModelId, startModel, dropdownModels, modelChoices, modelIsFree, agentName, runName, nameRole, timeShort, dateTime, dur, stripHTML, voiceOf, runResult } from './util.mjs';
 
 let ctx = null; // { toast }
 export function initSheets(c) { ctx = c; }
@@ -272,14 +272,16 @@ export async function openAgent(ws, slug, { from, isNew } = {}) {
       panel.innerHTML = `<div style="display:grid;gap:var(--s4)"><p class="hint" style="margin:0">${esc(nm())} opens a huddle with a colleague: they talk it through, turn by turn, and write up what they agree. They only talk; nothing changes until you approve the agreement. ${esc(nm())} can also start huddles from tasks you give.</p><div data-hform style="display:grid;gap:var(--s4)"></div></div>`;
       mountLeadHuddle(panel.querySelector('[data-hform]'), { wsId: a.workspace, slug: a.slug, onStarted: () => w.close() });
     } else {
-      const ms = (a.models && !a.models.every(m => m === 'default')) ? a.models : wsModels(a.workspace);
+      const ms = pickModels(a.workspace, a);
       const choices = modelChoices(ms);
       const pick = choices.includes(a.model) ? a.model : choices[1] || choices[0];
       const useDropdown = wsUsesModelDropdown(a.workspace, a);
-      const plan = wsPlan(a.workspace);
+      const typeable = takesModelId(a.workspace, a); // Hermes, OpenCode: any provider/model id, listed or not
+      const plan = wsPlan(a.workspace, a);
+      const cur = startModel(a.model); // "inherit" is no model: the dropdown starts on Default
       panel.innerHTML = `<div style="display:grid;gap:var(--s3)"><div class="field" data-zone><label for="task-${id}">What should ${esc(nm())} do?</label><textarea class="textarea" id="task-${id}" placeholder="Describe the task… (drop or paste files here too)" autofocus></textarea>${tray.chips()}</div>
         <div class="btnrow" style="justify-content:space-between">${useDropdown
-          ? `<div class="btnrow"><span class="label">Model</span><select class="select" data-model-select style="width:auto;min-height:32px;padding:2px 8px" aria-label="Model">${dropdownModels(choices, a.model).map(m => `<option value="${esc(m)}" ${m === (a.model || 'default') ? 'selected' : ''}>${esc(m === 'default' ? 'Default (tier automatic)' : m)}</option>`).join('')}</select>${plan ? `<span class="chip" title="Detected account plan / tier">${esc(plan)}</span>` : ''}</div>`
+          ? `<div class="btnrow"><span class="label">Model</span><select class="select" data-model-select style="width:auto;min-height:32px;padding:2px 8px" aria-label="Model">${dropdownModels(choices, cur).map(m => `<option value="${esc(m)}" ${m === cur ? 'selected' : ''}>${esc(m === 'default' ? 'Default (tier automatic)' : m)}</option>`).join('')}</select>${typeable ? `<input class="input" data-model-free type="text" spellcheck="false" autocomplete="off" placeholder="or type a model id, e.g. provider/model" aria-label="Model id" title="${choices.some(m => m !== 'default') ? 'Any model this harness takes, listed or not' : 'Orchy found no model list for this account yet (sign it in, then Re-check accounts). Any model id it takes works here.'}" style="min-width:14ch;max-width:26ch">` : ''}${plan ? `<span class="chip" title="Detected account plan / tier">${esc(plan)}</span>` : ''}</div>`
           : `<div class="seg" role="group" aria-label="Model">${choices.map(m => `<button type="button" data-model="${esc(m)}" aria-pressed="${m === pick}" title="${esc(m)}">${esc(m.replace(/^gpt-/, ''))}</button>`).join('')}</div>${modelIsFree(ms) ? `<input class="input" data-model-free type="text" spellcheck="false" autocomplete="off" placeholder="or a model id, e.g. provider/model" aria-label="Model id" style="min-width:14ch;flex:1;max-width:26ch">` : ''}`}
         <span class="btnrow">${tray.button()}<button class="btn primary" data-act="run">${icon('play')}Run it</button></span></div></div>`;
       tray.mount(panel, panel.querySelector('[data-zone]'));
@@ -304,7 +306,8 @@ export async function openAgent(ws, slug, { from, isNew } = {}) {
       if (!ta.value.trim() && !files.length) return ta.focus();
       const selected = panel.querySelector('[data-model-select]')?.value;
       const typed = panel.querySelector('[data-model-free]')?.value.trim();
-      const model = selected || typed || panel.querySelector('[data-model][aria-pressed="true"]')?.dataset.model;
+      // a typed model id wins over the dropdown, which always has a value ("default" at least)
+      const model = typed || selected || panel.querySelector('[data-model][aria-pressed="true"]')?.dataset.model;
       const btn = e.currentTarget;
       btn.disabled = true;
       try { const run = await api(`/api/agents/${ws}/${slug}/run`, { method: 'POST', body: { instruction: ta.value.trim(), model, files } }); tray.clear(); openRun(run.id); w.close(); }

@@ -21,8 +21,8 @@ const RESULT_FILE = path.join(DATA_DIR, 'restart-result.json');  // how it went,
 const KEEP = 15; // snapshots kept (the oldest go)
 
 // ── what counts as Orchy's code: text files only (fonts, vendored libraries and Orchy's data stay out) ──
-const TREES = [['orchestrator', /^(data|node_modules)(\/|$)|^voice-agents\.json$/], ['dashboard', /^(vendor|fonts)(\/|$)/], ['scripts', null], ['launchers', null]];
-const ROOT_FILES = ['package.json', 'CLAUDE.md', 'README.md', 'PRODUCT.md', 'DESIGN.md'];
+const TREES = [['orchestrator', /^(data|node_modules)(\/|$)|^voice-agents\.json$/], ['dashboard', /^(vendor|fonts)(\/|$)/], ['scripts', null], ['launchers', null], ['docs', null]];
+const ROOT_FILES = ['package.json', 'CLAUDE.md', 'AGENTS.md', 'README.md', '.env.example', 'PRODUCT.md', 'DESIGN.md'];
 const TEXT = /\.(mjs|cjs|js|json|html|css|md|ps1|cmd|command|sh|txt|svg)$/i;
 
 function walk(rel, skip, out) {
@@ -166,7 +166,7 @@ export function bootReport() {
 // with the owner's OK, every time (never "always allow").
 export const GUARDED_GLOBS = [
   'orchestrator/lib/policy.mjs', 'orchestrator/lib/gate.mjs', 'orchestrator/lib/workspaces.mjs', 'orchestrator/lib/clients.mjs',
-  'orchestrator/lib/clientspace.mjs', 'orchestrator/lib/backend.mjs', 'orchestrator/lib/owner.mjs', 'orchestrator/lib/cfaccess.mjs', 'orchestrator/lib/clientview.mjs', 'orchestrator/lib/r2.mjs', 'orchestrator/portal.mjs', 'orchestrator/mcp/bridge.mjs', 'orchestrator/mcp/cwd-hook.mjs',
+  'orchestrator/lib/clientspace.mjs', 'orchestrator/lib/backend.mjs', 'orchestrator/lib/owner.mjs', 'orchestrator/lib/cfaccess.mjs', 'orchestrator/lib/clientview.mjs', 'orchestrator/lib/r2.mjs', 'orchestrator/portal.mjs', 'orchestrator/mcp/bridge.mjs', 'orchestrator/mcp/cwd-hook.mjs', 'orchestrator/mcp/tool-hook.mjs',
   'orchestrator/lib/artifacts.mjs', 'orchestrator/lib/recover.mjs', 'orchestrator/lib/huddlecoach.mjs', 'orchestrator/lib/missions.mjs',
   // every engine adapter (its gated flag, account model, approval wiring), the Codex/Claude Code account checks, MCP
   // sign-in tokens, and Resources/ (it moves skill folders and blanks secrets in MCP copies)

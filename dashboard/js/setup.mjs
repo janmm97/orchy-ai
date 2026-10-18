@@ -3,7 +3,7 @@
 // after a restart: name and timezone in config, keys in .env, workspaces and One logins on disk.
 import { openWindow, getWindow } from './windows.mjs';
 import { icon, createEl } from './pixel.mjs';
-import { esc, api } from './util.mjs';
+import { esc, api, setWorkspaces } from './util.mjs';
 import { openAddWorkspace, openConnections } from './panels.mjs';
 import { openBuild } from './sheets.mjs';
 
@@ -162,6 +162,16 @@ export async function openSetup({ step, from } = {}) {
     tools() {
       const rows = data.tools;
       const missingHarness = !data.harness;
+      // "Fix Orchy": the Claude Code account Orchy works on his own code under (a fresh install has none)
+      const fixAcct = () => {
+        const a = data.backend?.account;
+        if (!a || !rows.find(t => t.id === 'claude')?.found) return '';
+        if (a.expected) return `<p class="hint">${icon('check')} “Fix Orchy” (Orchy working on his own code) runs as <b>${esc(a.expected)}</b>. Settings → Accounts changes it.</p>`;
+        return `<section class="setup-card"><h4>Fix Orchy</h4>
+          <p class="hint">Tell Orchy what’s broken and, after your OK, he works on his own code with Claude Code. Which Claude Code account should he use?</p>
+          ${a.suggested ? `<div class="btnrow"><button class="btn sm primary" type="button" data-backend-use="${esc(a.suggested)}">${icon('check')}Use ${esc(a.suggested)}</button><span class="hint">this computer’s Claude Code sign-in. Another account: Settings → Accounts.</span></div>`
+            : '<p class="hint">Sign in to Claude Code first (in a terminal: <code class="data">claude auth login</code>), press Re-check, then pick it here or in Settings → Accounts.</p>'}</section>`;
+      };
       return {
         html: `<h3 class="px caps">Tools</h3>
           <p>Orchy drives command-line tools on this computer. It needs at least one <b>agent harness</b> to run agents (Claude Code is the usual choice). <b>One</b> is how agents reach your apps.</p>
@@ -172,12 +182,24 @@ export async function openSetup({ step, from } = {}) {
             <td data-l="Status">${t.found ? `<span class="plate">${icon('check')}found</span><br><span class="hint data">${esc(t.version || '')}</span>` : t.broken ? '<span class="plate decide">won’t start</span><br><span class="hint">Its install didn’t finish.</span>' : `<span class="plate ${t.required || (t.id === 'claude' && missingHarness) || t.id === 'one' ? 'decide' : ''}">${t.recommended ? 'recommended' : t.required ? 'required' : 'not found'}</span>`}</td>
             <td data-l="Install" ${t.found ? 'class="none"' : ''}>${t.found ? '<span class="hint">Nothing to do.</span>' : t.kind === 'harness' && t.installCmd
               ? `${t.broken && t.repairCmd ? `<span class="hint">Run this in a terminal to finish it, then Re-check. Or press Install: it installs again and finishes it for you.</span>${cmdHTML(t.repairCmd)}` : ''}<span class="btnrow"><button class="btn sm primary" type="button" data-install="${esc(t.id)}" ${installing.has(t.id) ? 'disabled' : ''}>${icon(installing.has(t.id) ? 'refresh' : 'plus')}${installing.has(t.id) ? 'Installing…' : 'Install'}</button></span><details><summary class="hint">Or run it yourself</summary>${cmdHTML(t.installCmd)}</details>`
-              : cmdHTML(t.installCmd)}</td></tr>`).join('')}
+              : t.installCmd ? cmdHTML(t.installCmd) : '<span class="hint">No installer here: get it as the note says, then press Re-check.</span>'}</td></tr>`).join('')}
           </tbody></table></div>
           <p class="hint"><b>Install</b> opens a terminal window that runs the harness’s official installer for this computer, then its sign-in. Orchy notices when it’s done. Installed it yourself? Press Re-check.</p>
+          ${fixAcct()}
           <div class="btnrow"><button class="btn" type="button" data-act="recheck">${icon('refresh')}Re-check</button></div>`,
         bind(root) {
           root.querySelector('[data-act="recheck"]').addEventListener('click', async e => { e.currentTarget.disabled = true; await load(true); });
+          root.querySelector('[data-backend-use]')?.addEventListener('click', async e => {
+            const b = e.currentTarget;
+            b.disabled = true;
+            try {
+              const back = await api('/api/backend/account', { method: 'POST', body: { account: b.dataset.backendUse } });
+              setWorkspaces(null, null, back);
+              data.backend = back;
+              ctx.toast(back.account?.ok ? `“Fix Orchy” runs as ${back.account.expected}.` : back.account?.error || 'Saved.', back.account?.ok ? '' : 'warn');
+              draw();
+            } catch (err) { ctx.toast(err.message, 'warn'); b.disabled = false; }
+          });
           root.querySelectorAll('[data-install]').forEach(b => b.addEventListener('click', async () => {
             const id = b.dataset.install;
             b.disabled = true;

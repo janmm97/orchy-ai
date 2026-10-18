@@ -62,7 +62,7 @@ export default {
   defaultProfileLabel: '(its own profile folder)',
   computerLoginNote: 'Hermes lends a workspace the sign-ins in its auth.json, but not API keys kept in its .env.',
   // Hermes installs natively on Windows from PowerShell (into %LOCALAPPDATA%\hermes\bin, where resolveBin looks)
-  install: { cmd: 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash', winCmd: 'iex (irm https://hermes-agent.nousresearch.com/install.ps1)', signIn: 'hermes portal', bin: 'hermes', optional: true, note: 'Optional: Nous Research’s agent harness.' },
+  install: { cmd: 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash', winCmd: 'powershell -ExecutionPolicy ByPass -c "iex (irm https://hermes-agent.nousresearch.com/install.ps1)"', signIn: 'hermes portal', bin: 'hermes', optional: true, note: 'Optional: Nous Research’s agent harness.' },
   capabilities: {
     gated: true, mcp: true, resume: true, headless: true,
     clientSafe: false,
@@ -74,7 +74,8 @@ export default {
   version() {
     const b = bin();
     if (!b) return null;
-    if (!probe || probe.bin !== b || (!probe.v && Date.now() - probe.at > 5_000)) probe = { bin: b, at: Date.now(), v: probeVersion(b) };
+    // Hermes is a Python program: a cold `--version` can take several seconds, and a timeout would read as "won't start"
+    if (!probe || probe.bin !== b || (!probe.v && Date.now() - probe.at > 5_000)) probe = { bin: b, at: Date.now(), v: probeVersion(b, ['--version'], 20_000) };
     return probe.v;
   },
   available: () => !!bin(),

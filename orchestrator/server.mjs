@@ -53,7 +53,7 @@ import * as huddles from './lib/huddle.mjs';
 import * as standingRules from './lib/rules.mjs';
 import { COACH } from './lib/huddlecoach.mjs';
 import * as backend from './lib/backend.mjs';
-import { BACKEND_ID, backendWorkspace } from './lib/workspaces.mjs';
+import { BACKEND_ID, backendWorkspace, setBackendAccount } from './lib/workspaces.mjs';
 import { fixRouting, unroutedModel } from './lib/router.mjs';
 import * as owner from './lib/owner.mjs';
 import * as missions from './lib/missions.mjs';
@@ -438,6 +438,23 @@ async function workspaceSummary(ws, { force = false } = {}) {
     mcpCount: Object.keys(readMcp(ws)).length,
   };
 }
+/** Orchy's own backend for the dashboard: its models and the Claude Code account he fixes himself under. With none
+ * picked yet, `suggested` is who this computer's Claude Code is signed in as (the Fix Orchy card offers it). */
+async function backendSummary({ force = false } = {}) {
+  const ws = backendWorkspace();
+  const a = await accountCheck(ws, { force }).catch(e => ({ ok: false, error: e.message }));
+  // this computer's own Claude Code sign-in (the default profile): the account check's when Orchy uses that profile
+  const pc = ws.claudeConfigDir ? await engine('claude').account(null, { force }).catch(() => null) : { loggedIn: a.loggedIn, email: a.actual };
+  const computerAccount = pc?.loggedIn && pc.email ? pc.email : null;
+  return {
+    id: BACKEND_ID, name: ws.name, client: ws.client, models: modelsFor(ws), pendingRestart: backend.pendingRestart()?.runId || null,
+    account: {
+      ok: !!a.ok, expected: a.expected || null, actual: a.actual || null, loggedIn: !!a.loggedIn, configDir: a.configDir || null,
+      ownProfile: !!ws.claudeConfigDir, error: a.ok ? null : a.error || null, fix: a.ok || !a.expected ? null : a.fix || null,
+      computerAccount, suggested: a.expected ? null : computerAccount,
+    },
+  };
+}
 const retiredSummary = () => listRetired().map(r => ({ id: r.id, name: r.name, client: r.client, color: r.color || null, runtime: r.runtime || 'claude', runtimeLabel: runtimeLabel(r.runtime || 'claude'), archivedFolder: r.archivedFolder, retiredAt: r.retiredAt, dirExists: r.dirExists }));
 
 const ENV_KEYS = ['TYPESAFE_API_KEY', 'TYPESAFE_MODEL', 'OPENROUTER_API_KEY', 'DEEPGRAM_API_KEY', 'ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID', 'ELEVENLABS_MODEL', 'CLIENT_URL', 'CF_ACCESS_TEAM_DOMAIN', 'CF_ACCESS_AUD',
@@ -477,7 +494,7 @@ on('GET', '/api/state', async () => {
     proposals: [...proposals.values()].filter(p => p.status === 'proposed').map(publicProposal),
     huddles: huddles.listHuddles(20),
     missions: missions.listMissions(20).map(missions.publicMission),
-    backend: { id: BACKEND_ID, name: backendWorkspace().name, client: backendWorkspace().client, models: modelsFor(backendWorkspace()), pendingRestart: backend.pendingRestart()?.runId || null },
+    backend: await backendSummary(),
     envStatus: Object.fromEntries(ENV_KEYS.map(k => [k, SECRET(k) ? !!env(k) : env(k)])),
     clients: clients(),
     clientPages: clientPages(),
@@ -1568,6 +1585,7 @@ on('GET', '/api/setup', async (req) => {
     os: process.platform,
     tools, harness: tools.some(t => t.kind === 'harness' && t.found), keys,
     workspaces: { count: list.length, list },
+    backend: await backendSummary({ force }), // the account "Fix Orchy" runs under (the Tools step offers one)
     done: !!db().settings.setupDone,
   };
 });
@@ -1604,9 +1622,17 @@ on('POST', '/api/setup/done', async (req) => {
   return { ok: true, done: !!done };
 });
 on('POST', '/api/accounts/refresh', async () => {
-  const list = await Promise.all(workspaces().map(w => workspaceSummary(w, { force: true })));
-  emit('workspaces.changed', { workspaces: list, retired: retiredSummary() });
+  const [list, back] = await Promise.all([Promise.all(workspaces().map(w => workspaceSummary(w, { force: true }))), backendSummary({ force: true })]);
+  emit('workspaces.changed', { workspaces: list, retired: retiredSummary(), backend: back });
   return list;
+});
+// The Claude Code account Orchy fixes himself under (Settings → Accounts, or "Use …" on the Fix Orchy card)
+on('POST', '/api/backend/account', async (req) => {
+  const b = await readBody(req);
+  setBackendAccount({ account: b.account, ownProfile: b.ownProfile === true });
+  const back = await backendSummary({ force: true });
+  emit('workspaces.changed', { backend: back });
+  return back;
 });
 
 // Voice
@@ -1754,7 +1780,8 @@ const server = http.createServer(async (req, res) => {
   }
 });
 // Edit .env while running: keys apply without a restart.
-fs.watchFile(path.join(ROOT, '.env'), { interval: 1500 }, () => {
+fs.watchFile(path.join(ROOT, '.env'), { interval: 1500 }, (cur, prev) => {
+  if (!cur.mtimeMs && !prev.mtimeMs) return; // no .env before or after (Node reports that once at start): nothing changed
   reloadEnv();
   voice.clearVoiceIssues();
   emit('settings.updated', { voice: voice.voiceConfig(), jev: { mode: jevMode(), label: jevLabel() }, envStatus: Object.fromEntries(ENV_KEYS.map(k => [k, SECRET(k) ? !!env(k) : env(k)])) });

@@ -13,7 +13,8 @@ function probe(bin, args = ['--version']) {
     if (!bin) return resolve(null);
     const done = (err, out, errOut) => resolve(err ? null : String(out || errOut || '').trim().split(/\r?\n/)[0] || 'ok');
     try {
-      if (/\.(cmd|bat)$/i.test(bin)) execFile(`"${bin}"`, args, { shell: true, timeout: TIMEOUT, windowsHide: true }, done);
+      // a .cmd shim needs a shell; one command line (the arguments are fixed words), so Node 24 has no args to warn about
+      if (/\.(cmd|bat)$/i.test(bin)) execFile(`"${bin}" ${args.join(' ')}`, [], { shell: true, timeout: TIMEOUT, windowsHide: true }, done);
       else execFile(bin, args, { timeout: TIMEOUT, windowsHide: true }, done);
     } catch { resolve(null); }
   });
@@ -23,7 +24,7 @@ const NODE_INSTALL = win ? 'winget install OpenJS.NodeJS.LTS' : mac ? 'brew inst
 
 const NOTES = {
   node: { required: true, note: 'Orchy itself runs on Node 20 or newer.' },
-  one: { required: false, recommended: true, note: 'Recommended: One connects your agents to Gmail, Slack, Notion and 750+ other apps. Without it agents can still work with files and the web, but not your apps.' },
+  one: { required: false, recommended: true, note: 'Recommended: One connects your agents to Gmail, Slack, Notion and 1000+ other apps. Without it agents can still work with files and the web, but not your apps.' },
 };
 const ONE_INSTALL = 'npm install -g @withone/cli';
 

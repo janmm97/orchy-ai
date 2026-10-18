@@ -201,7 +201,7 @@ function syncClis(ws, out) {
   if (fs.existsSync(path.join(ws.dir, '.one'))) {
     known.push(['one', `# One CLI
 
-Reaches 750+ apps (Gmail, Slack, Notion, Stripe…) through ${ws.name}'s own One login.
+Reaches 1000+ apps (Gmail, Slack, Notion, Stripe…) through ${ws.name}'s own One login.
 
 - **Call it:** \`one --agent list\`, \`one --agent actions find <platform> "<intent>"\`, read the docs with \`one --agent actions load\`, then \`one --agent actions execute <platform> <actionId> <connectionKey> -d '{…}'\`.
 - **Login:** this folder's own (\`.one/\`)${one.own ? '' : ' (not signed in yet: Orchy blocks `one` here until it is)'}. **Never run \`one\` for another workspace**, and never from another workspace's folder.

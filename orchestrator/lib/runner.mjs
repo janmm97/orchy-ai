@@ -216,6 +216,14 @@ function describeTool(name, input, run = null) {
  * `session` is the Orchy session that sent it (its report goes back there). `delegatedBy` is the head's run
  * when a department head handed this task to its team agent (delegation.mjs).
  */
+/** For an agent pinned to its own engine: is `model` a pick of that engine's (one of its tiers, or, on an engine that
+ * takes any model id, a specific id it passes through), so it wins over the agent's own model? */
+function pinnedPick(ws, model, runtime) {
+  if (!model || model === 'inherit') return false;
+  if (modelsFor(ws, runtime).includes(model)) return true;
+  return !!engine(runtime)?.openModels && modelFor(ws, model, runtime) === model;
+}
+
 export async function startRun(opts) {
   const ws = workspace(opts.workspace);
   if (!ws.enabled) {
@@ -260,6 +268,8 @@ export async function startRun(opts) {
     const fix = acct.error && /install|account set/i.test(acct.error) ? acct.error : `In PowerShell: ${acct.fix}`;
     const who = runtime === ws.runtime ? ws.name : `${ws.name}'s ${agent.displayName}`;
     if (acct.profileProblem) throw Object.assign(new Error(`${acct.profileProblem} Not running it.`), { status: 409, code: 'ACCOUNT_MISMATCH' });
+    // no account picked yet (a fresh install's Orchy, fixing himself): say that, not "must run as null"
+    if (!acct.expected && acct.accountModel === 'email') throw Object.assign(new Error(`${acct.error || `${ws.name} has no ${acct.runtimeLabel} account set`}. Not running it.`), { status: 409, code: 'ACCOUNT_MISMATCH' });
     throw Object.assign(new Error(
       acct.loggedIn
         ? `${who} must run as ${acct.expected} on ${acct.runtimeLabel}, but its profile is logged in as ${acct.actual || 'another account'}. Not running it. ${fix}`
@@ -296,7 +306,7 @@ export async function startRun(opts) {
     : resume && parent?.model && modelsFor(ws, runtime).includes(parent.model)
       ? parent.model
       : agent?.engine && !isBuilder
-        ? modelFor(ws, modelsFor(ws, runtime).includes(opts.model) ? opts.model : own || opts.model, runtime)
+        ? modelFor(ws, pinnedPick(ws, opts.model, runtime) ? opts.model : own || opts.model, runtime)
         : (opts.routing && opts.routing.source !== 'schedule' && opts.model) || (ownerStarted && opts.model && opts.model !== own)
           ? modelFor(ws, opts.model || own, runtime)
           : unroutedModel(ws, agent, opts.instruction, {

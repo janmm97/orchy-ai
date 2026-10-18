@@ -97,10 +97,10 @@ const route = (text, opts = {}) => realRoute(text, { workspaces: ONE, agents: AG
 // ── installers: the official command for each OS, then the sign-in ──
 {
   const want = {
-    claude: ['curl -fsSL https://claude.ai/install.sh | bash', 'irm https://claude.ai/install.ps1 | iex', 'claude auth login'],
+    claude: ['curl -fsSL https://claude.ai/install.sh | bash', 'powershell -ExecutionPolicy ByPass -c "irm https://claude.ai/install.ps1 | iex"', 'claude auth login'],
     codex: ['curl -fsSL https://chatgpt.com/codex/install.sh | sh', 'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"', 'codex login'],
     opencode: ['curl -fsSL https://opencode.ai/install | bash', 'npm install -g opencode-ai', 'opencode auth login'],
-    hermes: ['curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash', 'iex (irm https://hermes-agent.nousresearch.com/install.ps1)', 'hermes portal'],
+    hermes: ['curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash', 'powershell -ExecutionPolicy ByPass -c "iex (irm https://hermes-agent.nousresearch.com/install.ps1)"', 'hermes portal'],
   };
   for (const [id, [posix, win, signIn]] of Object.entries(want)) {
     const e = engine(id);

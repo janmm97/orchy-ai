@@ -8,7 +8,7 @@ import { findBinary, probeVersion } from '../claude.mjs';
 import { profilePath, psq, sq } from './shared.mjs';
 import { buildOpenCodeConfig } from './opencode-config.mjs';
 import { launchOpenCodeRun } from './opencode-run.mjs';
-import { inspectOpenCodeAccount } from './tier-catalog.mjs';
+import { inspectOpenCodeAccount, openCodeMajor } from './tier-catalog.mjs';
 
 let binCache = null;
 function resolveBin() {
@@ -71,6 +71,7 @@ export default {
       authPath,
       binPath: bin(),
       profileEnv: profileDir ? this.profileEnv(profileDir) : {},
+      v2: openCodeMajor(this.version()) >= 2, // a profile asks a private server of its own; only the CLI's answer counts (tier-catalog.mjs)
     });
     acctCache.set(key, { at: Date.now(), v });
     return v;
@@ -80,7 +81,11 @@ export default {
     const l = profileLayout(profileDir);
     return { XDG_DATA_HOME: l.data, XDG_STATE_HOME: l.state, XDG_CONFIG_HOME: l.xdgConfig, OPENCODE_CONFIG_DIR: l.config };
   },
-  loginCommand: (a, { win }) => (win ? `& ${psq(bin() || 'opencode')} auth login` : `${sq(bin() || 'opencode')} auth login`),
+  // OpenCode 2 signs a profile in through a private server of its own (the background service is the computer's)
+  loginCommand(a, { win }) {
+    const own = a?.profileDir && openCodeMajor(this.version()) >= 2 ? ' --standalone' : '';
+    return `${win ? `& ${psq(bin() || 'opencode')}` : sq(bin() || 'opencode')} auth login${own}`;
+  },
   loginAlt: () => 'Select your provider (OpenCode Zen/Go, Anthropic Claude Pro/Max, OpenAI ChatGPT Plus/Pro, or GitHub Copilot) in the terminal prompt to sign in via OAuth, then check it with `opencode auth list`.',
   mcpConfig: ({ servers, allowed, bridge }) => buildOpenCodeConfig({ servers, allowed, bridge }),
   protocolNotes: ({ ownerName }) => `

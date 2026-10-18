@@ -2,7 +2,7 @@
 // Connections (One + external MCP), Settings, Sessions history.
 import { openWindow, getWindow } from './windows.mjs';
 import { icon, createEl, orchySVG } from './pixel.mjs';
-import { esc, api, md, wsName, wsShort, wsClass, agentName, nameRole, platformName, dateTime, ownerName } from './util.mjs';
+import { esc, api, md, wsName, wsShort, wsClass, agentName, nameRole, platformName, dateTime, ownerName, backendInfo, setWorkspaces } from './util.mjs';
 import { voiceConfig, setVoiceConfig, speak, setSound } from './voice.mjs';
 import { openAgent, openBuild, spriteFor } from './sheets.mjs';
 import { startCall } from './call.mjs';
@@ -815,7 +815,7 @@ export async function openConnections(wsId, { from, edit } = {}) {
       try { one = (await api('/api/setup')).tools.find(t => t.id === 'one'); } catch {}
       if (mine !== seq) return;
       oneNote = one && !one.found
-        ? `<div class="empty"><strong>The One CLI isn’t installed</strong>One is how agents reach Gmail, Slack, Notion and 750+ other apps. Install it, then press Re-check.${cmdHTML(one.installCmd)}<div class="btnrow"><button class="btn" type="button" data-act="cli-recheck">${icon('refresh')}Re-check</button><button class="btn ghost" type="button" data-act="one-guide">How One works</button></div></div>`
+        ? `<div class="empty"><strong>The One CLI isn’t installed</strong>One is how agents reach Gmail, Slack, Notion and 1000+ other apps. Install it, then press Re-check.${cmdHTML(one.installCmd)}<div class="btnrow"><button class="btn" type="button" data-act="cli-recheck">${icon('refresh')}Re-check</button><button class="btn ghost" type="button" data-act="one-guide">How One works</button></div></div>`
         : `<div class="empty"><strong>One didn’t answer</strong>Orchy couldn’t read this workspace’s apps. Press Refresh to try again; if it keeps failing, sign in to One again.<pre class="cmd">${esc(oneErr)}</pre></div>`;
     }
     const at = focusOf(body);
@@ -992,6 +992,24 @@ export async function openSettings({ from } = {}) {
   const body = createEl(`<div style="display:grid;grid-template-columns:minmax(0,1fr);gap:var(--s5)"></div>`);
   const w = openWindow({ id: 'settings', title: 'Settings', size: 'wide', body, from });
   const keys = {}; // API keys pasted but not saved yet: a redraw (a workspace changing) puts them back
+  let backendEditing = false; // "Change" pressed on Orchy's own account
+  // Orchy fixing his own code (Fix Orchy) runs under a Claude Code account of his own choosing; a fresh install has none
+  const backendAccountHTML = () => {
+    const a = backendInfo().account || {};
+    const pc = a.computerAccount;
+    const form = `<form data-backend-acct-form class="btnrow"><input class="input" name="account" type="email" placeholder="${pc ? 'or another account’s email' : 'the Claude Code account’s email'}" autocomplete="off" style="flex:1;min-width:200px"><button class="btn sm" type="submit">Save</button></form>
+      <span class="hint">${pc ? `An account other than ${esc(pc)} gets a Claude Code profile folder of Orchy’s own, so it never changes this computer’s sign-in. You log it in once.` : 'Sign in to Claude Code on this computer first (in a terminal: claude auth login), then Re-check accounts, or type the account here.'}</span>`;
+    const head = `<b>Orchy · fixing his own code</b>`;
+    if (!a.expected || backendEditing) {
+      return `<div style="display:grid;gap:4px">${head}
+        <span class="hint">“Fix Orchy” runs Claude Code on Orchy’s own code. ${a.expected ? `Now: <b>${esc(a.expected)}</b>.` : '<span class="plate decide">not set</span>'}</span>
+        ${pc && pc !== a.expected ? `<span class="btnrow"><button class="btn sm primary" type="button" data-backend-use="${esc(pc)}">${icon('check')}Use ${esc(pc)}</button><span class="hint">this computer’s Claude Code sign-in</span></span>` : ''}
+        ${form}</div>`;
+    }
+    return `<div style="display:grid;gap:4px">${head}
+      <span class="hint">Claude Code must run as <b>${esc(a.expected)}</b> · profile ${esc(a.configDir || '')} · ${a.ok ? `${icon('check')} logged in as ${esc(a.actual)}` : `<span class="plate decide">${a.loggedIn ? `wrong account: ${esc(a.actual || '?')}` : 'not logged in'}</span>`}</span>
+      <span class="btnrow">${a.ok || !a.fix ? '' : `<button class="btn sm" data-loginws="orchy">Log in</button><button class="btn sm" data-copycmd="${esc(a.fix)}">Copy command</button>`}<button class="btn sm" type="button" data-act="backend-change">${icon('edit')}Change</button></span></div>`;
+  };
   body.addEventListener('input', e => { if (e.target.id?.startsWith('k-')) keys[e.target.id.slice(2)] = e.target.value; });
   body.addEventListener('click', e => { const b = e.target.closest('[data-act="setup-guide"]'); if (b) openSetup({ from: b }); });
   const keyRow = (k, label, hint) => {
@@ -1088,7 +1106,7 @@ export async function openSettings({ from } = {}) {
         ${ctx.state.envStatus?.ELEVENLABS_API_KEY ? '' : '<div class="ctx">Calls need the ElevenLabs API key (Voice, below).</div>'}
       </section>
       <section style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">Accounts</h3>
-        <div class="list">${ctx.state.workspaces.map(x => `<div style="display:grid;gap:4px"><b>${esc(wsName(x.id))}${x.enabled === false ? ' · off' : ''}</b>
+        <div class="list">${backendAccountHTML()}${ctx.state.workspaces.map(x => `<div style="display:grid;gap:4px"><b>${esc(wsName(x.id))}${x.enabled === false ? ' · off' : ''}</b>
           <span class="hint">${esc(x.account.runtimeLabel || 'Claude Code')} must run as <b>${esc(x.account.expected || '')}</b> · profile ${esc(x.account.configDir)} · ${x.account.ok ? `${icon('check')} logged in as ${esc(x.account.actual)}` : `<span class="plate decide">${x.account.loggedIn ? `wrong account: ${esc(x.account.actual || '?')}` : 'not logged in'}</span>`}</span>
           ${x.account.ok ? '' : `<span class="hint">Paste into a terminal (PowerShell on Windows):</span><code class="data" style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(x.account.fix)}</code><span class="btnrow"><button class="btn sm" data-loginws="${esc(x.id)}">Log in</button><button class="btn sm" data-copycmd="${esc(x.account.fix)}">Copy command</button>${x.account.fixAlt ? `<span class="hint">${esc(x.account.fixAlt)}</span>` : ''}</span>`}
           ${(x.extraAccounts || []).map(e => `<span class="hint">${esc(e.runtimeLabel)} for ${esc(e.agents.join(', '))} must run as <b>${esc(e.expected || 'an account (none set)')}</b> · profile ${esc(e.configDir)} · ${e.ok ? `${icon('check')} logged in as ${esc(e.actual)}` : `<span class="plate decide">${e.loggedIn ? `wrong account: ${esc(e.actual || '?')}` : 'not logged in'}</span>`}</span>
@@ -1162,6 +1180,28 @@ export async function openSettings({ from } = {}) {
     body.querySelectorAll('[data-loginws]').forEach(b => b.addEventListener('click', async () => {
       try { await api(`/api/workspaces/${encodeURIComponent(b.dataset.loginws)}/login`, { method: 'POST', body: { runtime: b.dataset.rt || null } }); ctx.toast('A login window opened. Sign in there, then re-check.'); } catch (e) { ctx.toast(e.message, 'warn'); }
     }));
+    // the account Orchy fixes himself under: this computer's Claude Code sign-in, or another one in a profile of his own
+    const setBackend = async (btn, account, ownProfile) => {
+      btn.disabled = true;
+      try {
+        const b = await api('/api/backend/account', { method: 'POST', body: { account, ownProfile } });
+        setWorkspaces(null, null, b);
+        backendEditing = false;
+        ctx.toast(b.account?.ok ? `Orchy fixes himself as ${b.account.expected}.` : `Saved. Now sign ${account} in to Claude Code: press Log in.`, b.account?.ok ? '' : 'warn');
+        w.render();
+      } catch (err) { btn.disabled = false; ctx.toast(err.message, 'warn'); }
+    };
+    body.querySelector('[data-backend-use]')?.addEventListener('click', e => setBackend(e.currentTarget, e.currentTarget.dataset.backendUse, false));
+    body.querySelector('[data-backend-acct-form]')?.addEventListener('submit', e => {
+      e.preventDefault();
+      const f = e.currentTarget, input = f.querySelector('[name="account"]');
+      const account = input.value.trim();
+      if (!account) return input.focus();
+      // this computer's own sign-in keeps the default profile; any other account gets a profile folder of Orchy's own
+      const pc = backendInfo().account?.computerAccount;
+      setBackend(f.querySelector('button[type="submit"]'), account, !(pc && pc.toLowerCase() === account.toLowerCase()));
+    });
+    body.querySelector('[data-act="backend-change"]')?.addEventListener('click', () => { backendEditing = true; w.render(); });
     body.querySelector('[data-act="accounts"]').addEventListener('click', async e => {
       const btn = e.currentTarget;
       btn.disabled = true;

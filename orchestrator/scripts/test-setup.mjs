@@ -85,6 +85,28 @@ ok(!o.found && o.installed === 1 && /Orchy still starts/.test(o.out), 'One insta
 o = await one({ interactive: true, installs: true });
 ok(o.found && /installed/.test(o.out) && !/Orchy still starts/.test(o.out), 'One installed by setup: no warning');
 
+// "Fix Orchy": the Claude Code account Orchy works on his own code under. A fresh config.json has none.
+const { backendAccountStep } = await import('../../scripts/setup.mjs');
+async function fixAcct({ set = null, signedInAs = null, interactive = true, yes = true }) {
+  const config = { orchy: { claudeAccount: set, claudeConfigDir: set ? '~/.claude-x' : null } };
+  const lines = [], asked = [];
+  let saved = 0;
+  const got = await backendAccountStep({ config, saveConfig: () => saved++, signedInAs, interactive, log: l => lines.push(l), yesNo: async q => { asked.push(q); return yes; } });
+  return { got, config, saved, asked, out: lines.join('\n') };
+}
+let b = await fixAcct({ signedInAs: 'owner@example.com' });
+ok(b.got === 'owner@example.com' && b.config.orchy.claudeAccount === 'owner@example.com' && b.config.orchy.claudeConfigDir === null && b.saved === 1 && b.asked.length === 1,
+  'Fix Orchy: this computer’s Claude Code sign-in is offered, and saved (default profile) when the owner says yes');
+b = await fixAcct({ signedInAs: 'owner@example.com', yes: false });
+ok(b.got === null && b.config.orchy.claudeAccount === null && !b.saved && /Settings → Accounts/.test(b.out), 'Fix Orchy: declined, nothing saved, and it says where to set it later');
+b = await fixAcct({ signedInAs: 'owner@example.com', interactive: false });
+ok(b.got === null && !b.asked.length && !b.saved, 'Fix Orchy: --yes / no terminal asks nothing and saves nothing');
+b = await fixAcct({ signedInAs: null });
+ok(b.got === null && !b.asked.length && !b.saved && /claude auth login/.test(b.out), 'Fix Orchy: Claude Code not signed in, it says how, nothing asked');
+b = await fixAcct({ set: 'kept@example.com', signedInAs: 'owner@example.com' });
+ok(b.got === 'kept@example.com' && b.config.orchy.claudeAccount === 'kept@example.com' && b.config.orchy.claudeConfigDir === '~/.claude-x' && !b.asked.length && !b.saved,
+  'Fix Orchy: an account already set is kept as it is, with its profile');
+
 // each key is checked once with its own service: the right address and header, and what the answer means
 const seen = [];
 let status = 200;
