@@ -23,5 +23,8 @@
     "mammoth": "1.13.0",
     "marked": "^14.1.0",
     "yaml": "^2.5.0"
+  },
+  "devDependencies": {
+    "pdfjs-dist": "6.3.289"
   }
 }

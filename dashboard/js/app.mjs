@@ -9,23 +9,26 @@ import { icon, orchySVG, orchyTopbarSVG, orchyStageSVG, createEl, hatch } from '
 import { esc, api, ownerHeaders, md, $, $$, wsName, wsShort, wsClass, wsModels, modelChoices, modelIsFree, setWorkspaces, setOwner, ownerName, ownerKnown, setCallNames, agentName, runName, itemName, nameRole, timeShort, dur, clockET, onShift, setTimezone, timezone, zoneShort, clientOwn } from './util.mjs';
 import { initWindows, focusNextDecision, zoomRects, activePopDocument, getWindow, decisionWindows } from './windows.mjs';
 import { initPopups, openItem, closeItem } from './popups.mjs';
-import { initSheets, openRun, openAgent, openBuild, runEvent, runUpdated } from './sheets.mjs';
+import { initSheets, openRun, openAgent, openBuild, runEvent, runUpdated, runArtifact, recoverButtons, recoverAct, fixText } from './sheets.mjs';
+import { openViewer, artifactChanged, kindFor, kindIcon } from './viewer.mjs';
 import { initSetup, openSetup, refreshSetup, maybeAutoOpenSetup } from './setup.mjs';
 import { initPanels, openLogs, openImpact, openConnections, openSettings, openAgents, refreshAgents, openHistory, refreshHistory, openAddWorkspace, refreshWorkspaceWindows } from './panels.mjs';
 import { initPanes, renderPane, paneEvent } from './panes.mjs';
 import * as voice from './voice.mjs';
 import { initCalls, startCall, ringIn, callUpdated } from './call.mjs';
-import { initHuddles, openHuddle, openNewHuddle, openHuddles, huddleUpdated } from './huddles.mjs';
+import { initHuddles, openHuddle, openProposal, openNewHuddle, openHuddles, huddleUpdated } from './huddles.mjs';
+import { initLive, openLive, closeLive, toggleLive, liveOpen, liveNotify } from './live.mjs';
+import { initMissions, missionSlotHTML, missionLineHTML, missionUpdated, onMissionClick, onMissionInput, tickMissionCountdowns } from './missions.mjs';
 import { pairFromLink, watchPairing } from './pairing.mjs';
 
 const state = {
-  workspaces: [], retired: [], runtimes: {}, agents: [], runs: new Map(), inbox: new Map(), chat: [], proposals: new Map(), sessions: new Map(), huddles: new Map(),
+  workspaces: [], retired: [], runtimes: {}, agents: [], runs: new Map(), inbox: new Map(), chat: [], proposals: new Map(), sessions: new Map(), huddles: new Map(), missions: new Map(),
   clientAsks: new Map(), // questions and app decisions a client answers on their own page (never the owner's pop-ups)
   clients: [], clientPages: {},
   settings: {}, envStatus: {}, jev: {}, workHours: null,
   orchy: { server: 'idle', speaking: false, happyUntil: 0, online: true },
 };
-const LIVE = new Set(['starting', 'working', 'waiting', 'stopping']);
+const LIVE = new Set(['queued', 'paused-limit', 'starting', 'working', 'waiting', 'stopping']);
 const FOLD_MS = 60_000;          // fold back home this long after the last activity
 // workspaces in config order; Orchy only routes to the switched-on ones
 const wsIds = () => state.workspaces.map(w => w.id);
@@ -63,6 +66,7 @@ function applyTheme(t) {
 // ── load ──
 async function load() {
   const s = await api('/api/state');
+  if (s.events) state.evCursor = s.events; // where the live stream picks up (connectEvents)
   setTimezone(s.timezone);
   setOwner(s.owner);
   Object.assign(state, {
@@ -76,6 +80,9 @@ async function load() {
   state.clientAsks = new Map(s.inbox.filter(i => i.answerer === 'client').map(i => [i.id, i]));
   state.proposals = new Map(s.proposals.map(p => [p.id, p]));
   state.huddles = new Map((s.huddles || []).map(h => [h.id, h]));
+  // missions (missions.mjs) light up once the server sends them; until then the dashboard draws none
+  state.missionsOn = Array.isArray(s.missions);
+  state.missions = new Map((s.missions || []).map(m => [m.id, m]));
   state.sessions = new Map(s.sessions.map(x => [x.id, x]));
   loadedSessions.clear();
   for (const sid of state.sessions.keys()) loadedSessions.add(sid);
@@ -88,6 +95,7 @@ async function load() {
   // a reload (reconnect, a saved key, Re-check) leaves parked decisions parked; ones answered meanwhile close
   for (const w of decisionWindows()) if (state.inbox.get(w.id)?.status !== 'pending') w.close();
   if (s.ringing) ringIn(s.ringing);
+  liveNotify('state');
 }
 
 function renderAll() {
@@ -278,12 +286,16 @@ async function closeSession(sid) {
 const liveRuns = () => [...state.runs.values()].filter(r => LIVE.has(r.status));
 const openProposals = () => [...state.proposals.values()].filter(p => p.status === 'proposed');
 const pendingInbox = () => [...state.inbox.values()].filter(i => i.status === 'pending');
+/** Missions holding for the owner (an open ask on the card: a step to check, the cost ceiling, a restart…). */
+const missionAsks = () => [...state.missions.values()].filter(m => m.ask && !['done', 'partial', 'stopped', 'fallback'].includes(m.status));
 /** Decisions don't open on their own: an open one comes forward, else the oldest waiting one opens. */
 function nextDecision(from) {
   if (focusNextDecision()) return true;
   const item = pendingInbox().sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))[0];
-  if (!item) return false;
-  openItem(item, { from });
+  if (item) { openItem(item, { from }); return true; }
+  const m = missionAsks()[0]; // no inbox ask left: a mission waiting on the owner opens in the Live view
+  if (!m) return false;
+  openLive({ sel: { type: 'mission', id: m.id } });
   return true;
 }
 const busy = () => liveRuns().length > 0 || openProposals().length > 0 || pendingInbox().length > 0 || ['routing', 'thinking'].includes(state.orchy.server);
@@ -291,6 +303,9 @@ const busy = () => liveRuns().length > 0 || openProposals().length > 0 || pendin
 function bump() { view.lastActivity = Date.now(); }
 /** Something new happened that the owner should see: leave home, and un-hide a client that just got work. */
 function wake(wsId) { view.manualHome = false; bump(); if (wsId) view.folded.delete(wsId); }
+// The work view is Orchy's chat alone: what each agent is doing lives in the Live view (live.mjs). The pane per
+// workspace (panes.mjs) stays in the code, switched off; set this to true to bring the split view back.
+const CLIENT_PANES = false;
 
 function activeClients() {
   const set = new Set(view.pinned);
@@ -331,6 +346,8 @@ function ensurePanes() {
 }
 
 function layout() {
+  // the Live view stands in for home and work while it's open: no split, no folding home (live.mjs)
+  if (liveOpen()) { renderReadouts(); renderTabs(); tickDoing(); return; }
   // a half-typed message (or files waiting to go) in the work view keeps it open
   const typing = view.mode === 'work' && ($('#command').value.trim() !== '' || attached.length > 0);
   const wantWork = !view.manualHome && (busy() || typing || Date.now() - view.lastActivity < FOLD_MS);
@@ -346,7 +363,7 @@ function layout() {
     else { markSeen(view.active); scrollConvo(true); }
     renderSessions();
   }
-  const shown = mode === 'work' ? activeClients() : [];
+  const shown = CLIENT_PANES && mode === 'work' ? activeClients() : [];
   document.body.dataset.panes = String(shown.length);
   document.body.toggleAttribute('data-panes-many', shown.length > 4);
   for (const w of wsIds()) {
@@ -371,7 +388,7 @@ function renderPanes() { for (const w of view.shown) renderPane(w, view.since, v
 // phone: one panel at a time, tabs for Orchy and each client with work
 function renderTabs() {
   const bar = $('.mtabs');
-  if (view.mode !== 'work') { bar.innerHTML = ''; return; }
+  if (view.mode !== 'work' || liveOpen()) { bar.innerHTML = ''; delete bar.dataset.sig; return; }
   if (view.tab !== 'spine' && !view.shown.includes(view.tab)) view.tab = 'spine';
   const tabs = [['spine', 'Orchy'], ...view.shown.map(w => [w, wsShort(w)])];
   const sig = tabs.map(t => t[0]).join() + view.tab;
@@ -434,7 +451,7 @@ function renderBubble() {
     ${state.workspaces.length ? '' : `<p>Nothing is set up yet: add a workspace and your first agent, and Orchy can start routing work.</p><div class="links"><button class="btn primary" type="button" data-setup>${icon('plus')}Set up Orchy</button></div>`}
     ${waiting ? `<button class="btn decide" data-next-decision>${icon('bang')}${waiting === 1 ? '1 thing needs you' : `${waiting} things need you`}</button>` : ''}
     ${isGreeting ? `<div class="links"><button class="btn sm" data-hear>${icon('speaker')}Hear it</button></div>`
-    : fresh ? `<div class="links">${last.meta?.huddleId ? `<button class="btn sm" data-huddle="${esc(last.meta.huddleId)}">${icon(last.meta.kind === 'huddle-agreed' ? 'check' : 'chat')}${last.meta.kind === 'huddle-agreed' ? 'Review the agreement' : 'Open the huddle'}</button>${last.meta.huddleSession && last.meta.huddleSession !== last.session ? `<button class="btn sm ghost" data-open-session="${esc(last.meta.huddleSession)}">${icon('chat')}Its session</button>` : ''}` : ''}${last.meta?.callBack ? callBackHTML(last.meta.callBack) : ''}${runId ? `<button class="btn sm${last.meta?.callBack ? ' ghost' : ''}" data-run="${esc(runId)}">${icon('eye')}${last.meta?.callBack ? 'The task' : 'Full report'}</button>` : ''}<button class="btn sm ghost" data-show-convo="${esc(last.session || '')}">${icon('chat')}Conversation</button></div>` : ''}
+    : fresh ? `<div class="links">${last.meta?.huddleId ? `<button class="btn sm" data-huddle="${esc(last.meta.huddleId)}"${last.meta.kind === 'huddle-agreed' ? ' data-proposal="1"' : ''}>${icon(last.meta.kind === 'huddle-agreed' ? 'check' : 'chat')}${last.meta.kind === 'huddle-agreed' ? 'Review the agreement' : 'Open the huddle'}</button>${last.meta.huddleSession && last.meta.huddleSession !== last.session ? `<button class="btn sm ghost" data-open-session="${esc(last.meta.huddleSession)}">${icon('chat')}Its session</button>` : ''}` : ''}${last.meta?.callBack ? callBackHTML(last.meta.callBack) : ''}${runId ? `<button class="btn sm${last.meta?.callBack ? ' ghost' : ''}" data-run="${esc(runId)}">${icon('eye')}${last.meta?.callBack ? 'The task' : 'Full report'}</button>` : ''}${last.meta?.recover && state.runs.get(last.meta.recover.runId) ? recoverButtons(state.runs.get(last.meta.recover.runId)) : ''}<button class="btn sm ghost" data-show-convo="${esc(last.session || '')}">${icon('chat')}Conversation</button></div>` : ''}
   </div>`;
 }
 
@@ -552,15 +569,28 @@ function miniRoute(r) {
   </div>`;
 }
 
-/** A file the owner gave Orchy, as it sits in the conversation: opens from Uploads in a new tab. */
+/** A file the owner gave Orchy, as it sits in the conversation: opens in the viewer (Ctrl/middle click: a new tab). */
 function fileLinkHTML(f) {
   const href = esc(uploadURL(f.name));
-  if (f.kind === 'image') return `<a class="mfile img" href="${href}" target="_blank" rel="noopener" title="${esc(f.name)}"><img src="${href}" alt="${esc(f.name)}" loading="lazy"></a>`;
-  return `<a class="mfile" href="${href}" target="_blank" rel="noopener" title="Open ${esc(f.name)}">${icon('doc')}<span class="t">${esc(f.name)}</span><span class="sz">${fsize(f.size)}</span></a>`;
+  const view = `data-view-upload="${esc(f.name)}" data-size="${Number(f.size) || ''}"`;
+  if (f.kind === 'image') return `<a class="mfile img" href="${href}" target="_blank" rel="noopener" title="${esc(f.name)}" ${view}><img src="${href}" alt="${esc(f.name)}" loading="lazy"></a>`;
+  return `<a class="mfile" href="${href}" target="_blank" rel="noopener" title="Open ${esc(f.name)}" ${view}>${icon(kindIcon(kindFor(f.name)))}<span class="t">${esc(f.name)}</span><span class="sz">${fsize(f.size)}</span></a>`;
 }
 
 /** A missed call from an agent: ring it back (with the call's reason while it's fresh). */
 const callBackHTML = cb => `<button class="btn sm" data-call-back="${esc(cb.callId)}" data-key="${esc(cb.key)}" data-name="${esc(cb.name)}">${icon('phone')}Call back</button>`;
+
+// the weekly usage review's one-tap actions (usagereview.mjs): the builder with the change prefilled, a setting, a run
+function suggestHTML(list) {
+  if (!Array.isArray(list) || !list.length) return '';
+  return list.map(s => {
+    const a = s.action || {}, label = `${s.n ? `${s.n}. ` : ''}${esc(s.label || 'Do it')}`;
+    if (a.type === 'build') return `<button class="btn sm" data-suggest-build="${esc(a.ws)}" data-text="${esc(a.text)}">${icon('spark')}${label}</button>`;
+    if (a.type === 'setting') return `<button class="btn sm ghost" data-suggest-set="${esc(a.key)}" data-value="${esc(JSON.stringify(a.value))}">${icon('gear')}${label}</button>`;
+    if (a.type === 'run') return `<button class="btn sm ghost" data-run="${esc(a.runId)}">${icon('eye')}${label}</button>`;
+    return '';
+  }).join('');
+}
 
 function msgHTML(m) {
   if (m.role === 'owner') {
@@ -570,16 +600,21 @@ function msgHTML(m) {
   const run = m.meta?.runId ? state.runs.get(m.meta.runId) : null;
   // Orchy fixed his own code: restart now (it's waiting, or the fix stopped short), reload the page, or undo it
   const fixed = m.meta?.fix?.runId ? state.runs.get(m.meta.fix.runId) : null;
-  const fixBtns = !m.meta?.fix ? '' : [
+  // what went wrong (recover.mjs): the owner's one-move card; and Orchy's check found something (validate.mjs): Ask it to fix
+  const recRun = m.meta?.recover?.runId ? state.runs.get(m.meta.recover.runId) : null;
+  const recBtns = recRun ? recoverButtons(recRun) : '';
+  const fixAsk = m.meta?.kind === 'report' && run && !m.meta?.recover && ['check', 'failed'].includes(run.validation?.verdict) ? `<button class="btn sm" data-fix-ask="${esc(run.id)}">${icon('edit')}Ask it to fix</button>` : '';
+  const fixBtns = recBtns + fixAsk + suggestHTML(m.meta?.suggestions) + (!m.meta?.fix ? '' : [
     fixed && ['queued', 'offer'].includes(fixed.fix?.restart) && !fixed.undoneAt ? `<button class="btn sm primary" data-fix-restart="${esc(fixed.id)}">${icon('refresh')}Restart now</button>` : '',
     m.meta.fix.reload ? `<button class="btn sm" data-reload>${icon('refresh')}Reload the dashboard</button>` : '',
     fixed?.backendChanges?.length && !fixed.undoneAt && fixed.fix?.restart !== 'rolled-back' ? `<button class="btn sm ghost" data-fix-undo="${esc(fixed.id)}">${icon('x')}Undo the fix</button>` : '',
-  ].join('');
+  ].join(''));
   return `<div class="msg ${m.meta?.error ? 'error' : ''}" data-msg="${esc(m.id)}">
     <div class="av">${orchySVG('idle', 1, { label: 'Orchy' })}</div>
     <div>${m.meta?.routing ? miniRoute(m.meta.routing) : ''}<div class="who">Orchy <time>${timeShort(m.at)}</time>${m.meta?.workspace ? `<span class="plate ${wsClass(m.meta.workspace)}">${esc(wsName(m.meta.workspace))}</span>` : ''}</div>
       <div class="body">${md(m.text)}</div>
-      ${m.meta?.huddleId ? `<div class="links"><button class="btn sm ${m.meta.kind === 'huddle-agreed' ? 'primary' : ''}" data-huddle="${esc(m.meta.huddleId)}">${icon(m.meta.kind === 'huddle-agreed' ? 'check' : 'chat')}${m.meta.kind === 'huddle-agreed' ? 'Review the agreement' : 'Open the huddle'}</button>${m.meta.huddleSession && m.meta.huddleSession !== m.session ? `<button class="btn sm ghost" data-open-session="${esc(m.meta.huddleSession)}">${icon('chat')}Go to its session</button>` : ''}</div>` : m.meta?.callBack ? `<div class="links">${callBackHTML(m.meta.callBack)}${m.meta.runId ? `<button class="btn sm ghost" data-run="${esc(m.meta.runId)}">${icon('eye')}The task</button>` : ''}</div>` : m.meta?.runId ? `<div class="links"><button class="btn sm" data-run="${esc(m.meta.runId)}">${icon('eye')}${m.meta.kind === 'report' ? 'Full report' : 'Watch it work'}</button>${m.meta.kind === 'dispatch' && m.meta.routing?.live && run && LIVE.has(run.status) ? `<button class="btn sm" data-stop="${esc(run.id)}">${icon('stop')}Stop</button>` : ''}${m.meta.kind === 'report' ? `<button class="btn sm ghost" data-open="logs">${icon('logs')}Logs</button>` : ''}${run?.createdAgents?.length ? run.createdAgents.map(a => `<button class="btn sm" data-agent="${esc(a.slug)}" data-ws="${esc(run.workspace)}">${icon('spark')}Meet ${esc(a.slug)}</button>`).join('') : ''}${fixBtns}</div>` : fixBtns ? `<div class="links">${fixBtns}</div>` : ''}
+      ${m.meta?.result ? `<div class="result md">${md(m.meta.result)}</div>` : ''}
+      ${m.meta?.missionId ? (m.meta.kind === 'mission' ? missionSlotHTML(m.meta.missionId) : missionLineHTML(state.missions.get(m.meta.missionId), m)) : m.meta?.huddleId ? `<div class="links"><button class="btn sm ${m.meta.kind === 'huddle-agreed' ? 'primary' : ''}" data-huddle="${esc(m.meta.huddleId)}"${m.meta.kind === 'huddle-agreed' ? ' data-proposal="1"' : ''}>${icon(m.meta.kind === 'huddle-agreed' ? 'check' : 'chat')}${m.meta.kind === 'huddle-agreed' ? 'Review the agreement' : 'Open the huddle'}</button>${m.meta.huddleSession && m.meta.huddleSession !== m.session ? `<button class="btn sm ghost" data-open-session="${esc(m.meta.huddleSession)}">${icon('chat')}Go to its session</button>` : ''}</div>` : m.meta?.callBack ? `<div class="links">${callBackHTML(m.meta.callBack)}${m.meta.runId ? `<button class="btn sm ghost" data-run="${esc(m.meta.runId)}">${icon('eye')}The task</button>` : ''}</div>` : m.meta?.runId ? `<div class="links">${m.meta.kind === 'report' ? `<button class="btn sm" data-run="${esc(m.meta.runId)}">${icon('eye')}Full report</button>` : `<button class="btn sm" data-live-run="${esc(m.meta.runId)}">${icon('live')}View live</button>`}${m.meta.kind === 'dispatch' && m.meta.routing?.live && run && LIVE.has(run.status) ? `<button class="btn sm" data-stop="${esc(run.id)}">${icon('stop')}Stop</button>` : ''}${m.meta.kind === 'report' ? `<button class="btn sm ghost" data-open="logs">${icon('logs')}Logs</button>` : ''}${run?.createdAgents?.length ? run.createdAgents.map(a => `<button class="btn sm" data-agent="${esc(a.slug)}" data-ws="${esc(run.workspace)}">${icon('spark')}Meet ${esc(a.slug)}</button>`).join('') : ''}${fixBtns}</div>` : fixBtns ? `<div class="links">${fixBtns}</div>` : ''}
     </div></div>`;
 }
 
@@ -627,7 +662,7 @@ function fillRoute(el, p) {
   const done = p.status !== 'proposed';
   el.classList.toggle('done', done);
   el.classList.toggle('needs', !done && !!r.needsChoice && !p.held);
-  const intentLabel = { task: 'Task', build_agent: 'Build an agent', chat: 'Chat', status: 'Status', huddle: 'Huddle', fix_orchy: 'Fix Orchy' }[ch.intent] || ch.intent;
+  const intentLabel = { task: 'Task', build_agent: 'Build an agent', chat: 'Chat', status: 'Status', huddle: 'Huddle', fix_orchy: 'Fix Orchy', mission: 'Mission' }[ch.intent] || ch.intent;
   const huddle = ch.intent === 'huddle';
   const fix = ch.intent === 'fix_orchy'; // Orchy works on his own code (server: backend.mjs)
   const pair = huddle ? (ch.huddle || []) : [];
@@ -641,14 +676,14 @@ function fillRoute(el, p) {
   const agentBars = Object.entries(pr.agent || {}).sort((a, b) => b[1] - a[1]).slice(0, 3);
 
   if (done) {
-    const head = p.huddleId ? `Huddle started in ${wsName(ch.workspace)}` : p.status === 'dispatched' && fix ? `Orchy is fixing himself · ${ch.model}` : p.status === 'dispatched' ? `Sent to ${wsName(ch.workspace)} · ${ch.intent === 'build_agent' ? 'AI Agent Builder' : ch.agent ? agentLabel(`${ch.workspace}/${ch.agent}`) : 'generalist'} · ${ch.model}`
+    const head = p.missionId ? `Planning it as a mission in ${wsName(ch.workspace)}` : p.huddleId ? `Huddle started in ${wsName(ch.workspace)}` : p.status === 'dispatched' && fix ? `Orchy is fixing himself · ${ch.model}` : p.status === 'dispatched' ? `Sent to ${wsName(ch.workspace)} · ${ch.intent === 'build_agent' ? 'AI Agent Builder' : ch.agent ? agentLabel(`${ch.workspace}/${ch.agent}`) : 'generalist'} · ${ch.model}`
       : p.status === 'cancelled' ? 'Cancelled' : p.status === 'answered' ? 'Answered in the chat instead' : p.status === 'dispatching' ? 'Sending…' : `Couldn't send: ${p.error || ''}`;
     el.innerHTML = `<div class="rh"><span>${icon(p.status === 'cancelled' || p.status === 'error' ? 'x' : p.status === 'answered' ? 'chat' : 'send')} ${esc(head)}</span>${p.runId ? `<button class="btn sm" style="border-color:var(--paper);background:var(--ink);color:var(--paper)" data-run="${esc(p.runId)}">Watch</button>` : ''}</div>`;
     return;
   }
 
   // why Jev left the card for the owner (router.mjs#finalize holdReason)
-  const unsureHead = { fix: 'Fix Orchy? · your go', huddle: 'Which two agents? · pick them', 'chat-or-task': 'Answer, or get it done? · pick one', agent: 'Jev isn’t sure which agent · pick one', workspace: 'Jev isn’t sure which client · pick one' }[r.holdReason] || 'Jev isn’t sure · pick one';
+  const unsureHead = { fix: 'Fix Orchy? · your go', huddle: 'Which agents? · pick two or more', 'chat-or-task': 'Answer, or get it done? · pick one', agent: 'Jev isn’t sure which agent · pick one', workspace: 'Jev isn’t sure which client · pick one' }[r.holdReason] || 'Jev isn’t sure · pick one';
   const prev = ch.followUp ? state.runs.get(ch.followUp) : null;
   el.innerHTML = `
     <div class="rh"><span>${r.needsChoice && !p.held ? unsureHead : `Jev routed${r.jev ? ` · ${(r.jev.ms / 1000).toFixed(1)}s` : ''}`}</span><span>${esc(ch.followUp ? 'Follow-up' : intentLabel)}</span></div>
@@ -663,13 +698,13 @@ function fillRoute(el, p) {
         ${agentBars.map(([k, v]) => `<div class="bar ${k === `${ch.workspace}/${ch.agent || 'general'}` ? 'pick' : ''}"><span class="lbl">${esc(agentLabel(k))}</span><span class="trk"><span class="fill" data-w="${Math.round(v * 100)}"></span></span><span class="pct">${Math.round(v * 100)}%</span></div>`).join('')}</div>` : ''}`}
       <div class="choose">
         <div class="rowc"><span class="label">Client</span><div class="seg" role="group" aria-label="Client">${enabledIds().map(w => `<button type="button" data-set="workspace" data-v="${esc(w)}" aria-pressed="${ch.workspace === w}" title="${esc(wsName(w))}">${esc(wsShort(w))}</button>`).join('')}</div>
-          <span class="label">Do</span><div class="seg" role="group" aria-label="Intent">${[['task', 'Task'], ['build_agent', 'Build agent'], ['huddle', 'Huddle'], ['fix_orchy', 'Fix Orchy']].map(([v, l]) => `<button type="button" data-set="intent" data-v="${v}" aria-pressed="${ch.intent === v}">${l}</button>`).join('')}</div></div>
-        <div class="rowc">${huddle ? `<span class="label">Who</span>${[0, 1].map(i => `<select class="select" data-hpick="${i}" style="width:auto;min-height:32px;padding:2px 8px" aria-label="Huddle agent ${i + 1}"><option value="">pick an agent</option>${huddlers.map(a => `<option value="${esc(a.slug)}" ${pair[i] === a.slug ? 'selected' : ''}>${esc(nameRole(agentName(a.workspace, a.slug, a.displayName), a.displayName))}</option>`).join('')}</select>`).join('<span aria-hidden="true">⇄</span>')}` : ''}${ch.intent === 'task' ? `<span class="label">Agent</span><select class="select" data-set-select="agent" style="width:auto;min-height:32px;padding:2px 8px" aria-label="Agent"><option value="">${esc(wsName(ch.workspace || ''))} generalist</option>${agentsInWs.map(a => `<option value="${esc(a.slug)}" ${ch.agent === a.slug ? 'selected' : ''}>${esc(nameRole(agentName(a.workspace, a.slug, a.displayName), a.displayName))}</option>`).join('')}</select>` : ''}
+          <span class="label">Do</span><div class="seg" role="group" aria-label="Intent">${[['task', 'Task'], ...(state.missionsOn ? [['mission', 'Mission']] : []), ['build_agent', 'Build agent'], ['huddle', 'Huddle'], ['fix_orchy', 'Fix Orchy']].map(([v, l]) => `<button type="button" data-set="intent" data-v="${v}" aria-pressed="${ch.intent === v}">${l}</button>`).join('')}</div></div>
+        <div class="rowc">${huddle ? `<span class="label">Who</span>${Array.from({ length: Math.min(huddlers.length, Math.max(2, pair.length + 1)) }, (_, i) => `<select class="select" data-hpick="${i}" style="width:auto;min-height:32px;padding:2px 8px" aria-label="Huddle agent ${i + 1}"><option value="">${i < 2 ? 'pick an agent' : '+ add an agent'}</option>${huddlers.filter(a => a.slug === pair[i] || !pair.includes(a.slug)).map(a => `<option value="${esc(a.slug)}" ${pair[i] === a.slug ? 'selected' : ''}>${esc(nameRole(agentName(a.workspace, a.slug, a.displayName), a.displayName))}</option>`).join('')}</select>`).join('<span aria-hidden="true">⇄</span>')}` : ''}${ch.intent === 'task' ? `<span class="label">Agent</span><select class="select" data-set-select="agent" style="width:auto;min-height:32px;padding:2px 8px" aria-label="Agent"><option value="">${esc(wsName(ch.workspace || ''))} generalist</option>${agentsInWs.map(a => `<option value="${esc(a.slug)}" ${ch.agent === a.slug ? 'selected' : ''}>${esc(nameRole(agentName(a.workspace, a.slug, a.displayName), a.displayName))}</option>`).join('')}</select>` : ''}
           ${huddle ? '' : `<span class="label">${pinned ? `${esc(pinned.engineLabel)} model` : 'Model'}</span><div class="seg" role="group" aria-label="Model">${modelChoices(models).map(m => `<button type="button" data-set="model" data-v="${esc(m)}" aria-pressed="${ch.model === m}" title="${esc(m)}">${esc(m.replace(/^gpt-/, ''))}</button>`).join('')}</div>${modelIsFree(models) ? `<input class="input" data-set-model type="text" spellcheck="false" autocomplete="off" placeholder="or a model id, e.g. provider/model" aria-label="Model id" value="${ch.model && ch.model !== 'default' ? esc(ch.model) : ''}" style="min-width:14ch;max-width:26ch">` : ''}`}</div>
       </div>
     </div>
     <div class="rf"><span class="countdown" data-cd>${p.dispatchAt ? '' : p.held ? 'Held · press send' : r.needsChoice ? 'Waiting for you' : 'Press send'}</span>
-      <span class="btnrow"><button class="btn sm" data-route-act="cancel">${icon('x')}Cancel</button>${r.askChat ? `<button class="btn sm" data-route-act="answer">${icon('chat')}Just answer</button>` : ''}<button class="btn sm primary" data-route-act="send" ${ch.workspace && (!huddle || (pair.length === 2 && pair[0] !== pair[1])) ? '' : 'disabled'}>${icon(fix ? 'term' : 'send')}${huddle ? 'Start the huddle' : fix ? 'Fix it' : 'Send now'}</button></span></div>`;
+      <span class="btnrow"><button class="btn sm" data-route-act="cancel">${icon('x')}Cancel</button>${r.askChat ? `<button class="btn sm" data-route-act="answer">${icon('chat')}Just answer</button>` : ''}<button class="btn sm primary" data-route-act="send" ${ch.workspace && (!huddle || (pair.length >= 2 && new Set(pair).size === pair.length)) ? '' : 'disabled'}>${icon(fix ? 'term' : 'send')}${huddle ? 'Start the huddle' : fix ? 'Fix it' : 'Send now'}</button></span></div>`;
 
   requestAnimationFrame(() => requestAnimationFrame(() => el.querySelectorAll('.fill').forEach(f => { f.style.clipPath = `inset(0 ${100 - Number(f.dataset.w)}% 0 0)`; })));
 
@@ -707,6 +742,7 @@ function upsertProposal(p) {
 }
 
 function tickCountdowns() {
+  tickMissionCountdowns();
   for (const p of state.proposals.values()) {
     if (!p.dispatchAt || p.status !== 'proposed') continue;
     const el = document.querySelector(`[data-proposal="${CSS.escape(p.id)}"] [data-cd]`);
@@ -719,7 +755,7 @@ function tickCountdowns() {
 
 // ─────────────── readouts, clock ───────────────
 function renderReadouts() {
-  const waiting = pendingInbox().length;
+  const waiting = pendingInbox().length + missionAsks().length;
   const running = liveRuns().length;
   $('#waiting-n').textContent = waiting;
   $('#running-n').textContent = running;
@@ -900,7 +936,12 @@ function renderLive() {
     } else if (rt.intent === 'huddle') {
       st = r.startsNow && rt.workspace ? 'go' : 'held';
       const who = (rt.huddle || []).map(s => agentLabel(`${rt.workspace}/${s}`));
-      body = `${rt.workspace ? plate(rt.workspace) : ''}<span class="who">huddle · ${esc(who.length === 2 ? who.join(' + ') : who[0] ? `${who[0]} + ?` : 'which two?')}</span>${meter(sure)}`;
+      body = `${rt.workspace ? plate(rt.workspace) : ''}<span class="who">huddle · ${esc(who.length >= 2 ? who.join(' + ') : who[0] ? `${who[0]} + ?` : 'which agents?')}</span>${meter(sure)}`;
+    } else if (rt.intent === 'mission' && rt.workspace) {
+      // several agents in a row (missions.mjs): Enter plans it; the card shows the steps before anything runs
+      st = 'go';
+      body = `${plate(rt.workspace)}<span class="who">mission · several agents</span>${meter(sure)}`;
+      tail = `<span class="go">Enter<span class="long"> plans it</span></span>`;
     } else if (rt.intent === 'fix_orchy') {
       st = 'held';
       body = `${plate(rt.workspace)}<span class="who">${r.followUp ? 'continues my last fix' : 'fix Orchy · my own code'}</span>${meter(sure)}`;
@@ -914,9 +955,9 @@ function renderLive() {
       st = 'held';
       body = `<span class="who">which client?</span>${meter(sure)}`;
     }
-    if (st === 'go') tail = `<span class="go">Enter<span class="long"> starts it</span></span>`;
+    if (st === 'go' && rt.intent !== 'mission') tail = `<span class="go">Enter<span class="long"> starts it</span></span>`;
     else if (st === 'held' && rt.intent !== 'ignored') {
-      const why = { fix: 'you press Fix it', huddle: 'which two?', workspace: 'pick a client', 'chat-or-task': 'answer or do it?', unsure: 'Jev isn’t sure', agent: 'which agent?' }[rt.holdReason] || (state.settings.autoDispatch === false ? 'you send it' : 'card first');
+      const why = { fix: 'you press Fix it', huddle: 'which agents?', workspace: 'pick a client', 'chat-or-task': 'answer or do it?', unsure: 'Jev isn’t sure', agent: 'which agent?' }[rt.holdReason] || (state.settings.autoDispatch === false ? 'you send it' : 'card first');
       tail = `<span class="plate decide">Waits · ${esc(why)}</span>`;
     }
     faint = sure < 0.6 && st !== 'chat';
@@ -963,9 +1004,31 @@ function notify(title, body) {
   try { const n = new Notification(title, { body, icon: '/assets/images/lilorchy.png', tag: title }); n.onclick = () => { window.focus(); n.close(); }; } catch {}
 }
 
+// The stream is replayable (bus.mjs): it starts where load() left off and the browser's reconnects resume by
+// Last-Event-ID. Frames this page already applied are dropped (same boot, seq not newer); a `hello` with
+// resync means the server couldn't replay (it restarted, or too much was missed), so the page reloads its state.
+const applied = { boot: null, seq: 0 };
 function connectEvents() {
-  const es = new EventSource('/api/events');
-  const on = (type, fn) => es.addEventListener(type, e => { try { fn(JSON.parse(e.data)); } catch (err) { console.error(type, err); } });
+  const c = state.evCursor;
+  const es = new EventSource(c ? `/api/events?last=${encodeURIComponent(`${c.boot}:${c.seq}`)}` : '/api/events');
+  if (c) { applied.boot = c.boot; applied.seq = c.seq; }
+  const on = (type, fn) => es.addEventListener(type, e => {
+    const [boot, n] = String(e.lastEventId || '').split(':');
+    if (boot && boot === applied.boot && Number(n) <= applied.seq) return;
+    if (boot && n) { applied.boot = boot; applied.seq = Number(n); }
+    let d;
+    try { d = JSON.parse(e.data); fn(d); } catch (err) { console.error(type, err); }
+    try { if (d) liveNotify(type, d); } catch (err) { console.error('live', type, err); } // the Live view follows every event
+  });
+  es.addEventListener('hello', e => {
+    let d; try { d = JSON.parse(e.data); } catch { return; }
+    state.orchy.online = true; tickDoing();
+    if (d.resync) {
+      applied.boot = d.boot; applied.seq = d.seq;
+      if (state.loadedOnce || c) load().catch(() => {});
+    }
+    state.loadedOnce = true; // a clean replay needs no reload
+  });
 
   on('chat.message', ({ message, speak }) => {
     if (state.chat.some(m => m.id === message.id)) return;
@@ -998,6 +1061,18 @@ function connectEvents() {
   on('routing.proposed', ({ proposal }) => upsertProposal(proposal));
   on('routing.updated', ({ proposal }) => upsertProposal(proposal));
   on('huddle.updated', ({ huddle }) => huddleUpdated(huddle));
+  // a mission's card follows it in place; its later lines (an ask, the end) point back to the card
+  const missionChanged = ({ mission }) => {
+    if (!mission?.id) return;
+    state.missionsOn = true;
+    state.missions.set(mission.id, mission);
+    missionUpdated(mission);
+    for (const msg of state.chat) if (msg.meta?.missionId === mission.id && msg.meta.kind !== 'mission') { const el = $(`#convo [data-msg="${CSS.escape(msg.id)}"]`); if (el) el.outerHTML = msgHTML(msg); }
+    renderSessions();
+    renderReadouts();
+  };
+  on('mission.created', missionChanged);
+  on('mission.updated', missionChanged);
   on('run.started', ({ run }) => {
     state.runs.set(run.id, run);
     if (clientOwn(run)) { renderReadouts(); return; } // a client's talk with their agent: no pane, no flash
@@ -1008,10 +1083,13 @@ function connectEvents() {
   on('run.updated', ({ run }) => {
     state.runs.set(run.id, { ...state.runs.get(run.id), ...run });
     renderPanes(); renderReadouts(); renderSessions(); runUpdated(state.runs.get(run.id)); tickDoing();
-    // a fix's Restart / Undo buttons follow its state (restarted, undone)
-    if (run.backend) for (const m of state.chat) if (m.meta?.fix?.runId === run.id) { const el = $(`#convo [data-msg="${CSS.escape(m.id)}"]`); if (el) el.outerHTML = msgHTML(m); }
+    // a fix's Restart / Undo buttons follow its state (restarted, undone); a recovery card's follow the run's recovery
+    for (const m of state.chat) if ((run.backend && m.meta?.fix?.runId === run.id) || m.meta?.recover?.runId === run.id) { const el = $(`#convo [data-msg="${CSS.escape(m.id)}"]`); if (el) el.outerHTML = msgHTML(m); }
   });
   on('run.event', ({ runId, event }) => { runEvent(runId, event); paneEvent(runId, event); });
+  // files agents made (artifacts.mjs): open run windows refresh their list, the viewer follows versions and media states
+  on('artifact.created', ({ artifact }) => { runArtifact(artifact); artifactChanged(artifact); });
+  on('artifact.updated', ({ artifact }) => { runArtifact(artifact); artifactChanged(artifact); });
   on('run.ended', ({ run }) => {
     state.runs.set(run.id, run);
     $$(`#convo [data-stop="${CSS.escape(run.id)}"]`).forEach(b => b.remove());
@@ -1074,7 +1152,7 @@ function connectEvents() {
   });
   // the status word says so while the live feed is down, and goes back to Orchy's state when it's up
   es.onerror = () => { state.orchy.online = false; tickDoing(); };
-  es.onopen = () => { state.orchy.online = true; tickDoing(); if (state.loadedOnce) load().catch(() => {}); state.loadedOnce = true; };
+  es.onopen = () => { state.orchy.online = true; tickDoing(); }; // the hello that follows says whether to reload
 }
 
 /** The first-run setup guide (also reachable from Settings and the home empty state). */
@@ -1082,13 +1160,22 @@ export function openSetupGuide({ from, step } = {}) { return openSetup({ from, s
 
 // ─────────────── clicks & keys (the dashboard and any popped-out window) ───────────────
 async function onClick(e) {
-  const t = e.target.closest('button, [data-run], [data-agent]');
+  const t = e.target.closest('button, [data-run], [data-agent], [data-view-upload]');
   if (!t) return;
+  if (t.dataset.viewUpload) {
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.button) return; // a new tab, as before
+    e.preventDefault();
+    const chips = [...(t.closest('.mfiles')?.querySelectorAll('[data-view-upload]') || [t])].map(x => ({ name: x.dataset.viewUpload, size: Number(x.dataset.size) || null }));
+    return openViewer({ upload: { name: t.dataset.viewUpload, size: Number(t.dataset.size) || null }, list: chips, from: t });
+  }
+  // a mission card (missions.mjs): in the chat or the Live view
+  if (t.dataset.mact || t.dataset.mlive || t.dataset.mjump || t.dataset.meditRemove) return onMissionClick(t);
   if (t.closest('.win') && !t.matches('[data-open]')) return; // windows wire their own buttons
   if (t.hasAttribute('data-setup')) return openSetupGuide({ from: t });
-  if (t.dataset.huddle) return openHuddle(t.dataset.huddle, { from: t });
+  if (t.dataset.huddle) return (t.dataset.proposal ? openProposal : openHuddle)(t.dataset.huddle, { from: t });
   if (t.dataset.open) {
     const from = t;
+    if (t.dataset.open === 'live') return toggleLive();
     if (t.dataset.open === 'agents') openAgents(defaultWs(), { from });
     if (t.dataset.open === 'huddles') openHuddles({ from, session: () => view.active });
     if (t.dataset.open === 'logs') openLogs({ from });
@@ -1104,13 +1191,24 @@ async function onClick(e) {
   if (t.dataset.openSession) return openSession(t.dataset.openSession);
   if (t.hasAttribute('data-session-new')) { bump(); return startSession(); }
   if (t.dataset.callBack) return startCall(t.dataset.key, t.dataset.name, { callId: t.dataset.callBack, fallback: true });
+  // Orchy's check found something: the run window opens with the fix-it follow-up written (the owner sends it)
+  if (t.dataset.fixAsk) return openRun(t.dataset.fixAsk, { from: t, prefill: fixText(state.runs.get(t.dataset.fixAsk)) });
+  if (t.dataset.recover) { t.disabled = true; try { await recoverAct(t.dataset.recover, t.dataset.recoverAct, { from: t, run: state.runs.get(t.dataset.recover), toast }); } finally { t.disabled = false; } return; }
+  if (t.dataset.liveRun) return openLive({ sel: { type: 'run', id: t.dataset.liveRun } }); // a run Orchy sent off: watch it in Live
   if (t.dataset.run) return openRun(t.dataset.run, { from: t });
   if (t.dataset.agent) return openAgent(t.dataset.ws, t.dataset.agent, { from: t });
   if (t.dataset.build) return openBuild(t.dataset.build, { from: t });
+  if (t.dataset.suggestBuild) return openBuild(t.dataset.suggestBuild, { from: t, prompt: t.dataset.text });
+  if (t.dataset.suggestSet) {
+    try { state.settings = await api('/api/settings', { method: 'POST', body: { [t.dataset.suggestSet]: JSON.parse(t.dataset.value) } }); toast('Done. It’s in Settings if you want it back.'); t.disabled = true; }
+    catch (err) { toast(err.message, 'warn'); }
+    return;
+  }
   if (t.dataset.conns) return openConnections(t.dataset.conns, { from: t });
   if (t.dataset.agents) return openAgents(t.dataset.agents, { from: t });
   if (t.dataset.fold) { view.folded.add(t.dataset.fold); bump(); return layout(); }
   if (t.dataset.stop) { try { await api(`/api/runs/${t.dataset.stop}/stop`, { method: 'POST' }); } catch (err) { toast(err.message, 'warn'); } return; }
+  if (t.dataset.runNow) { try { await api(`/api/runs/${t.dataset.runNow}/run-now`, { method: 'POST' }); } catch (err) { toast(err.message, 'warn'); } return; }
   // a fix of Orchy's own code (server: backend.mjs)
   if (t.dataset.fixRestart || t.dataset.fixUndo) {
     const n = liveRuns().length;
@@ -1186,6 +1284,11 @@ $('#go-home').addEventListener('click', () => { view.manualHome = true; layout()
 $('#waiting').addEventListener('click', e => { if (!nextDecision(e.currentTarget)) toast('Nothing is waiting on you.'); });
 $('#running').addEventListener('click', () => {
   const live = liveRuns();
+  if (!CLIENT_PANES) { // what's running lives in the Live view
+    if (!live.length) return toast('Nothing is running right now.');
+    return openLive({ sel: { type: 'run', id: live[0].id } });
+  }
+  if (liveOpen()) closeLive(); // Running keeps its job: the split onto what's running
   if (!live.length && view.mode === 'work') return toast('Nothing is running right now.');
   for (const r of live) { view.pinned.add(r.workspace); view.folded.delete(r.workspace); }
   wake();
@@ -1218,7 +1321,7 @@ $('#send .i').outerHTML = icon('send', 'ico lg');
 $('#call .i').outerHTML = icon('phone', 'ico lg');
 $('#attach .i').outerHTML = icon('clip', 'ico lg');
 $('#go-home .i').outerHTML = icon('home');
-$$('.tools .tbtn').forEach(b => { b.querySelector('.i').innerHTML = icon({ agents: 'team', huddles: 'huddle', impact: 'spark', logs: 'logs', connections: 'plug', settings: 'gear' }[b.dataset.open], 'ico lg'); });
+$$('.tools .tbtn').forEach(b => { b.querySelector('.i').innerHTML = icon({ agents: 'team', huddles: 'huddle', live: 'live', impact: 'spark', logs: 'logs', connections: 'plug', settings: 'gear' }[b.dataset.open], 'ico lg'); });
 
 // boot
 initWindows({
@@ -1232,6 +1335,16 @@ initSetup({ state, toast, reload: load });
 initPanels({ state, toast, openRun, openNewHuddle, applyTheme, reload: load, openSession, activeSession: () => view.active });
 initPanes({ state, LIVE, toast });
 initCalls({ toast });
+initMissions({ state, toast: (m, k) => toast(m, k), openLive: sel => openLive({ sel }) });
+// typing on a mission card (a follow-up, an edited step) survives its redraws
+document.addEventListener('input', e => { if (e.target?.closest?.('[data-mission-card], [data-mission-scope]')) onMissionInput(e.target); });
+document.addEventListener('change', e => { if (e.target?.closest?.('[data-mission-card], [data-mission-scope]')) onMissionInput(e.target); });
+initLive({
+  state, LIVE, toast,
+  onOpen: () => { document.body.dataset.view = 'live'; renderTabs(); },
+  // back to the view it was in; a minute's grace before it folds home
+  onClose: () => { document.body.dataset.view = view.mode; bump(); layout(); renderPanes(); renderTabs(); },
+});
 setInterval(tickOrchy, 150);
 setInterval(tickClock, 1000);
 setInterval(tickCountdowns, 250);
@@ -1247,7 +1360,8 @@ pairFromLink(PARAMS).then(load).then(async () => {
   if (PARAMS.has('preview')) (await import('./preview.mjs')).runPreview({ state, view, upsertProposal, toast, mode: PARAMS.get('preview'), wake, layout, ensurePanes, renderPanes, paneEvent, setActive });
   const open = PARAMS.get('open');
   if (open === 'agents') openAgents(PARAMS.get('ws') || defaultWs());
-  if (open === 'logs') openLogs();
+  if (open === 'logs') openLogs({ tab: PARAMS.get('tab') });
+  if (open === 'usage') openLogs({ tab: 'usage' });
   if (open === 'impact') openImpact();
   if (open === 'settings') openSettings();
   if (open === 'connections') openConnections(PARAMS.get('ws') || defaultWs());
@@ -1259,6 +1373,20 @@ pairFromLink(PARAMS).then(load).then(async () => {
   if (open === 'huddle' && PARAMS.get('huddle')) openHuddle(PARAMS.get('huddle'));
   if (open === 'huddle-new') openNewHuddle(PARAMS.get('ws') || defaultWs());
   if (open === 'huddles') openHuddles({ wsId: PARAMS.get('ws'), session: () => view.active });
+  if (open === 'proposal' && PARAMS.get('huddle')) openProposal(PARAMS.get('huddle'));
+  // the Live view: &open=live (with &run=<id> or &huddle=<id> to pick what it shows)
+  if (open === 'live') openLive({ sel: PARAMS.get('run') ? { type: 'run', id: PARAMS.get('run') } : PARAMS.get('huddle') ? { type: 'huddle', id: PARAMS.get('huddle') } : null });
+  // the viewer for screenshots: &open=viewer&artifact=<id> (with its run's files), &upload=<name>, &embed=<url>
+  if (open === 'viewer' && PARAMS.get('artifact')) {
+    api(`/api/artifacts/${encodeURIComponent(PARAMS.get('artifact'))}`).then(async ({ artifact }) => {
+      let list = null;
+      if (artifact.runId) { try { list = (await api(`/api/artifacts?run=${encodeURIComponent(artifact.runId)}`)).artifacts; } catch {} }
+      openViewer({ artifact, list });
+    }).catch(e => toast(e.message, 'warn'));
+  }
+  if (open === 'viewer' && PARAMS.get('upload')) openViewer({ upload: { name: PARAMS.get('upload') } });
+  if (open === 'viewer' && PARAMS.get('embed')) openViewer({ embed: PARAMS.get('embed') });
+
 }).catch(e => {
   $('#bubble').innerHTML = `<div class="bubble"><h2 class="px2">Can't reach my server</h2><p>${esc(e.message)}. Start it with <code class="data">npm start</code> in the Orchy folder.</p></div>`;
 });

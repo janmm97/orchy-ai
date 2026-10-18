@@ -3,6 +3,7 @@
 //   ?preview        routing card + the three pop-ups
 //   ?preview=route  just the routing card
 //   ?preview=work   the split view with sample runs in both clients
+//   ?preview=live   the Live view with sample runs, a huddle, steps and files (live/fixtures.mjs)
 import { openItem } from './popups.mjs';
 import { api, setWorkspaces } from './util.mjs';
 
@@ -21,6 +22,10 @@ function sampleWorkspaces(state, ensurePanes) {
 export async function runPreview({ state, view, upsertProposal, toast, mode = '', wake, layout, ensurePanes, renderPanes, paneEvent, setActive }) {
   const now = new Date().toISOString();
   sampleWorkspaces(state, ensurePanes);
+  if (mode === 'live') {
+    toast('Preview: sample work in the Live view. Nothing is real.', 'warn');
+    return (await import('./live/fixtures.mjs')).previewLive({ state });
+  }
   toast(mode === 'route' ? 'Preview: a sample routing card. Nothing is sent.' : mode === 'work' ? 'Preview: sample work in two sessions. Nothing is real.' : 'Preview: these are sample pop-ups. Nothing is sent.', 'warn');
 
   if (mode === 'work') return previewWork({ state, wake, layout, ensurePanes, renderPanes, paneEvent, setActive });

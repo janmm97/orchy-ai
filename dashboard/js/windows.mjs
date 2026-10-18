@@ -62,7 +62,7 @@ function focusWin(w) {
 
 function topWin() {
   let best = null;
-  for (const w of wins.values()) if (!w.minimized && !w.pop && (!best || Number(w.el.style.zIndex) > Number(best.el.style.zIndex))) best = w;
+  for (const w of wins.values()) if (!w.minimized && !w.pop && !w.stashed && (!best || Number(w.el.style.zIndex) > Number(best.el.style.zIndex))) best = w;
   return best;
 }
 
@@ -296,9 +296,62 @@ addEventListener('pagehide', () => { for (const w of wins.values()) { try { w.po
  * openWindow({ id, title, kind:'decision'|'normal', size:''|'wide', body:Node|string,
  *              from: Element|DOMRect, dockLabel, onClose, focus: true })
  */
+// One window at a time: a window opened from a button inside another window takes that window's
+// place, and the one it came from steps aside until this one goes Back (or closes). Decisions never stack this way.
+function parentOf(opts) {
+  if (opts.kind === 'decision' || !(opts.from instanceof Element)) return null;
+  const el = opts.from.closest?.('.win');
+  const p = el && [...wins.values()].find(o => o.el === el);
+  return p && p.kind !== 'decision' && !p.pop && p.id !== opts.id ? p : null;
+}
+function stash(parent, child) {
+  if (!parent || parent === child || !wins.has(parent.id)) return;
+  child.parent = parent;
+  // the child shows where the parent was, so the swap reads as one window moving to another page
+  if (!mobile() && !child.pop) { child.el.style.left = parent.el.style.left; child.el.style.top = parent.el.style.top; clampToViewport(child.el); }
+  parent.stashed = true;
+  parent.el.hidden = true;
+  child.el.querySelector('[data-act="back"]')?.removeAttribute('hidden');
+  child.el.querySelector('[data-act="back"]')?.setAttribute('aria-label', `Back to ${parent.title}`);
+}
+function unstash(child) {
+  const p = child.parent;
+  child.parent = null;
+  if (!p || !wins.has(p.id) || !p.stashed) return;
+  p.stashed = false;
+  if (!p.minimized) { p.el.hidden = false; focusWin(p); }
+}
+
+// Two shared windows, so at most one page and one item are up:
+//   - the top-bar pages (and All sessions): opening one from the bar while another is up shows it in that window's
+//     place and closes the other, with whatever was opened inside it;
+//   - items: a run, an agent file, a huddle's transcript: opening one (from the chat, Live, a card) replaces the item
+//     window that's up.
+// Close just closes. Opened from inside a window, a page or item still stands in for it with Back (stash). Popped-out
+// windows and decisions (questions, approvals, huddle proposals) are never swapped away.
+const PAGES = new Set(['agents', 'huddles', 'logs', 'impact', 'connections', 'settings', 'history']);
+const isItem = id => /^(run|agent|huddle)-/.test(String(id || '')) && !/^huddle-new-/.test(id);
+const groupOf = id => (PAGES.has(id) ? 'page' : isItem(id) ? 'item' : null);
+const rootOf = w => { let r = w; while (r.parent && wins.has(r.parent.id)) r = r.parent; return r; };
+/** Close every open window of `keepId`'s group except its own; returns where the one on screen was, for the new one. */
+function swapPages(keepId) {
+  const group = groupOf(keepId);
+  const keep = wins.get(keepId) ? rootOf(wins.get(keepId)) : null;
+  const roots = new Set([...wins.values()].map(rootOf).filter(r => groupOf(r.id) === group && r !== keep && !r.pop && r.kind !== 'decision'));
+  let spot = null;
+  for (const root of roots) {
+    const shown = [...wins.values()].find(o => rootOf(o) === root && !o.el.hidden && !o.pop);
+    if (!spot && shown && !mobile()) spot = { left: shown.el.style.left, top: shown.el.style.top };
+    root.close();
+  }
+  return spot;
+}
+
 export function openWindow(opts) {
+  const parent = parentOf(opts);
+  const spot = groupOf(opts.id) && !parent && opts.kind !== 'decision' ? swapPages(opts.id) : null;
   const existing = opts.id && wins.get(opts.id);
-  if (existing) { existing.restore(); return existing; }
+  if (existing) { existing.restore(); if (parent && parent !== existing && !existing.parent) stash(parent, existing); return existing; }
 
   const el = document.createElement('section');
   el.className = `win ${opts.kind === 'decision' ? 'decision' : ''} ${opts.size || ''}`;
@@ -308,6 +361,7 @@ export function openWindow(opts) {
   el.setAttribute('aria-labelledby', tid);
   el.innerHTML = `
     <div class="tb">
+      <button class="wbtn" data-act="back" hidden aria-label="Back">${icon('back')}</button>
       <h2 id="${tid}" tabindex="-1">${esc(opts.title)}</h2>
       <span class="leave-hint" aria-hidden="true">Let go to pop out</span>
       <button class="wbtn pop" data-act="pop"></button>
@@ -330,6 +384,9 @@ export function openWindow(opts) {
       el.remove();
       wins.delete(w.id);
       opts.onClose?.();
+      // windows this one stood in for come back; ones that stood in for it close with it
+      for (const o of [...wins.values()]) if (o.parent === w) { o.parent = null; o.close(); }
+      unstash(w);
       // one decision at a time: the next queued one steps up
       const next = w.kind === 'decision' && [...wins.values()].find(o => o.queued);
       if (next) { next.queued = false; next.restore(); }
@@ -343,6 +400,9 @@ export function openWindow(opts) {
     },
     restore() {
       if (w.pop) { try { w.pop.focus(); } catch {} return; }
+      // asked for again (its top-bar button) while another stands in for it: that one goes Back to it
+      const child = w.stashed && [...wins.values()].find(o => o.parent === w);
+      if (child) { child.close(); return; }
       w.minimized = false; w.queued = false; el.hidden = false; renderDock(); focusWin(w);
     },
     /** The window now shows something else (a run's follow-up): file it under that id. */
@@ -356,6 +416,7 @@ export function openWindow(opts) {
   el.querySelector('[data-act="pop"]').addEventListener('click', () => (w.pop ? popIn(w) : popOut(w)));
   el.querySelector('[data-act="min"]').addEventListener('click', () => w.minimize());
   el.querySelector('[data-act="close"]')?.addEventListener('click', () => w.close());
+  el.querySelector('[data-act="back"]').addEventListener('click', () => w.close());
   el.addEventListener('pointerdown', () => { if (!w.pop) focusWin(w); });
   setPopButton(w);
 
@@ -366,12 +427,16 @@ export function openWindow(opts) {
   clampToViewport(el);
   wins.set(w.id, w);
   place(el);
+  // a page taking another page's place opens where that one was, so it reads as the same window changing page
+  if (spot?.left) { el.style.left = spot.left; el.style.top = spot.top; clampToViewport(el); }
   focusWin(w);
   makeDraggable(w);
   makeResizable(w);
+  if (parent) stash(parent, w);
 
   if (opts.queued) { w.queued = true; w.minimize(); el.style.visibility = ''; return w; }
-  const fromRect = opts.from instanceof Element ? opts.from.getBoundingClientRect() : opts.from;
+  // (no zoom from the button when it's a page change in place)
+  const fromRect = spot ? null : opts.from instanceof Element ? opts.from.getBoundingClientRect() : opts.from;
   zoomRects(fromRect, el.getBoundingClientRect()).then(() => {
     el.style.visibility = '';
     const typing = document.activeElement?.id === 'command' && document.activeElement.value;
@@ -383,6 +448,8 @@ export function openWindow(opts) {
 export function getWindow(id) { return wins.get(id); }
 export function closeWindow(id) { wins.get(id)?.close(); }
 /** Every decision window, open, parked or popped out (ids are their inbox items'). */
+/** Is any window up on this page (not minimized, not away in its own browser window)? Esc belongs to it then. */
+export const windowsOpen = () => [...wins.values()].some(w => !w.minimized && !w.pop && !w.stashed);
 export function decisionWindows() { return [...wins.values()].filter(w => w.kind === 'decision'); }
 export function decisionVisible() { return [...wins.values()].some(w => w.kind === 'decision' && !w.minimized); }
 export function focusNextDecision() {

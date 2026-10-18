@@ -3,9 +3,10 @@ import { openWindow, getWindow } from './windows.mjs';
 import { icon, agentSVG, createEl, hatch } from './pixel.mjs';
 import { fileTray } from './attach.mjs';
 import { startCall } from './call.mjs';
-import { mountLeadHuddle } from './huddles.mjs';
-import { openConnections } from './panels.mjs';
-import { esc, api, md, wsName, wsClass, wsModels, modelChoices, modelIsFree, agentName, runName, nameRole, timeShort, dateTime, dur, stripHTML, voiceOf } from './util.mjs';
+import { mountLeadHuddle, openNewHuddle } from './huddles.mjs';
+import { openConnections, openSettings } from './panels.mjs';
+import { openViewer, embedOf, kindIcon, fsize } from './viewer.mjs';
+import { esc, api, md, wsName, wsClass, wsModels, modelChoices, modelIsFree, agentName, runName, nameRole, timeShort, dateTime, dur, stripHTML, voiceOf, runResult } from './util.mjs';
 
 let ctx = null; // { toast }
 export function initSheets(c) { ctx = c; }
@@ -21,15 +22,98 @@ function planHTML(plan) {
 }
 
 function evRow(e) {
+  if (e.kind === 'tool_done') return ''; // closes a step; no row of its own
   const txt = e.summary || e.text || '';
   return `<div class="ev ${esc(e.kind)}">${icon(EV_ICON[e.kind] || 'term')}<span>${e.kind === 'text' ? md(txt) : esc(txt)}</span><time>${timeShort(e.t)}</time></div>`;
 }
+/** One file in the run window's list: its thumb (or kind icon), name, place, and state. */
+const SMALL_IMG = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif']);
+function fileRow(f, i) {
+  const m = f.media || {}, id = encodeURIComponent(f.id);
+  const th = m.thumb ? `<img src="/api/artifacts/${id}/media/thumb?v=${f.version}" alt="" loading="lazy">`
+    : f.kind === 'image' && SMALL_IMG.has(f.ext) && f.size < 2 * 1024 * 1024 ? `<img src="/api/artifacts/${id}/raw?v=${f.version}" alt="" loading="lazy">` : icon(kindIcon(f.kind));
+  const attached = /(^|\/)Tasks\/[^/]+\/files\//.test(f.rel);
+  const tag = [attached ? 'attached' : f.status === 'final' ? '' : f.status === 'failed' ? 'run failed' : f.status, f.version > 1 ? `v${f.version}` : ''].filter(Boolean).join(' · ');
+  // where it sits, short: inside a task folder only the sub-folder shows (the full path is the tooltip)
+  const dir = f.rel.split('/').slice(0, -1).join('/').replace(/^(\.clients\/[^/]+\/)?Tasks\/[^/]+\/?/, '');
+  const dur = m.durationSec ? ` · ${Math.floor(m.durationSec / 60)}:${String(Math.round(m.durationSec % 60)).padStart(2, '0')}` : '';
+  return `<button class="vfile" type="button" data-file="${i}" title="${esc(f.rel)}"><span class="th">${th}</span><span class="nm"><b>${esc(f.name)}</b><span>${esc([fsize(f.size) + dur, dir].filter(Boolean).join(' · '))}</span></span><span class="tag">${esc(tag)}</span></button>`;
+}
+/** artifact.created / artifact.updated: an open run window that made (or holds) the file refreshes its list. */
+const fileTimers = new Map();
+export function runArtifact(a) {
+  for (const rid of a?.runIds || []) {
+    const w = getWindow(`run-${rid}`);
+    if (!w?.loadFiles) continue;
+    clearTimeout(fileTimers.get(rid));
+    fileTimers.set(rid, setTimeout(() => { fileTimers.delete(rid); w.loadFiles(); }, 400));
+  }
+}
+
+// ── Orchy's check of a finished run (server: validate.mjs) and what went wrong (recover.mjs) ──
+// Shared by the run window, the Live view's Work column and Orchy's chat cards. The check only flags: "Ask it to fix"
+// prefills a follow-up the owner still sends. Recovery buttons are the owner's call, so the first one wears decision yellow.
+const VERDICT = { ok: 'Orchy checked: looks right', check: 'Orchy checked: have a look', failed: 'Orchy checked: it doesn’t hold up' };
+export function validationHTML(run, { fix = true } = {}) {
+  const v = run?.validation;
+  if (!v?.verdict) return run?.activity?.state === 'validating' ? `<div class="field vcheck is-busy"><span class="label">${icon('eye')}<span class="blink">Orchy is checking its report…</span></span></div>` : '';
+  const off = (v.checks || []).filter(c => !c.ok).length;
+  return `<div class="field vcheck is-${esc(v.verdict)}"><span class="label">${icon(v.verdict === 'ok' ? 'check' : 'bang')}${esc(VERDICT[v.verdict] || v.verdict)}</span>
+    ${v.checks?.length ? `<div class="vlist">${v.checks.map(c => `<div class="${c.ok ? '' : 'off'}">${icon(c.ok ? 'check' : 'bang')}<span><b>${esc(c.name)}</b>${c.note ? ` <span class="hint">${esc(c.note)}</span>` : ''}</span></div>`).join('')}</div>` : ''}
+    ${off && fix && run.id ? `<div class="btnrow"><button class="btn sm" data-fix-ask="${esc(run.id)}">${icon('edit')}Ask it to fix</button><span class="hint">Flags only: nothing was re-run or sent again.</span></div>` : ''}</div>`;
+}
+/** Orchy's fix-it follow-up text, from the checks that didn't pass. */
+export function fixText(run) {
+  const off = (run?.validation?.checks || []).filter(c => !c.ok).map(c => (c.note ? `${c.name}: ${c.note}` : c.name)).join('; ');
+  return off ? `Orchy checked your report and found: ${off}. Fix only that (don't redo or resend anything that already went out), then report again.` : '';
+}
+const REC_ICON = { resume: 'play', restart: 'refresh', stop: 'stop', leave: 'x', login: 'user', followup: 'send', huddle: 'chat' };
+const REC_STATE = { scheduled: 'Retrying on its own', asking: 'Needs you', moving: 'Moving again', answered: 'Handled', retried: 'Retried' };
+/** The card's buttons (none once it's handled). */
+export function recoverButtons(run) {
+  const r = run?.recovery;
+  if (!r || !['asking', 'scheduled', 'moving'].includes(r.state)) {
+    if (r?.answered) return `<span class="hint">${esc({ resume: 'Resumed', restart: 'Started over', stop: 'Stopped', leave: 'Left as is' }[r.answered.action] || 'Handled')}${r.answered.runId ? ` · <button class="linkish" data-run="${esc(r.answered.runId)}">the new run</button>` : ''}</span>`;
+    if (r?.state === 'retried' && r.retriedBy) return `<span class="hint">Retried · <button class="linkish" data-run="${esc(r.retriedBy)}">the new run</button></span>`;
+    return '';
+  }
+  const moving = r.state === 'moving' ? `<span class="hint">It recorded a step again.</span>` : '';
+  return moving + (r.options || []).map((o, i) => `<button class="btn sm${i === 0 && r.state === 'asking' ? ' decide' : ''}" data-recover="${esc(run.id)}" data-recover-act="${esc(o.action)}">${icon(REC_ICON[o.action] || 'play')}${esc(o.label)}</button>`).join('');
+}
+export function recoveryHTML(run) {
+  const r = run?.recovery;
+  if (!r?.cls || ['none', 'head'].includes(r.state) || r.cls === 'bad_output') return '';
+  const due = r.state === 'scheduled' && r.dueAt ? ` · try ${r.attempt || 1} at ${timeShort(r.dueAt)}` : '';
+  return `<div class="field vrec is-${esc(r.state || '')}"><span class="label">${r.state === 'asking' ? `<span class="plate decide">${esc(REC_STATE.asking)}</span>` : esc(REC_STATE[r.state] || 'What went wrong')} · ${esc(r.label || r.cls)}${due}</span>
+    ${r.gate ? `<span class="hint">Not retried on its own: ${esc(r.gate)}.</span>` : ''}${r.error ? `<span class="hint">${esc(r.error)}</span>` : ''}
+    <div class="btnrow">${recoverButtons(run)}</div></div>`;
+}
+/** A recovery button: Log in / Follow up / Huddle open windows; the rest go to the server (recover.mjs#act). */
+export async function recoverAct(runId, action, { from, run, toast = ctx.toast } = {}) {
+  run ||= (await api(`/api/runs/${runId}`).catch(() => null))?.run;
+  if (action === 'login') return openSettings({ from });
+  if (action === 'followup') return openRun(runId, { from, prefill: '' });
+  if (action === 'huddle') {
+    const w = openNewHuddle(run.workspace, { from, agents: [run.isBuilder ? 'agent-builder' : run.agentSlug].filter(Boolean) });
+    const ta = w?.body?.querySelector('textarea');
+    if (ta && !ta.value) ta.value = `Help ${runName(run)} get past this: ${String(run.report?.summary || run.error || '').slice(0, 600)}`;
+    return w;
+  }
+  if (action === 'stop' && !confirm(`Stop ${runName(run)}?`)) return;
+  try {
+    const r = await api(`/api/runs/${runId}/recover`, { method: 'POST', body: { action } });
+    toast({ resume: 'Resumed: it picks up its conversation.', restart: 'Started over as a fresh run.', stop: 'Stopping it.', leave: 'Left as is.' }[action] || 'Done.');
+    return r;
+  } catch (e) { toast(e.message, 'warn'); }
+}
+
 /** Where a follow-up picks up in the same window: what the owner asked. */
 const followRow = run => `<div class="ev you">${icon('user')}<span><b>You:</b> ${esc(run.instruction)}</span><time>${timeShort(run.startedAt)}</time></div>`;
 
 // ── Run window ──
-export async function openRun(runId, { from } = {}) {
-  if (getWindow(`run-${runId}`)) return getWindow(`run-${runId}`).restore();
+export async function openRun(runId, { from, prefill } = {}) {
+  const open = getWindow(`run-${runId}`);
+  if (open) { const r = open.restore(); if (prefill !== undefined) open.prefill?.(prefill); return r; }
   let data;
   try { data = await api(`/api/runs/${runId}`); } catch (e) { return ctx.toast(e.message, 'warn'); }
   const r = data.run;
@@ -37,13 +121,24 @@ export async function openRun(runId, { from } = {}) {
   const w = openWindow({ id: `run-${runId}`, title: `${runName(r)} · run`, size: 'wide', body, from, dockLabel: runName(r) });
   w.events = data.events;
   w.earlier = []; // runs this window showed before the owner followed up in it: [{ run, events }]
-  // a task folder's files (a client's task, a generalist's): what was attached and what the agent made
+  // what the run made or touched (the artifact registry: its task folder, the files its tools wrote, the files its
+  // report names, what changed while it ran) and the links its report gave; each opens in the viewer
   w.files = [];
-  w.loadFiles = () => { const cur = w.run || r; return cur.taskDir && api(`/api/runs/${cur.id}/files`).then(f => { if ((w.run || r).id === cur.id) { w.files = f; w.render(w.run || r); } }).catch(() => {}); };
+  w.links = [];
+  w.loadFiles = () => {
+    const cur = w.run || r;
+    return api(`/api/artifacts?run=${encodeURIComponent(cur.id)}`).then(d => {
+      if ((w.run || r).id !== cur.id) return;
+      const same = JSON.stringify(d.artifacts.map(a => [a.id, a.version, a.status, a.media?.thumb])) === JSON.stringify(w.files.map(a => [a.id, a.version, a.status, a.media?.thumb])) && (d.links || []).join() === w.links.join();
+      w.files = d.artifacts; w.links = d.links || [];
+      if (!same) w.render(w.run || r);
+    }).catch(() => {});
+  };
   const tray = fileTray(ctx.toast); // files for a follow-up, kept across re-renders
   w.render = run => {
     w.run = run;
-    const live = ['starting', 'working', 'waiting', 'stopping'].includes(run.status);
+    const live = ['queued', 'paused-limit', 'starting', 'working', 'waiting', 'stopping'].includes(run.status);
+    const queued = run.status === 'queued' || run.status === 'paused-limit';
     const rep = run.report;
     const first = w.earlier[0]?.run;
     const callee = voiceOf(run.workspace, run.isBuilder ? 'agent-builder' : run.agentSlug);
@@ -54,7 +149,8 @@ export async function openRun(runId, { from } = {}) {
       <dl class="kv">${run.clientName ? `<dt>For</dt><dd><span class="plate">${esc(run.clientName)}</span> ${run.ownerReply ? 'your follow-up on their task (they see it, labelled with your name)' : 'started from their client page'}</dd>` : ''}
         <dt>Task</dt><dd>${esc((first || run).instruction)}</dd>
         ${first ? `<dt>Follow-up</dt><dd>${esc(run.instruction)}</dd>` : ''}
-        ${w.files?.length ? `<dt>Files</dt><dd class="list">${w.files.map(f => `<div><a href="/api/runs/${encodeURIComponent(run.id)}/file?path=${encodeURIComponent(f.path)}" target="_blank" rel="noopener">${esc(f.path)}</a> <span class="hint">${f.uploaded ? 'attached' : 'made'}</span></div>`).join('')}</dd>` : ''}
+        ${w.files?.length ? `<dt>Files</dt><dd><div class="vfiles">${w.files.map(fileRow).join('')}</div></dd>` : ''}
+        ${w.links?.length ? `<dt>Links</dt><dd class="list">${w.links.map(u => `<div><a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u)}</a>${embedOf(u) ? ` <button class="btn sm" data-embed="${esc(u)}">${icon('play')}Play here</button>` : ''}</div>`).join('')}</dd>` : ''}
         ${run.routing ? `<dt>Routed</dt><dd>${run.routing.source === 'schedule' ? 'on its schedule' : run.routing.source === 'heuristic' ? 'best guess (Jev was offline)' : `by Jev, ${Math.round((run.routing.confidence || 0) * 100)}% sure`}${run.routing.overridden ? ' · adjusted by you' : ''}</dd>` : ''}
         ${run.plan ? `<dt>Jev's plan</dt><dd>${planHTML(run.plan)}</dd>` : ''}
         ${run.parentRunId && !first ? `<dt>Follows</dt><dd><button class="linkish" data-run="${esc(run.parentRunId)}">earlier run</button></dd>` : ''}
@@ -62,17 +158,25 @@ export async function openRun(runId, { from } = {}) {
         ${run.subRuns?.length ? `<dt>Handed to</dt><dd>${run.subRuns.map((sid, i) => `<button class="linkish" data-run="${esc(sid)}">team run ${i + 1}</button>`).join(', ')}</dd>` : ''}
         ${run.createdAgents?.length ? `<dt>Agents</dt><dd>${run.createdAgents.map(a => `<button class="linkish" data-agent="${esc(a.slug)}" data-ws="${esc(run.workspace)}">${esc(a.slug)}</button>${a.isNew ? ' (new)' : ' (updated)'}`).join(', ')}</dd>` : ''}
       </dl>
+      ${runResult(run) ? `<div class="field"><span class="label">${rep?.result ? 'Result' : 'Its last message'}</span><div class="result md">${md(runResult(run))}</div></div>` : ''}
       ${rep ? `<div class="field"><span class="label">Report to Orchy</span><div class="md">${md(rep.summary)}</div>
         ${rep.actions_taken?.length ? `<span class="label">Actions taken</span><div class="list">${rep.actions_taken.map(a => `<div>${esc(a)}</div>`).join('')}</div>` : ''}
         ${rep.outputs?.length ? `<span class="label">Outputs</span><div class="list">${rep.outputs.map(a => `<div class="md">${md(a)}</div>`).join('')}</div>` : ''}
         ${rep.follow_ups?.length ? `<span class="label">Follow-ups</span><div class="list">${rep.follow_ups.map(a => `<div>${esc(a)}</div>`).join('')}</div>` : ''}</div>` : ''}
       ${run.error ? `<pre class="cmd">${esc(run.error)}</pre>` : ''}
+      ${live ? '' : validationHTML(run)}${recoveryHTML(run)}
       <div class="field"><span class="label">What happened</span><div class="timeline" data-tl>${w.earlier.map((seg, i) => (i ? followRow(seg.run) : '') + seg.events.map(evRow).join('')).join('')}${w.earlier.length ? followRow(run) : ''}${w.events.map(evRow).join('') || '<div class="ev"><span></span><span>Starting up…</span></div>'}</div></div>
       ${live
-        ? `<div class="btnrow end"><button class="btn" data-act="stop">${icon('stop')}Stop this run</button></div>`
+        ? `<div class="btnrow end">${queued ? `<button class="btn primary" data-act="run-now">${icon('play')}Run now</button>` : ''}<button class="btn" data-act="stop">${icon('stop')}Stop this run</button></div>`
         : `<div class="field" data-fu><label for="fu-${run.id}">Follow up with ${esc(runName(run))}</label><textarea class="textarea" id="fu-${run.id}" style="min-height:64px" placeholder="It remembers this conversation. Ask for changes, next steps…"></textarea>${tray.chips()}
            <div class="btnrow end">${callee ? `<button class="btn" type="button" data-act="call" data-call="${esc(callee.key)}" aria-pressed="false" title="Talk it through with ${esc(callee.name)} on a call">${icon('phone')}Call ${esc(callee.name)}</button>` : ''}${tray.button()}<button class="btn primary" data-act="reply">${icon('send')}Send follow-up</button></div></div>`}`;
     if (!live) tray.mount(body.querySelector('[data-fu]'), body.querySelector('[data-fu]'));
+    // what the owner is typing survives the redraws (files arriving, Orchy's check landing)
+    const fu = body.querySelector('[data-fu] textarea');
+    if (fu) { fu.value = w.draft || ''; fu.addEventListener('input', () => { w.draft = fu.value; }); }
+    body.querySelectorAll('[data-fix-ask]').forEach(b => b.addEventListener('click', () => w.prefill(fixText(run))));
+    body.querySelectorAll('[data-recover]').forEach(b => b.addEventListener('click', () => recoverAct(run.id, b.dataset.recoverAct, { from: b, run })));
+    body.querySelector('[data-act="run-now"]')?.addEventListener('click', async () => { try { await api(`/api/runs/${run.id}/run-now`, { method: 'POST' }); } catch (e) { ctx.toast(e.message, 'warn'); } });
     body.querySelector('[data-act="stop"]')?.addEventListener('click', async () => { try { await api(`/api/runs/${run.id}/stop`, { method: 'POST' }); } catch (e) { ctx.toast(e.message, 'warn'); } });
     body.querySelector('[data-act="reply"]')?.addEventListener('click', async e => {
       const ta = body.querySelector('textarea');
@@ -84,12 +188,13 @@ export async function openRun(runId, { from } = {}) {
       let nr;
       try { nr = await api(`/api/runs/${run.id}/reply`, { method: 'POST', body: { text: ta.value.trim(), files } }); }
       catch (err) { ctx.toast(err.message, 'warn'); btn.disabled = false; return; }
-      ta.value = ''; tray.clear();
+      ta.value = ''; w.draft = ''; tray.clear();
       // the follow-up carries on in this window: the earlier run stays above it
       w.earlier.push({ run, events: w.events });
-      w.events = []; w.files = [];
+      w.events = []; w.files = []; w.links = [];
       w.rekey(`run-${nr.id}`);
       w.render(nr);
+      w.loadFiles();
       // steps it took before the window was refiled under the new run (later ones stream in as usual)
       try { const d = await api(`/api/runs/${nr.id}`); const last = d.events.at(-1)?.t || ''; w.events = [...d.events, ...w.events.filter(e => (e.t || '') > last)]; w.render(d.run); } catch {}
       w.body.querySelector('[data-tl]')?.lastElementChild?.scrollIntoView({ block: 'nearest' });
@@ -97,9 +202,21 @@ export async function openRun(runId, { from } = {}) {
     body.querySelector('[data-act="call"]')?.addEventListener('click', () => startCall(callee.key, callee.name, { runId: run.id }));
     body.querySelectorAll('[data-run]').forEach(b => b.addEventListener('click', () => openRun(b.dataset.run)));
     body.querySelectorAll('[data-agent]').forEach(b => b.addEventListener('click', () => openAgent(b.dataset.ws, b.dataset.agent)));
+    body.querySelectorAll('[data-file]').forEach(b => b.addEventListener('click', () => openViewer({ artifact: w.files[Number(b.dataset.file)], list: w.files, from: b })));
+    body.querySelectorAll('[data-embed]').forEach(b => b.addEventListener('click', () => openViewer({ embed: b.dataset.embed, list: w.links.map(embedOf).filter(Boolean), from: b })));
+  };
+  /** Put text in the follow-up box (Ask it to fix, Follow up on a card) and bring it into view; the owner still sends it. */
+  w.prefill = text => {
+    if (text) w.draft = text;
+    const ta = body.querySelector('[data-fu] textarea');
+    if (!ta) return;
+    ta.value = w.draft || '';
+    ta.scrollIntoView({ block: 'nearest' });
+    ta.focus();
   };
   w.render(r);
   w.loadFiles();
+  if (prefill !== undefined) w.prefill(prefill);
   return w;
 }
 
