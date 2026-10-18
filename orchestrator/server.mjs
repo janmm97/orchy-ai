@@ -871,6 +871,8 @@ on('GET', '/api/runtimes', async () => {
     return [e.id, {
       ...cfg[e.id],
       available: !!have[e.id]?.available,
+      broken: !!have[e.id]?.broken, // there but won't start (an install that didn't finish)
+      repair: have[e.id]?.repair || null, // what finishes it
       install: engineInstallCmd(e) || null, // what the Add window shows for an engine not on this PC yet
       installing: !have[e.id]?.available && !!installJob(e.id), // Orchy opened its install window (installer.mjs)
       version: have[e.id]?.available ? e.version?.() || null : null,

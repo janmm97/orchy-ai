@@ -45,7 +45,7 @@ const fake = (id, over = {}) => ({
   id, label: `Fake ${id}`, models: ['default', 'default', 'default'], blurb: '', fields: { account: `${id}Account`, profile: `${id}Profile` },
   accountModel: 'profile', instructionFile: 'AGENTS.md', defaultProfileLabel: '(none)',
   capabilities: { gated: false, mcp: true, resume: false, headless: true, clientSafe: false, huddles: false, notes: '' },
-  bin: () => null, version: () => null, available: () => true,
+  bin: () => null, version: () => 'fake 1.0', available: () => true,
   account: async () => ({ loggedIn: true, email: null, label: 'acme-provider' }),
   profileEnv: () => ({}), loginCommand: () => 'fake login', loginAlt: () => null, mcpConfig: () => ({}), protocolNotes: () => '', launch() { throw new Error('should never launch'); },
   ...over,
@@ -79,6 +79,17 @@ const fake = (id, over = {}) => ({
   config.workspaces.push({ id: 'w2', name: 'Absent One', folder: 'workspaces/__engines-test', runtime: 'absent', enabled: true, absentProfile: '/tmp/orchy-absent-1', color: 'jade' });
   const err = await rejects(startRun({ workspace: 'w2', instruction: 'Do it' }));
   ok(err?.code === 'ENGINE_MISSING' && err.status === 409 && /get-absent/.test(err.message) && !/never launch/.test(err.message), 'startRun on an engine that isn’t installed: refused with the install command, nothing launched', err && `${err.code} ${err.message}`);
+  config.workspaces.pop();
+  undo();
+}
+// ── an engine that is there but won't start (npm's placeholder opencode.exe): a run says how to finish its install ──
+{
+  const undo = registerEngine(fake('halfdone', { capabilities: { ...fake('x').capabilities, gated: true }, version: () => null, install: { cmd: 'get-halfdone', winCmd: 'get-halfdone', winRepair: 'finish-halfdone' } }));
+  config.workspaces.push({ id: 'w3', name: 'Half Done', folder: 'workspaces/__engines-test', runtime: 'halfdone', enabled: true, halfdoneProfile: '/tmp/orchy-halfdone-1', color: 'jade' });
+  const err = await rejects(startRun({ workspace: 'w3', instruction: 'Do it' }));
+  ok(err?.code === 'ENGINE_BROKEN' && err.status === 409 && /won't start/.test(err.message) && /(finish|get)-halfdone/.test(err.message) && /start the task again/.test(err.message) && !/never launch/.test(err.message), 'startRun on an engine that won’t start: refused with the fix, nothing launched', err && `${err.code} ${err.message}`);
+  const avail = runtimeAvailability().halfdone;
+  ok(avail?.available === false && avail.broken === true && /(finish|get)-halfdone/.test(avail.repair), 'the Add window hears it is broken, with the fix');
   config.workspaces.pop();
   undo();
 }

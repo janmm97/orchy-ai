@@ -43,8 +43,9 @@ export default {
   instructionFile: 'AGENTS.md',
   defaultProfileLabel: '(its own profile folder)',
   // opencode.ai/docs: the install script (~/.opencode/bin); on Windows the npm package (the script run in WSL lands
-  // inside Linux, where Orchy can't find it)
-  install: { cmd: 'curl -fsSL https://opencode.ai/install | bash', winCmd: 'npm install -g opencode-ai', signIn: 'opencode auth login', bin: 'opencode', optional: true, note: 'Optional: an open-source agent harness.' },
+  // inside Linux, where Orchy can't find it). winRepair: npm leaves a placeholder opencode.exe ("not compatible with
+  // the version of Windows") when the package's postinstall, which copies in the real one, didn't run
+  install: { cmd: 'curl -fsSL https://opencode.ai/install | bash', winCmd: 'npm install -g opencode-ai', winRepair: 'cd "$env:APPDATA\\npm\\node_modules\\opencode-ai"; node postinstall.mjs', signIn: 'opencode auth login', bin: 'opencode', optional: true, note: 'Optional: an open-source agent harness.' },
   capabilities: {
     gated: true, mcp: true, resume: true, headless: true,
     clientSafe: false,
@@ -56,7 +57,7 @@ export default {
   version() {
     const b = bin();
     if (!b) return null;
-    if (!probe || probe.bin !== b || (!probe.v && Date.now() - probe.at > 60_000)) probe = { bin: b, at: Date.now(), v: probeVersion(b) };
+    if (!probe || probe.bin !== b || (!probe.v && Date.now() - probe.at > 5_000)) probe = { bin: b, at: Date.now(), v: probeVersion(b) };
     return probe.v;
   },
   available: () => !!bin(),

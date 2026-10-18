@@ -14,7 +14,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { env, DATA_DIR } from './env.mjs';
-import { engine } from './engines/index.mjs';
+import { engine, engineHealth } from './engines/index.mjs';
 import { quickClaude } from './claude.mjs';
 import { launchCodexRun } from './codex.mjs';
 import { launchOpenCodeRun } from './engines/opencode-run.mjs';
@@ -26,12 +26,14 @@ export const BRAIN_ORDER = ['claude', 'codex', 'opencode', 'hermes'];
 
 const NO_TOOLS = 'You have no tools here, and you need none: answer only from the text you are given. Never try to read files, run commands, search the web or call a tool. If something you would need is missing, say so in one short line.';
 
-/** The harness Orchy thinks with: its engine id, or null (none installed, or ORCHY_BRAIN=off). */
+/** The harness Orchy thinks with: its engine id, or null (none that runs here, or ORCHY_BRAIN=off). */
 export function brainEngine() {
   const pick = String(env('ORCHY_BRAIN') || '').trim().toLowerCase();
   if (pick === 'off' || pick === 'none') return null;
-  if (BRAIN_ORDER.includes(pick)) return engine(pick)?.available() ? pick : null;
-  return BRAIN_ORDER.find(id => engine(id)?.available()) || null;
+  // one that is there but won't start (an install that didn't finish) is passed over for the next that runs
+  const runs = id => engineHealth(engine(id)) === 'ok';
+  if (BRAIN_ORDER.includes(pick)) return runs(pick) ? pick : null;
+  return BRAIN_ORDER.find(runs) || null;
 }
 
 /** "Codex", "Hermes"…, or null. */

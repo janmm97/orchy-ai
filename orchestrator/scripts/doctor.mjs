@@ -6,7 +6,7 @@ import { workspaces, accountCheck, oneScope, listRetired } from '../lib/workspac
 import { listConnections, one, oneVersion } from '../lib/one.mjs';
 import { jevMode, jevLabel, models, PROVIDERS } from '../lib/jev.mjs';
 import { CLAUDE_BIN, claudeVersion } from '../lib/claude.mjs';
-import { engines, engineTools } from '../lib/engines/index.mjs';
+import { engines, engineTools, brokenMessage } from '../lib/engines/index.mjs';
 import { listAgents } from '../lib/agents.mjs';
 import { clients, clientBase, CLIENT_PORT } from '../lib/clients.mjs';
 import { ffBins } from '../lib/media.mjs';
@@ -32,11 +32,12 @@ console.log('\nAgent harnesses (at least one is needed)');
 const cv = claudeVersion();
 const harness = engineTools().map(t => {
   const e = engines().find(x => x.id === t.id);
-  return { ...t, v: e.available() ? e.version() : null };
+  const v = e.available() ? e.version() : null;
+  return { ...t, v, broken: !v && e.available() ? brokenMessage(e) : null };
 });
 for (const h of harness) {
   const gate = h.gated ? 'approvals: yes' : 'approvals: NO, runs only where the workspace sets allowUngated';
-  h.v ? ok(`${h.label}: ${h.v} [${gate}]`) : off(`${h.label}: not found${h.optional ? ' (optional)' : ''}. Install: ${h.install} [${gate}]`);
+  h.v ? ok(`${h.label}: ${h.v} [${gate}]`) : h.broken ? warn(h.broken) : off(`${h.label}: not found${h.optional ? ' (optional)' : ''}. Install: ${h.install} [${gate}]`);
 }
 if (!harness.some(h => h.v)) bad('No agent harness found', harness[0].install);
 else if (cv) off(`Claude Code runs from ${CLAUDE_BIN}`);

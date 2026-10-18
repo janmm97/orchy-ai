@@ -41,7 +41,7 @@ try {
     id, label: `Fake ${id}`, models: ['lo', 'mid', 'hi'], blurb: '', fields: { account: `${id}Account`, profile: `${id}Profile` },
     accountModel, instructionFile: 'AGENTS.md', defaultProfileLabel: '(none)',
     capabilities: { gated: true, mcp: true, resume: true, headless: true, clientSafe: false, huddles: true, notes: '' },
-    bin: () => null, version: () => null, available: () => true,
+    bin: () => null, version: () => 'fake 1.0', available: () => true,
     // each profile folder is signed in to its own login
     account: async p => (accountModel === 'email' ? { loggedIn: true, email: /prof-two/.test(p || '') ? 'two@example.com' : 'one@example.com' } : { loggedIn: true, label: 'provider' }),
     profileEnv: () => ({}), loginCommand: () => 'fake login', loginAlt: () => null, mcpConfig: () => ({}), protocolNotes: () => '',
