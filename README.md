@@ -122,7 +122,7 @@ Each key is checked once with its service and saved in `.env` on your PC. Keys a
 flowchart TD
     you(["You: text or voice"]) --> jev["Jev picks the workspace, agent and model"]
     jev --> agent["The agent works in that workspace,<br/>under the workspace's own account"]
-    agent --> one["One CLI runs its tool calls and actions<br/>in your apps: Gmail, Slack, Notion and 750+ more"]
+    agent --> one["One CLI runs its tool calls and actions<br/>in your apps: Gmail, Slack, Notion and 1000+ more"]
     agent --> mcp["External MCP servers you add<br/>in the dashboard's Connections"]
     one --> ok["It stops for your OK on decisions:<br/>sending, posting, deleting, spending"]
     mcp --> ok
@@ -142,7 +142,7 @@ Jev picks the workspace, agent and model
 The agent works in that workspace, under the workspace's own account
    |
    +--> One CLI runs its tool calls and actions in your apps
-   |    (Gmail, Slack, Notion and 750+ more)
+   |    (Gmail, Slack, Notion and 1000+ more)
    |
    +--> External MCP servers you add in the dashboard's Connections
    |
