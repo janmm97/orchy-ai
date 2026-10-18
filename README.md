@@ -32,7 +32,7 @@ Orchy is a local AI-agent orchestrator. You tell Orchy what you need, by text or
 - 💬 **Text or voice.** Type a task, or talk to Orchy and call your agents. Voice is optional and off until you switch it on (ElevenLabs or Deepgram).
 - 🧭 **Smart routing, optional.** Jev picks the workspace, agent and model, and shows you its pick first. Without it, Orchy matches each message by its words.
 - 🧰 **Bring your own harness.** Claude Code, Codex, OpenCode, Hermes or Antigravity, each signed in with the workspace's own account and every one held behind your approvals.
-- 🔌 **Your real apps.** Gmail, Slack, Notion, Stripe and 750+ more through the [One CLI](https://withone.ai).
+- 🔌 **Your real apps.** Gmail, Slack, Notion, Stripe and 1000+ more through the [One CLI](https://withone.ai).
 - ✋ **Asks before it acts.** Money, sending, calendar changes, deleting and sharing wait for your OK in the dashboard.
 - 🗂️ **Workspaces that never mix.** One folder per business or client, with its own logins, agents and instructions.
 - 🤝 **Huddles and missions.** Agents talk a task through together, or hand work along a chain of steps.
