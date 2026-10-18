@@ -15,7 +15,7 @@ import { ROOT, ORCH_DIR, DATA_DIR, ownerName } from './env.mjs';
 import { db, save, id, runEventsPath } from './store.mjs';
 import { emit } from './bus.mjs';
 import { workspace, workspaces, accountCheck, readMcp, allConnections, modelFor, modelsFor, accountFor, engineFor, runtimeLabel, oneScope } from './workspaces.mjs';
-import { engine, engines, ungatedRefusal, offeredRefusal } from './engines/index.mjs';
+import { engine, engines, ungatedRefusal, offeredRefusal, engineInstallCmd } from './engines/index.mjs';
 import { profilePath, shellLine } from './engines/shared.mjs';
 import { getAgent, listAgents, agentFingerprint, BUILDER_SLUG } from './agents.mjs';
 import { protocolFile, builderBrief, codexInstructions } from './prompts.mjs';
@@ -241,6 +241,11 @@ export async function startRun(opts) {
   // an opt-in engine (Antigravity) the owner hasn't switched on in .env
   const off = offeredRefusal(eng);
   if (off) throw Object.assign(new Error(off), { status: 409, code: 'ENGINE_OFF' });
+  // a workspace can be set to an engine before it's installed; say so instead of failing to spawn it
+  if (!eng.available()) {
+    const cmd = engineInstallCmd(eng);
+    throw Object.assign(new Error(`${eng.label} isn't installed on this PC, so ${ws.name} can't run yet.${cmd ? ` Install it with: ${cmd}` : ''} Then start the task again.`), { status: 409, code: 'ENGINE_MISSING' });
+  }
   // Orchy doesn't see every command an ungated engine runs, so it could reach the apps of whatever One login the CLI
   // falls back to: a workspace without its own One login never runs on one
   if (!eng.capabilities.gated && !backend && !oneScope(ws).own) throw Object.assign(new Error(`${ws.name} isn't signed in to its own One account yet, and ${eng.label}'s commands aren't all checked by Orchy, so it could reach another account's apps. Sign it in to One first (Workspaces → ${ws.name} → Sign in to One).`), { status: 409, code: 'ONE_SCOPE' });

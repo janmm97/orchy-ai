@@ -105,14 +105,14 @@ Each key is checked once with its service and saved in `.env` on your PC. Keys a
 
 | Key | What it unlocks | Without it |
 |---|---|---|
-| `TYPESAFE_API_KEY` | Jev from TypeSafe, the native model | Another Jev provider if one is set, else keyword matching |
+| `TYPESAFE_API_KEY` | Jev from TypeSafe, the native model | Another Jev provider if one is set, else your agent harness reads each message (slower), else keyword matching |
 | `OPENROUTER_API_KEY` | Jev through OpenRouter, as `~typesafe/jev-latest` (a chat model answering Jev's questions) | As above |
 | `AI_GATEWAY_API_KEY` | Jev through Vercel AI Gateway, as `typesafe-ai/jev` (native) | As above |
 | `OPENCODE_API_KEY` | Jev through OpenCode Zen, as `jev-1.13` (a chat model). OpenCode's free tier only works inside the OpenCode app | As above |
 | `ELEVENLABS_API_KEY` | Orchy's spoken replies and voice calls with agents | The browser's voice |
 | `DEEPGRAM_API_KEY` | A backup voice for Orchy's spoken replies | The browser's voice |
 
-`JEV_PROVIDER` picks one provider when several keys are set (`typesafe`, `openrouter`, `vercel`, `opencode`, or `off`). `VOICE_ENABLED=0` switches voice off: nothing speaks, nothing rings, and nothing goes to ElevenLabs or Deepgram.
+`JEV_PROVIDER` picks one provider when several keys are set (`typesafe`, `openrouter`, `vercel`, `opencode`, or `off`). With Jev off, the harness you installed stands in: it answers Jev's routing questions (10 to 30 seconds a message, on that harness's own sign-in), and keyword matching is the last resort. The same harness answers when you talk to Orchy if Claude Code isn't installed: Codex, OpenCode or Hermes, without tools (it can't open files you attach; Claude Code can). `ORCHY_BRAIN` picks one (`claude`, `codex`, `opencode`, `hermes`) or `off`. `VOICE_ENABLED=0` switches voice off: nothing speaks, nothing rings, and nothing goes to ElevenLabs or Deepgram.
 
 ## How it works
 
@@ -270,21 +270,21 @@ Clients open the files their own tasks made in the same viewer as your dashboard
 
 | Harness | Install | Gated? |
 |---|---|---|
-| **Claude Code** (recommended) | `npm install -g @anthropic-ai/claude-code` | ✅ yes |
-| **Codex** | `npm install -g @openai/codex` | ✅ yes |
-| **OpenCode** | `curl -fsSL https://opencode.ai/v2/install \| bash` | ✅ yes |
-| **Hermes** | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash` | ⚠️ no: refused unless the workspace allows it |
+| **Claude Code** (recommended) | `curl -fsSL https://claude.ai/install.sh \| bash`; Windows (PowerShell): `irm https://claude.ai/install.ps1 \| iex` | ✅ yes |
+| **Codex** | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh`; Windows: `powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 \| iex"` | ✅ yes |
+| **OpenCode** | `curl -fsSL https://opencode.ai/install \| bash`; on Windows `npm install -g opencode-ai` | ✅ yes |
+| **Hermes** | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash`; on Windows (PowerShell) `iex (irm https://hermes-agent.nousresearch.com/install.ps1)` | ✅ yes |
 | **Antigravity** (off by default) | Google's `agy` CLI (see antigravity.google), then `ORCHY_ANTIGRAVITY=1` in `.env` | ⚠️ no: refused unless the workspace allows it |
 
-"Gated" means every risky action asks Orchy first. The full status of each harness, including what has been tested, is below.
+"Gated" means every risky action asks Orchy first. You don't have to type these: **Install** in the dashboard (Add workspace, or Set up Orchy → Tools) runs the right one for your computer in a terminal window, then the sign-in. The full status of each harness, including what has been tested, is below.
 
 <!-- HARNESS-STATUS:START -->
 | Harness | Install command | How Orchy gates its approvals | Status |
 |---|---|---|---|
-| Claude Code | `npm install -g @anthropic-ai/claude-code` | MCP permission tool `mcp__jos__approval` | gated: yes. Pending real-install test (see docs/HARNESSES.md) |
-| Codex | `npm install -g @openai/codex` | `codex app-server`, policy `untrusted`, every request to the gate | gated: yes. Pending real-install test (see docs/HARNESSES.md) |
-| OpenCode | `curl -fsSL https://opencode.ai/v2/install \| bash` | `opencode serve`, every tool set to `ask`, answered through its permissions endpoint | gated: yes. Implemented, unverified against the real binary (see docs/HARNESSES.md) |
-| Hermes | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash` | `hermes acp` over ACP with manual approvals forced, but it only asks about dangerous shell commands | gated: NO (file edits and MCP tools never ask). Implemented, unverified; refused unless the workspace sets `allowUngated` (see docs/HARNESSES.md) |
+| Claude Code | `curl -fsSL https://claude.ai/install.sh \| bash`; Windows: `irm https://claude.ai/install.ps1 \| iex` | MCP permission tool `mcp__jos__approval` | gated: yes. Pending real-install test (see docs/HARNESSES.md) |
+| Codex | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh`; Windows: `powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 \| iex"` | `codex app-server`, policy `untrusted`, every request to the gate | gated: yes. Pending real-install test (see docs/HARNESSES.md) |
+| OpenCode | `curl -fsSL https://opencode.ai/install \| bash`; Windows: `npm install -g opencode-ai` | `opencode serve`, every tool set to `ask`, answered through its permissions endpoint | gated: yes. Implemented, unverified against the real binary (see docs/HARNESSES.md) |
+| Hermes | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash`; Windows (PowerShell): `iex (irm https://hermes-agent.nousresearch.com/install.ps1)` | `hermes acp` over ACP, plus Orchy's `pre_tool_call` hook (fail closed) in its profile: every tool call asks the gate first | gated: yes. Checked against the real binary (Hermes 0.21.7, Windows; see docs/HARNESSES.md) |
 | Antigravity | Google's `agy` CLI (see antigravity.google); off until `ORCHY_ANTIGRAVITY=1` in `.env` | `agy -p` with stream-json; it can't ask mid-run, so you approve each whole run first, then it runs inside deny rules Orchy writes (`--gemini_dir`) | gated: NO (commands aren't checked). Implemented, unverified against the real binary in this repo; off by default, refused unless the workspace sets `allowUngated` and has its own One login (see docs/HARNESSES.md) |
 <!-- HARNESS-STATUS:END -->
 

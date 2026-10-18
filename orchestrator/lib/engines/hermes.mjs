@@ -59,7 +59,8 @@ export default {
   openModels: true,
   instructionFile: 'AGENTS.md',
   defaultProfileLabel: '(its own profile folder)',
-  install: { cmd: 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash', shellNote: true, optional: true, note: 'Optional: Nous Research’s agent harness.' },
+  // Hermes installs natively on Windows from PowerShell (into %LOCALAPPDATA%\hermes\bin, where resolveBin looks)
+  install: { cmd: 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash', winCmd: 'iex (irm https://hermes-agent.nousresearch.com/install.ps1)', signIn: 'hermes portal', bin: 'hermes', optional: true, note: 'Optional: Nous Research’s agent harness.' },
   capabilities: {
     gated: true, mcp: true, resume: true, headless: true,
     clientSafe: false,

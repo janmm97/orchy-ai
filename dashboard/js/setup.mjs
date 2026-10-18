@@ -75,6 +75,23 @@ export async function openSetup({ step, from } = {}) {
   const skipped = new Set();
   const draft = { name: null, tz: null, keys: {}, ws: null, prompt: STARTER };
   let seq = 0;
+  // harnesses Orchy is installing (Tools step): looked for every few seconds until found, 15 minutes at most
+  const installing = new Set();
+  const watchInstall = id => {
+    installing.add(id);
+    draw();
+    const until = Date.now() + 15 * 60_000;
+    const t = setInterval(async () => {
+      const found = data?.tools?.find(x => x.id === id)?.found;
+      if (found || !body.isConnected || Date.now() > until) {
+        clearInterval(t); installing.delete(id);
+        if (found) ctx.toast(`${data.tools.find(x => x.id === id)?.label || id} is installed.`);
+        if (body.isConnected) draw();
+        return;
+      }
+      await load(true);
+    }, 5000);
+  };
 
   const load = async (force = false) => {
     const mine = ++seq;
@@ -153,12 +170,24 @@ export async function openSetup({ step, from } = {}) {
           ${rows.map(t => `<tr>
             <td data-l="Tool"><b>${esc(t.label)}</b><br><span class="hint">${esc(t.note)}</span></td>
             <td data-l="Status">${t.found ? `<span class="plate">${icon('check')}found</span><br><span class="hint data">${esc(t.version || '')}</span>` : `<span class="plate ${t.required || (t.id === 'claude' && missingHarness) || t.id === 'one' ? 'decide' : ''}">${t.recommended ? 'recommended' : t.required ? 'required' : 'not found'}</span>`}</td>
-            <td data-l="Install" ${t.found ? 'class="none"' : ''}>${t.found ? '<span class="hint">Nothing to do.</span>' : cmdHTML(t.installCmd)}</td></tr>`).join('')}
+            <td data-l="Install" ${t.found ? 'class="none"' : ''}>${t.found ? '<span class="hint">Nothing to do.</span>' : t.kind === 'harness' && t.installCmd
+              ? `<span class="btnrow"><button class="btn sm primary" type="button" data-install="${esc(t.id)}" ${installing.has(t.id) ? 'disabled' : ''}>${icon(installing.has(t.id) ? 'refresh' : 'plus')}${installing.has(t.id) ? 'Installing…' : 'Install'}</button></span><details><summary class="hint">Or run it yourself</summary>${cmdHTML(t.installCmd)}</details>`
+              : cmdHTML(t.installCmd)}</td></tr>`).join('')}
           </tbody></table></div>
-          <p class="hint">After installing, you may need to open a new terminal window (and restart Orchy) so the new command is on the PATH.</p>
+          <p class="hint"><b>Install</b> opens a terminal window that runs the harness’s official installer for this computer, then its sign-in. Orchy notices when it’s done. Installed it yourself? Press Re-check.</p>
           <div class="btnrow"><button class="btn" type="button" data-act="recheck">${icon('refresh')}Re-check</button></div>`,
         bind(root) {
           root.querySelector('[data-act="recheck"]').addEventListener('click', async e => { e.currentTarget.disabled = true; await load(true); });
+          root.querySelectorAll('[data-install]').forEach(b => b.addEventListener('click', async () => {
+            const id = b.dataset.install;
+            b.disabled = true;
+            try {
+              const r = await api(`/api/runtimes/${encodeURIComponent(id)}/install`, { method: 'POST' });
+              if (r.already) return load(true);
+              ctx.toast('A terminal window opened. Answer the installer’s prompts there, then sign in.');
+              watchInstall(id);
+            } catch (err) { ctx.toast(err.message, 'warn'); b.disabled = false; }
+          }));
         },
       };
     },

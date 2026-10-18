@@ -91,13 +91,13 @@ export function buildSchema(questions) {
   return { type: 'object', additionalProperties: false, required: Object.keys(properties), properties };
 }
 
-const SYSTEM = `You answer routing questions about a "state" (JSON). The user message holds {"state", "questions"}. Answer EVERY question, keyed by its name, as JSON that matches the response schema:
+export const SYSTEM = `You answer routing questions about a "state" (JSON). The user message holds {"state", "questions"}. Answer EVERY question, keyed by its name, as JSON that matches the response schema:
 - type "choice": pick exactly one key of "criteria" (keys are the allowed values, values describe them; for a list the key is the index). Answer {"choice": <key>, "confidence": <0..1 probability that it is right>}.
 - type "score": "criteria" is an ordered list of levels, level 0 first. Answer {"score": <number from 0 to the last level; fractions allowed between levels>}.
 - type "noul": "instructions" is a yes/no question. Answer {"probability": <0..1 that the answer is yes>}.
 Judge only from the state and each question's "instructions". Reply with the JSON object only.`;
 
-function mapAnswers(questions, parsed) {
+export function mapAnswers(questions, parsed) {
   const answers = {};
   const clamp = n => Math.min(1, Math.max(0, Number(n)));
   for (const [name, q] of Object.entries(questions)) {
@@ -121,7 +121,7 @@ function mapAnswers(questions, parsed) {
   return answers;
 }
 
-const FENCE = /^```(?:json)?\s*|\s*```$/g; // some chat models wrap the JSON in a code fence
+export const FENCE = /^```(?:json)?\s*|\s*```$/g; // some chat models wrap the JSON in a code fence
 
 async function viaChat(p, state, questions, timeoutMs) {
   const model = p.model();

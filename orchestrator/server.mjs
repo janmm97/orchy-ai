@@ -17,7 +17,8 @@ import { scaffoldWorkspace, ensureInstructions } from './lib/scaffold.mjs';
 import { listPlatforms } from './lib/one.mjs';
 import { toolStatus } from './lib/setupcheck.mjs';
 import { quickClaude } from './lib/claude.mjs';
-import { engine, engines } from './lib/engines/index.mjs';
+import { engine, engines, engineInstallCmd } from './lib/engines/index.mjs';
+import { installHarness, installJob } from './lib/installer.mjs';
 import { listAgents, getAgent, saveAgent, deleteAgent, BUILDER_SLUG, departmentsOf } from './lib/agents.mjs';
 import { syncAllResources } from './lib/resources.mjs';
 import { route, remodel, earlierRuns } from './lib/router.mjs';
@@ -870,6 +871,8 @@ on('GET', '/api/runtimes', async () => {
     return [e.id, {
       ...cfg[e.id],
       available: !!have[e.id]?.available,
+      install: engineInstallCmd(e) || null, // what the Add window shows for an engine not on this PC yet
+      installing: !have[e.id]?.available && !!installJob(e.id), // Orchy opened its install window (installer.mjs)
       version: have[e.id]?.available ? e.version?.() || null : null,
       defaultAccount: shared || a?.email || a?.label || null,
       loggedIn: !!a?.loggedIn,
@@ -881,6 +884,8 @@ on('GET', '/api/runtimes', async () => {
   }));
   return Object.fromEntries(rows);
 });
+// "Install": a terminal window runs the harness's official installer for this OS, then its sign-in (installer.mjs)
+on('POST', '/api/runtimes/:id/install', async (_req, _res, { id: eid }) => installHarness(eid));
 on('POST', '/api/workspaces/check-name', async (req) => ({ folder: checkFolderName((await readBody(req)).name) }));
 
 // Add: register it, create and configure its folder, and have Orchy say what's left (accounts).
@@ -1546,7 +1551,7 @@ on('GET', '/api/setup', async (req) => {
   const keys = [
     { id: 'jev', label: 'Jev routing (a TypeSafe, OpenRouter, Vercel AI Gateway or OpenCode Zen key)', set: jevMode() !== 'none', envKeys: ['TYPESAFE_API_KEY', 'OPENROUTER_API_KEY', 'AI_GATEWAY_API_KEY', 'OPENCODE_API_KEY'],
       unlocks: 'Jev reads each message and picks the business, agent and model, and plans which app actions a task needs.',
-      withoutIt: 'Routing falls back to keyword matching: simple, but it guesses wrong more often and you may have to pick the agent yourself.' },
+      withoutIt: 'Your agent harness (Claude Code, Codex, OpenCode or Hermes) reads each message instead: it works, but takes 10 to 30 seconds a message and uses that harness’s own plan. With no harness, keyword matching.' },
     { id: 'elevenlabs', label: 'ElevenLabs', set: !!env('ELEVENLABS_API_KEY'), envKeys: ['ELEVENLABS_API_KEY'],
       unlocks: 'Orchy and your agents speak in natural voices, and you can call them from the dashboard.',
       withoutIt: 'Orchy speaks with your browser’s built-in voice, and voice calls are off.' },

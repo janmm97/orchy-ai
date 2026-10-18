@@ -21,7 +21,8 @@ function resolveCodex() {
   const exe = process.platform === 'win32' ? 'codex.exe' : 'codex';
   const npm = process.env.APPDATA && path.join(process.env.APPDATA, 'npm', 'codex.cmd');
   if (npm && fs.existsSync(npm)) return npm;
-  const onPath = findBinary('codex'); // PATH, Homebrew, ~/.local/bin, ~/.npm-global/bin
+  // PATH, Homebrew, ~/.local/bin, ~/.npm-global/bin, and where the standalone Windows installer puts it
+  const onPath = findBinary('codex', process.env.LOCALAPPDATA ? [path.join(process.env.LOCALAPPDATA, 'Programs', 'OpenAI', 'Codex', 'bin')] : []);
   if (onPath) return onPath;
   // the ChatGPT/Codex VS Code extension ships its own copy: take the newest
   const extDir = path.join(home, '.vscode', 'extensions');
@@ -341,7 +342,8 @@ export function launchCodexRun(opts, hooks) {
   (async () => {
     await srv.init();
     const common = {
-      cwd: opts.cwd, model: opts.model, approvalPolicy: 'untrusted', sandbox: 'workspace-write',
+      // sandbox: 'read-only' for Orchy's own text-only answers (brain.mjs); agent runs write in their workspace
+      cwd: opts.cwd, model: opts.model, approvalPolicy: 'untrusted', sandbox: opts.sandbox === 'read-only' ? 'read-only' : 'workspace-write',
       developerInstructions: opts.developerInstructions, config: { mcp_servers: opts.mcpServers || {}, project_root_markers: [] },
     };
     const r = opts.resumeThreadId

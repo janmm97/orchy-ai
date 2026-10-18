@@ -63,7 +63,7 @@ const deps = {
   db: storeDb, save: storeSave, emit: busEmit, id: storeId, now: () => Date.now(),
   setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout: t => clearTimeout(t),
   workspace: wsById, agents: wsId => listAgents(wsId), shared: wsId => clientSharedSlugs(wsId),
-  allAgents: () => listAgents(), engineOk: engineReady, plannerReady: () => !!engine(PLANNER_ENGINE),
+  allAgents: () => listAgents(), engineOk: engineReady, plannerReady: () => !!engine(PLANNER_ENGINE)?.available(),
   accountCheck: realAccountCheck, think: quickClaude, ask: jevAsk, nameOf: () => null,
   events: runId => { try { return fs.readFileSync(runEventsPath(runId), 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); } catch { return []; } },
   items: runId => itemsForRun(runId),
