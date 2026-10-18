@@ -30,9 +30,9 @@ Do not commit real email addresses, client names, keys, tunnel domains or transc
 
 ## Guard files
 
-Some files hold Orchy's safety rules: the approval policy, the gate, account checks, the dashboard's origin lock and paired browsers, the client portal, its Access check and sandbox. They are listed in `GUARDED_GLOBS` in `orchestrator/lib/backend.mjs`. When Orchy fixes itself, any edit to those files asks the owner every time, with the diff. An edit that removes text naming a lock (`LOCK_MARKERS`: `accountCheck`, `crossSite`, `cf-ray` and others) asks too.
+Some files hold Orchy's safety rules: the approval policy, the gate (and `orchestrator/mcp/cwd-hook.mjs`, which tells it where each shell command really runs), account checks, the dashboard's origin lock and paired browsers, the client portal, its Access check and sandbox, the artifact path guard (`orchestrator/lib/artifacts.mjs#resolveFile`, which decides which workspace files the dashboard's viewer may open), the automatic retry gate (`orchestrator/lib/recover.mjs#retryGate`, which never repeats a run that could have changed or sent something) and Orchy's huddle coach (`orchestrator/lib/huddlecoach.mjs#coachAccount`, which only ever speaks in a huddle under that workspace's own Claude Code account). They are listed in `GUARDED_GLOBS` in `orchestrator/lib/backend.mjs`. When Orchy fixes itself, any edit to those files asks the owner every time, with the diff. An edit that removes text naming a lock (`LOCK_MARKERS`: `accountCheck`, `crossSite`, `cf-ray` and others) asks too.
 
-For contributors: do not weaken these files. A change that touches them needs a clear reason in the pull request and a test in `test-policy.mjs` where it applies. If you add a new safety file, add it to `GUARDED_GLOBS`.
+For contributors: do not weaken these files. A change that touches them needs a clear reason in the pull request and a test in `test-policy.mjs` (or `test-artifacts.mjs`, `test-validate.mjs` for those two) where it applies. If you add a new safety file, add it to `GUARDED_GLOBS`.
 
 ## Security
 

@@ -9,6 +9,7 @@ import { CLAUDE_BIN, claudeVersion } from '../lib/claude.mjs';
 import { engines, engineTools } from '../lib/engines/index.mjs';
 import { listAgents } from '../lib/agents.mjs';
 import { clients, clientBase, CLIENT_PORT } from '../lib/clients.mjs';
+import { ffBins } from '../lib/media.mjs';
 
 let failed = 0;
 const ok = (m) => console.log(`  ✔ ${m}`);
@@ -20,6 +21,11 @@ console.log('\nOrchy health check\n');
 console.log('System');
 Number(process.versions.node.split('.')[0]) >= 20 ? ok(`Node ${process.version}`) : bad(`Node ${process.version} is too old`, 'Orchy needs Node 20 or newer: https://nodejs.org');
 fs.existsSync(path.join(ORCH_DIR, 'config.json')) ? ok('config.json present') : off('No config.json yet (Orchy creates it the first time it starts)');
+{
+  const ff = ffBins();
+  ff ? ok(`ffmpeg: ${ff.ffmpeg} (thumbnails, video posters and playable copies in the file viewer)`)
+    : off('ffmpeg: not found (optional: files still open; install it for thumbnails, video posters and playable copies, or set FFMPEG_PATH)');
+}
 
 console.log('\nAgent harnesses (at least one is needed)');
 // every engine the registry knows: found / version / install command / gated

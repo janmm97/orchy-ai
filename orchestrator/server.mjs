@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { ROOT, DASHBOARD_DIR, env, setEnv, reloadEnv, config, ownerName, saveConfig } from './lib/env.mjs';
 import { db, save, flush, id } from './lib/store.mjs';
 import { post, ensureSession, getSession, updateSession, listSessions, publicSession, sessionChat, recentChat, sweepSessions, migrateChat } from './lib/sessions.mjs';
-import { bus, emit, attachSSE } from './lib/bus.mjs';
+import { bus, emit, attachSSE, cursor as busCursor } from './lib/bus.mjs';
 import {
   workspaces, workspace, accountCheck, allConnections, identity, readMcp, shownMcp, upsertMcp, removeMcp, testMcp, loginHint,
   runtimes, runtimeLabel, modelsFor, modelFor, oneScope, oneLoginStatus, startOneLogin, oneAddStatus, startOneAdd, openLoginWindow, runtimeAvailability,
@@ -28,7 +28,8 @@ import * as inbox from './lib/inbox.mjs';
 import { addRule, removeRule, DECISIONS } from './lib/policy.mjs';
 import { gate, runCtx, resolveAction } from './lib/gate.mjs';
 import { pickTools } from './lib/toolpick.mjs';
-import { readLogs } from './lib/logs.mjs';
+import { readLogs, computeUsage } from './lib/logs.mjs';
+import { weeklyReview, startUsageReview, usageBrief, REVIEW_DAYS } from './lib/usagereview.mjs';
 import { impact } from './lib/impact.mjs';
 import { writeMonthly, listMonthly, startMonthly, REPORTS_DIR } from './lib/monthly.mjs';
 import * as orchy from './lib/orchy.mjs';
@@ -40,9 +41,15 @@ import { clients, clientById, addClient, updateClient, rotateLink, removeClient,
 import { startPortal } from './portal.mjs';
 import { saveUpload, uploadInfo, publicUpload, handToWorkspace, withFiles } from './lib/uploads.mjs';
 import { taskFiles, taskFile, sendTaskFile, removeHome } from './lib/clientspace.mjs';
+import * as artifacts from './lib/artifacts.mjs';
+import * as media from './lib/media.mjs';
+import * as validate from './lib/validate.mjs';
+import * as recover from './lib/recover.mjs';
 import { checkDelegation } from './lib/delegation.mjs';
 import * as liveJev from './lib/livejev.mjs';
 import * as huddles from './lib/huddle.mjs';
+import * as standingRules from './lib/rules.mjs';
+import { COACH } from './lib/huddlecoach.mjs';
 import * as backend from './lib/backend.mjs';
 import { BACKEND_ID, backendWorkspace } from './lib/workspaces.mjs';
 import { fixRouting } from './lib/router.mjs';
@@ -80,27 +87,53 @@ runner.setPort(PORT);
 const setupScripts = String(env('SETUP_SCRIPTS') || '').trim().toLowerCase();
 if (setupScripts === 'on' || setupScripts === 'off') { db().settings.scriptsFree = setupScripts === 'on'; save(); setEnv('SETUP_SCRIPTS', ''); }
 ensureInks(); // any workspace from before colours: each gets its own
-runner.markInterruptedRuns();
+const interrupted = runner.markInterruptedRuns(); // recover.boot offers the owner Resume / Start over on each
 migrateChat();
 for (const item of inbox.pending()) if (!runner.isLive(item.runId)) inbox.expireForRun(item.runId);
 // a team agent's run reports to the head that handed it over; the head's report reaches the owner.
 // A client's own run reports to nobody but the client: their page shows it, the owner's chat doesn't.
 // Orchy's fix of his own code reports with what it changed, and restarts him when it needs to (backend.mjs).
+// Before Orchy reports, he checks the run (validate.mjs: flags only) and names what went wrong (recover.mjs: a safe
+// automatic retry, or a card for the owner); a run the owner just chose to stop and resume (`quietReport`) isn't reported again.
 runner.onRunFinished(async (run, ws) => {
   try {
     if (run.backend) await reportFix(run, ws);
-    else if (!run.delegatedBy && !(run.client && !run.ownerReply)) await orchy.reportRun(run, ws);
+    else {
+      if (validate.shouldValidate(run)) await validate.applyValidation(run);
+      let rec = null;
+      try { rec = recover.afterRun(run); } catch (e) { console.error('[recover]', e.message); }
+      if (!run.delegatedBy && !(run.client && !run.ownerReply) && !run.quietReport) {
+        if (rec?.quiet) orchy.say(rec.quiet, { runId: run.id, workspace: ws.id, kind: 'report', outcome: run.outcome, session: ensureSession(run.session, { text: run.instruction, origin: 'run' }).id, ...rec.meta });
+        else await orchy.reportRun(run, ws, rec ? { tail: rec.tail, meta: rec.meta } : {});
+      }
+    }
   } finally {
     backend.maybeRestart(anyLive); // a restart a fix left waiting goes ahead once nothing is running
   }
 });
+// an account hit its session/usage limit: its runs pause and start again by themselves when the window resets
+runner.onSessionLimit(({ ws, run, reason }) => {
+  orchy.say(`${ws.name}'s ${runtimeLabel(run.runtime)} account hit its usage limit while ${rn(run)} was working (${reason}). I've paused it, and any runs waiting on that account wait too; they start again by themselves when the window resets, or you can press Run now.`, { runId: run.id, workspace: ws.id, session: run.session, error: true });
+});
+// recovery (recover.mjs): retries go through startRun (account check, ungated-engine refusal, gate), resumes through
+// followUp; the stall timer runs here too (it never starts work, so a test copy with NO_SCHEDULER keeps it)
+recover.start({
+  startRun: opts => runner.startRun(opts), stopRun: rid => runner.stopRun(rid), isLive: rid => runner.isLive(rid),
+  followUp: (rid, body) => followUp(rid, { ...body, shown: 'Resume where you left off' }), note: (rid, text) => runner.ownerNote(rid, text),
+  who: r => rn(r), wsName: wid => { try { return workspace(wid).name; } catch { return wid; } },
+  say: (text, meta = {}) => orchy.say(text, { ...meta, session: ensureSession(meta.session, { text: 'Recovery', origin: 'run' }).id }),
+});
+recover.boot(interrupted);
 // a huddle's turns report to the huddle; Orchy speaks for it at the start, the agreement and a failure
 huddles.initHuddles({ say: (text, meta) => orchy.say(text, meta) });
 // each scheduled run opens its own session, so its report has somewhere to land.
 // NO_SCHEDULER=1 (a test copy's .env) keeps a second Orchy from starting the same scheduled runs.
 if (!env('NO_SCHEDULER')) startScheduler({
+  liveCount: runner.liveCount, // slots wait while two or more runs are live
   startRun: async ({ label, ...opts }) => {
     const sid = id('s');
+    // an AI Agent Builder's scheduled run (a weekly review) gets its agents' week, to propose slimming the costliest
+    if (opts.agentSlug === BUILDER_SLUG) opts.instruction += usageBrief(opts.workspace);
     const run = await runner.startRun({ ...opts, session: sid });
     ensureSession(sid, { text: label, origin: 'schedule' });
     return run;
@@ -112,6 +145,12 @@ if (!env('NO_SCHEDULER')) startScheduler({
     error: true, workspace: a.workspace, session: ensureSession(null, { text: `${a.displayName} · scheduled`, origin: 'schedule' }).id,
   }),
 });
+
+// the weekly usage review (usagereview.mjs): Orchy suggests 3–5 savings in chat, in a session of its own
+function reviewSay(text, meta) {
+  return orchy.say(text, { ...meta, session: ensureSession(null, { text: 'Weekly usage review', origin: 'review' }).id });
+}
+if (!env('NO_SCHEDULER')) startUsageReview({ say: reviewSay });
 
 // ── monthly impact report: last month's, written on the 1st ──
 if (!env('NO_SCHEDULER')) startMonthly({
@@ -353,11 +392,14 @@ const SECRET = k => /KEY$/.test(k);
 const routes = [];
 const on = (method, pattern, handler) => routes.push({ method, re: new RegExp(`^${pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)')}$`), handler });
 
-on('GET', '/api/events', (req, res) => attachSSE(req, res));
+// replayable (bus.mjs): Last-Event-ID from the browser's own reconnect, or `?last=BOOT:seq` from a fresh EventSource
+on('GET', '/api/events', (req, res) => attachSSE(req, res, { lastEventId: req.headers['last-event-id'] || new URL(req.url, 'http://x').searchParams.get('last') || '' }));
 
 on('GET', '/api/state', async () => {
   sweepSessions(sessionBusy);
+  const events = busCursor(); // taken first: the dashboard's stream replays whatever happens while this is built
   return {
+    events,
     now: new Date().toISOString(),
     timezone: config.timezone,
     owner: { name: ownerName(), set: !!(config.owner?.name || '').trim(), hideBusinessNames: !!config.owner?.hideBusinessNames },
@@ -575,8 +617,8 @@ on('PATCH', '/api/routing/:id', async (req, _res, { id: pid }) => {
   if (body.workspace && !workspace(body.workspace).enabled) throw Object.assign(new Error(`${workspace(body.workspace).name} is switched off`), { status: 409 });
   const before = p.choice.workspace;
   for (const k of ['intent', 'workspace', 'agent', 'model']) if (k in body) p.choice[k] = body[k];
-  // a huddle: the owner picks its two agents on the card (another workspace starts the pair over)
-  if (Array.isArray(body.huddle)) p.choice.huddle = body.huddle.map(String).filter(Boolean).slice(0, 2);
+  // a huddle: the owner picks its agents on the card, two or more (another workspace starts them over)
+  if (Array.isArray(body.huddle)) p.choice.huddle = [...new Set(body.huddle.map(String).filter(Boolean))];
   if (p.choice.intent === 'huddle' && (!Array.isArray(p.choice.huddle) || (body.workspace && body.workspace !== before && !Array.isArray(body.huddle)))) p.choice.huddle = [];
   // building an agent is the Builder's job; a task is never the Builder's
   if (body.intent === 'build_agent') p.choice.agent = BUILDER_SLUG;
@@ -934,16 +976,26 @@ If the notes hold nothing useful, write a two-line brief from the agent list alo
 <workspace_notes>
 ${notes || '(none)'}
 </workspace_notes>`;
-  const { text } = await quickClaude({ prompt, model: 'sonnet', configDir: ws.claudeConfigDir || null, timeoutMs: 120_000 });
+  const { text } = await quickClaude({ prompt, model: 'sonnet', configDir: ws.claudeConfigDir || null, timeoutMs: 120_000, purpose: 'brief', workspace: ws.id });
   return text.trim().slice(0, 6000);
 }
 
 // Runs
 on('GET', '/api/runs', async () => runner.listRuns(100).map(runner.publicRun));
 on('GET', '/api/runs/:id', async (_req, _res, { id: rid }) => ({ run: runner.publicRun(runner.getRun(rid)), events: runner.runEvents(rid), items: inbox.itemsForRun(rid), live: runner.isLive(rid) }));
+// a queued or limit-paused run starts at once (it jumps its account's queue)
+on('POST', '/api/runs/:id/run-now', async (_req, _res, { id: rid }) => runner.runNow(rid));
 on('POST', '/api/runs/:id/stop', async (_req, _res, { id: rid }) => runner.stopRun(rid));
+// the owner's answer on a recovery card: resume | restart | stop | leave (recover.mjs#act; restart goes through startRun)
+on('POST', '/api/runs/:id/recover', async (req, _res, { id: rid }) => {
+  runner.getRun(rid);
+  const { action } = await readBody(req);
+  const r = await recover.act(rid, String(action || ''));
+  return { ok: true, run: r.run ? runner.publicRun(r.run) : null };
+});
 on('POST', '/api/runs/:id/reply', async (req, _res, { id: rid }) => followUp(rid, await readBody(req)));
-async function followUp(rid, { text, model, files }) {
+// `shown`: what the owner's line in the session says when the words sent aren't theirs (a recovery card's Resume)
+async function followUp(rid, { text, model, files, shown = null }) {
   const prev = runner.getRun(rid);
   if (!prev) throw Object.assign(new Error('No such run'), { status: 404 });
   if (runner.isLive(rid)) throw Object.assign(new Error('Still running; wait for it to finish'), { status: 409 });
@@ -956,7 +1008,7 @@ async function followUp(rid, { text, model, files }) {
   const session = getSession(prev.session)?.origin === 'client' ? id('s') : prev.session || id('s');
   const run = await runner.startRun({ workspace: prev.workspace, agentSlug: prev.isBuilder ? BUILDER_SLUG : prev.agentSlug, kind: prev.kind, model: model || prev.model, instruction: prev.client ? clean : withFiles(clean, paths), ownerFiles, resumeSessionId: prev.sessionId, parentRunId: prev.id, session });
   const n = paths.length || ownerFiles.length;
-  sayDispatched(run, clean || `${n} file${n > 1 ? 's' : ''}`, prev.client ? `Follow-up sent on ${prev.clientName}’s task. ${rn(run)} picks up where it left off, and ${prev.clientName} sees it on their page.` : `Follow-up sent. ${rn(run)} picks up where it left off.`, files);
+  sayDispatched(run, (typeof shown === 'string' && shown.trim().slice(0, 200)) || clean || `${n} file${n > 1 ? 's' : ''}`, prev.client ? `Follow-up sent on ${prev.clientName}’s task. ${rn(run)} picks up where it left off, and ${prev.clientName} sees it on their page.` : `Follow-up sent. ${rn(run)} picks up where it left off.`, files);
   return run;
 }
 
@@ -995,7 +1047,48 @@ on('GET', '/api/runs/:id/file', async (req, res, { id: rid }) => {
   const run = runner.getRun(rid);
   const file = taskFile(workspace(run.workspace), run, new URL(req.url, 'http://x').searchParams.get('path'));
   if (!file) throw Object.assign(new Error('That file isn’t in the task’s folder'), { status: 404 });
-  sendTaskFile(res, file);
+  sendTaskFile(res, file, {}, { req });
+});
+
+// ── Artifacts: what agents made, for the dashboard's viewer (the owner's dashboard only; client pages have none yet).
+// Every file is re-resolved through artifacts.mjs#resolveFile (realpath inside the workspace, no setup, hidden or
+// other clients' files) on each request. File contents need a paired browser's cookie (FILE_READS below). ──
+const qs = req => new URL(req.url, 'http://x').searchParams;
+on('GET', '/api/artifacts', async req => {
+  const q = qs(req);
+  const run = q.get('run') ? runner.getRun(q.get('run')) : null;
+  if (run) artifacts.syncRun(run, { ended: !!run.endedAt && !runner.isLive(run.id) });
+  if (q.get('huddle')) { try { artifacts.syncHuddle(huddles.getHuddle(q.get('huddle'))); } catch {} }
+  const list = artifacts.listArtifacts({ run, workspace: q.get('workspace'), agent: q.get('agent'), huddle: q.get('huddle'), kind: q.get('kind'), limit: Number(q.get('limit')) || 300 });
+  return { artifacts: list, links: run?.links || [] };
+});
+on('GET', '/api/artifacts/:id', async (_req, _res, { id: aid }) => {
+  try { return { artifact: artifacts.publicArtifact(artifacts.openArtifact(aid).artifact) }; }
+  catch (e) { if (e.artifact) return { artifact: e.artifact }; throw e; }
+});
+on('GET', '/api/artifacts/:id/raw', async (req, res, { id: aid }) => {
+  const { artifact: a, file } = artifacts.openArtifact(aid);
+  sendTaskFile(res, file, {}, { req, media: true, types: artifacts.VIEW_TYPES, download: qs(req).has('download'), name: a.name });
+});
+on('GET', '/api/artifacts/:id/preview', async (_req, _res, { id: aid }) => {
+  const { artifact: a, file } = artifacts.openArtifact(aid);
+  return { ...(await artifacts.previewFile(file, a.name)), version: a.version };
+});
+on('GET', '/api/artifacts/:id/media/:what', async (req, res, { id: aid, what }) => {
+  const { artifact: a } = artifacts.openArtifact(aid); // the guard, and a fresh version
+  if (!media.MEDIA_FILES.includes(what)) throw Object.assign(new Error('No such preview'), { status: 404 });
+  const file = media.mediaFile(aid, what);
+  if (!file) throw Object.assign(new Error(a.media?.state === 'transcoding' ? 'The playable copy isn’t ready yet' : 'No preview for this file'), { status: 404 });
+  // previews are per version (the URL carries ?v=), so they can be cached; the original never is
+  sendTaskFile(res, file, {}, { req, media: true, types: artifacts.VIEW_TYPES, name: what === 'play' ? a.name : `${what}.webp`, cache: what === 'play' && a.media?.play === 'original' ? null : 'private, max-age=86400' });
+});
+// the research sources: the URLs a run fetched and the searches it ran (from its recorded events only)
+on('GET', '/api/runs/:id/sources', async (_req, _res, { id: rid }) => artifacts.sourcesFor(runner.getRun(rid).id));
+// a file the owner gave Orchy, as the viewer previews it (Office, CSV, JSON, text)
+on('GET', '/api/uploads/:name/preview', async (_req, _res, { name }) => {
+  const u = uploadInfo(decodeURIComponent(name));
+  if (!u) throw Object.assign(new Error('That file is gone from Uploads'), { status: 404 });
+  return artifacts.previewFile(u.file, u.name);
 });
 
 // Inbox (the owner's answers)
@@ -1076,7 +1169,7 @@ on('POST', '/api/bridge/voice-agent', async (req) => {
 on('POST', '/api/bridge/approval', async (req) => {
   bridgeAuth(req);
   const b = await readBody(req);
-  const v = await gate(b.runId, b.tool_name, b.input || {});
+  const v = await gate(b.runId, b.tool_name, b.input || {}, { toolUseId: b.tool_use_id });
   if (v.decision === 'ask') runner.setRunStatus(runner.getRun(b.runId), 'waiting');
   return v;
 });
@@ -1101,13 +1194,18 @@ on('POST', '/api/bridge/huddle-reply', async (req) => {
   const g = b.agreement && typeof b.agreement === 'object' ? b.agreement : null;
   // bring another agent in (huddle.mjs#bringIn checks who when the turn ends)
   const inv = b.invite && typeof b.invite === 'object' && String(b.invite.agent || '').trim() ? { agent: String(b.invite.agent).trim().slice(0, 80), why: String(b.invite.why || '').slice(0, 600) } : null;
+  // pushback this turn (huddle.mjs: ready only counts once an agent has challenged something)
+  const challenge = String(b.challenge || '').trim();
   run.huddleReply = {
-    message: message.slice(0, 6000), ready: !!b.ready, questions_for_owner: strs(b.questions_for_owner), ...(inv ? { invite: inv } : {}),
-    ...(g ? { agreement: { summary: String(g.summary || '').slice(0, 4000), decisions: strs(g.decisions), questions_for_owner: strs(g.questions_for_owner),
-      work: (Array.isArray(g.work) ? g.work : []).slice(0, 6).map(w => ({ agent: String(w?.agent || ''), task: String(w?.task || '').slice(0, 6000) })) } } : {}),
+    message: message.slice(0, 6000), ready: !!b.ready, questions_for_owner: strs(b.questions_for_owner), ...(inv ? { invite: inv } : {}), ...(challenge ? { challenge: challenge.slice(0, 2000) } : {}),
+    ...(g ? { agreement: { summary: String(g.summary || '').slice(0, 4000), decisions: strs(g.decisions), questions_for_owner: huddles.questionsIn(g.questions_for_owner), dissent: strs(g.dissent),
+      work: (Array.isArray(g.work) ? g.work : []).slice(0, 60).map(w => ({ agent: String(w?.agent || ''), task: String(w?.task || '').slice(0, 6000) })) } } : {}),
   };
   save();
-  runner.addNote(run.id, `${g ? 'Agreement' : 'Said'}: ${message.replace(/\s+/g, ' ').slice(0, 300)}${b.ready ? ' (ready to agree)' : ''}${inv ? ` (bringing in ${inv.agent})` : ''}`);
+  runner.addNote(run.id, `${g ? 'Agreement' : 'Said'}: ${message.replace(/\s+/g, ' ').slice(0, 300)}${challenge ? ' (pushes back)' : ''}${b.ready ? ' (ready to agree)' : ''}${inv ? ` (bringing in ${inv.agent})` : ''}`);
+  // huddle_reply is the turn's last action: end the harness process now so it doesn't take extra trailing turns
+  // (runner.endHuddleTurn, when this build's runner has it)
+  if (typeof runner.endHuddleTurn === 'function') setTimeout(() => { try { runner.endHuddleTurn(run.id); } catch {} }, 50);
   return { ok: true };
 });
 on('POST', '/api/bridge/note', async (req) => {
@@ -1141,7 +1239,7 @@ on('GET', '/api/bridge/subrun/:id', async (req, _res, { id: sid }) => {
   const sub = db().runs[sid];
   if (!sub) throw Object.assign(new Error('No such run'), { status: 404 });
   if (!parent || sub.delegatedBy !== parent) throw Object.assign(new Error('That run wasn’t handed over by you'), { status: 403 });
-  const ended = () => !runner.isLive(sid) && !['starting', 'working', 'waiting', 'stopping'].includes(sub.status);
+  const ended = () => !runner.isLive(sid) && !['queued', 'paused-limit', 'starting', 'working', 'waiting', 'stopping'].includes(sub.status);
   if (!ended()) {
     await new Promise(resolve => {
       const done = () => { clearTimeout(t); bus.off('event', onEvt); resolve(); };
@@ -1161,11 +1259,12 @@ on('POST', '/api/bridge/huddle', async (req) => {
   const b = await readBody(req);
   const run = runner.getRun(b.runId);
   if (!runner.isLive(run.id)) throw Object.assign(new Error('Your run has ended'), { status: 409 });
-  const h = await huddles.startFromRun(run, { agent: b.agent, topic: b.topic });
+  const h = await huddles.startFromRun(run, { agent: b.agent, agents: b.agents, topic: b.topic });
   (run.huddlesStarted ||= []).push(h.id);
   save();
-  runner.addNote(run.id, `Huddling with ${h.agents[1].name}: ${String(b.topic || '').replace(/\s+/g, ' ').slice(0, 160)}`);
-  return { huddleId: h.id, with: h.agents[1].name };
+  const others = huddles.nameList(h.agents.slice(1).map(a => a.name));
+  runner.addNote(run.id, `Huddling with ${others}: ${String(b.topic || '').replace(/\s+/g, ' ').slice(0, 160)}`);
+  return { huddleId: h.id, with: others };
 });
 on('GET', '/api/bridge/huddle/:id', async (req, _res, { id: hid }) => {
   bridgeAuth(req);
@@ -1213,18 +1312,35 @@ on('POST', '/api/huddles', async (req) => {
   return huddles.startHuddle({ workspace: ws.id, agents: agents.map(a => a.slug), topic, session: getSession(b.session)?.id || null, maxTurns: b.maxTurns });
 });
 on('POST', '/api/huddles/:id/say', async (req, _res, { id: hid }) => huddles.ownerSays(hid, (await readBody(req)).text));
-on('POST', '/api/huddles/:id/continue', async (req, _res, { id: hid }) => { const b = await readBody(req); return huddles.keepTalking(hid, { text: b.text, more: b.more }); });
+on('POST', '/api/huddles/:id/continue', async (req, _res, { id: hid }) => { const b = await readBody(req); return huddles.keepTalking(hid, { text: b.text, more: b.more, answers: b.answers }); });
 on('POST', '/api/huddles/:id/stop', async (_req, _res, { id: hid }) => huddles.stopHuddle(hid));
 on('POST', '/api/huddles/:id/approve', async (req, _res, { id: hid }) => {
-  const { huddle: h, runs, errors } = await huddles.approve(hid, { note: (await readBody(req)).note });
+  const b = await readBody(req);
+  const { huddle: h, runs, errors } = await huddles.approve(hid, { note: b.note, answers: b.answers });
   orchy.say(`Approved. ${runs.map(r => `${rn(r)} is on ${r.isBuilder ? 'the agent changes' : 'their part'}`).join(', ')} in ${workspace(h.workspace).name}, picking up from the huddle.${errors.length ? ` Couldn't start: ${errors.join(' · ')}` : ''}`, { workspace: h.workspace, kind: 'dispatch', session: h.session, ...(runs.length === 1 ? { runId: runs[0].id } : {}) });
   return { huddle: h, runs: runs.map(runner.publicRun), errors };
 });
 on('POST', '/api/huddles/:id/close', async (_req, _res, { id: hid }) => huddles.dismiss(hid));
+// The owner's standing rules per workspace (rules.mjs): what Orchy answers for them in a huddle's proposal. Not the
+// remembered approvals (/api/rules, policy.mjs): these never clear an ask.
+on('GET', '/api/standing-rules/:ws', async (_req, _res, { ws: wsId }) => ({ rules: standingRules.rulesFor(workspace(wsId).id) }));
+on('POST', '/api/standing-rules/:ws', async (req, _res, { ws: wsId }) => {
+  const w = workspace(wsId);
+  standingRules.addRule(w.id, (await readBody(req)).text);
+  return { rules: standingRules.rulesFor(w.id) };
+});
+on('DELETE', '/api/standing-rules/:ws/:rule', async (_req, _res, { ws: wsId, rule }) => ({ rules: standingRules.removeRule(workspace(wsId).id, rule) }));
 
 // Logs, rules, settings
 on('POST', '/api/greeting', async () => orchy.dailyGreeting());
 on('GET', '/api/logs', async () => readLogs());
+// tokens and cost per workspace, agent, model and kind, chains, top runs, Orchy's own calls (logs.mjs#computeUsage)
+on('GET', '/api/usage', async (req) => computeUsage(new URL(req.url, 'http://x').searchParams.get('period') || 'month'));
+// the weekly usage review, now
+on('POST', '/api/usage/review', async () => {
+  const r = await weeklyReview({ say: reviewSay });
+  return { ok: true, suggestions: r.suggestions.length };
+});
 on('GET', '/api/impact', async (req) => { const q = new URL(req.url, 'http://x').searchParams; return impact({ period: q.get('period') || 'month', rate: q.get('rate'), speedup: q.get('speedup') }); });
 on('GET', '/api/reports', async () => listMonthly());
 on('POST', '/api/reports', async (req) => { const b = await readBody(req); return writeMonthly(b.month, { rate: b.rate, speedup: b.speedup }); });
@@ -1237,11 +1353,23 @@ on('DELETE', '/api/rules/:i', async (_req, _res, { i }) => {
 });
 on('POST', '/api/settings', async (req) => {
   const b = await readBody(req);
-  for (const k of ['voiceReplies', 'sound', 'autoDispatch', 'actionPlan', 'callStuck', 'callAsk', 'callDone', 'liveJev', 'liveStart', 'scriptsFree']) if (k in b) db().settings[k] = !!b[k];
+  for (const k of ['voiceReplies', 'sound', 'autoDispatch', 'actionPlan', 'callStuck', 'callAsk', 'callDone', 'liveJev', 'liveStart', 'scriptsFree', 'budgetRouting']) if (k in b) db().settings[k] = !!b[k];
+  // runs at once per account (1–10, default 3; more wait in the queue), and when the weekly usage review runs
+  if ('maxLivePerAccount' in b) db().settings.maxLivePerAccount = Math.min(10, Math.max(1, Math.round(Number(b.maxLivePerAccount)) || 3));
+  // Orchy's check of finished runs (validate.mjs, on unless off; Jev's read off unless on) and his retries (recover.mjs)
+  for (const k of ['validateRuns', 'validateJev', 'autoRetry']) if (k in b) db().settings[k] = !!b[k];
+  // recovery: flag a run with no new step after N minutes (0 = off, default 20); stop runs after N minutes (0 = off)
+  if ('stallMin' in b) db().settings.stallMin = Math.min(240, Math.max(0, Math.round(Number(b.stallMin)) || 0));
+  if ('stopAfterMin' in b) db().settings.stopAfterMin = Math.min(1440, Math.max(0, Math.round(Number(b.stopAfterMin)) || 0));
+  if ('usageReviewDay' in b) db().settings.usageReviewDay = b.usageReviewDay === 'off' || REVIEW_DAYS.includes(b.usageReviewDay) ? b.usageReviewDay : 'Fri';
+  if ('usageReviewHour' in b) db().settings.usageReviewHour = Math.min(23, Math.max(0, Math.round(Number(b.usageReviewHour)) || 0));
   // Jev's reads as the owner types: caps per message and per day (0 = no cap)
   if ('liveReadsPerMessage' in b) db().settings.liveReadsPerMessage = Math.min(200, Math.max(0, Math.round(Number(b.liveReadsPerMessage)) || 0));
   if ('liveReadsPerDay' in b) db().settings.liveReadsPerDay = Math.min(100000, Math.max(0, Math.round(Number(b.liveReadsPerDay)) || 0));
   if ('huddleTurns' in b) db().settings.huddleTurns = Math.min(huddles.TURNS.max, Math.max(huddles.TURNS.min, Math.round(Number(b.huddleTurns)) || huddles.TURNS.default));
+  // Orchy in huddles (huddlecoach.mjs): on/off, and interventions per huddle, 0–6 (default 3)
+  if ('huddleCoach' in b) db().settings.huddleCoach = !!b.huddleCoach;
+  if ('huddleCoachMax' in b) db().settings.huddleCoachMax = Math.min(COACH.cap, Math.max(0, Math.round(Number(b.huddleCoachMax)) || 0));
   if ('callStuckMin' in b) db().settings.callStuckMin = Math.min(120, Math.max(1, Math.round(Number(b.callStuckMin)) || 10));
   if (b.approvals === 'decisions' || b.approvals === 'all') db().settings.approvals = b.approvals;
   if (b.askFor && typeof b.askFor === 'object') {
@@ -1432,6 +1560,10 @@ function crossSite(req) {
 // The bridge, pairing itself and the restart report carry their own proof.
 const OWNERLESS = /^\/api\/(bridge\/|pair$|backend\/restarted$)/;
 const ownerOnly = (req, pathname) => req.method !== 'GET' && req.method !== 'HEAD' && !OWNERLESS.test(pathname);
+// Reads stay open to this PC, except the contents of files in workspaces and Uploads (the viewer, task files, the
+// owner's uploads): those need a paired browser's cookie (owner.mjs#isOwnerBrowser; an <img> or <video> can't send
+// the key header). An agent's curl has no cookie, so it can't read another workspace's files through Orchy.
+const FILE_READS = /^\/api\/(artifacts\/[^/]+\/(raw|preview|media\/[^/]+)|runs\/[^/]+\/file|uploads\/[^/]+(\/preview)?)$/;
 const server = http.createServer(async (req, res) => {
   // The owner's dashboard has no login of its own: it's never served through Cloudflare (client pages are, on CLIENT_PORT)
   if (req.headers['cf-ray'] || req.headers['cf-connecting-ip']) {
@@ -1446,6 +1578,9 @@ const server = http.createServer(async (req, res) => {
       if (ownerOnly(req, pathname) && !owner.isOwner(req, PORT)) {
         const stale = owner.ownerState(req, PORT) === 'stale';
         return send(res, 401, { error: stale ? 'Pair this browser again to make changes (Orchy now keeps a second key in the page)' : 'This browser isn’t paired with Orchy, so it can’t make changes', code: 'unpaired', stale });
+      }
+      if ((req.method === 'GET' || req.method === 'HEAD') && FILE_READS.test(pathname) && !owner.isOwnerBrowser(req, PORT)) {
+        return send(res, 401, { error: 'This browser isn’t paired with Orchy, so it can’t open workspace files', code: 'unpaired' });
       }
       for (const r of routes) {
         if (r.method !== req.method) continue;
@@ -1499,6 +1634,11 @@ function voiceRefresh(full) {
   });
 }
 bus.on('event', e => { if (e.type === 'agent.created' || e.type === 'agent.updated' || e.type === 'agent.retired') voiceRefresh(e.type !== 'agent.created'); });
+
+// the artifact registry listens for file tools and run ends; media makes thumbs/posters/playable copies in the
+// background when ffmpeg is installed (optional: without it the originals still open)
+artifacts.start();
+media.startMedia();
 
 server.listen(PORT, '127.0.0.1', () => {
   const url = `http://localhost:${PORT}`;

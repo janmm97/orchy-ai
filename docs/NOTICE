@@ -13,3 +13,10 @@ Third-party components, each under its own license:
 - Silkscreen, Atkinson Hyperlegible Next and Atkinson Hyperlegible Mono typefaces (SIL Open Font
   License 1.1), dashboard/fonts/. License texts: dashboard/fonts/OFL-*.txt
 - marked (MIT) and yaml (ISC), installed with npm
+- mammoth 1.13.0 (BSD-2-Clause), installed with npm: Word (.docx) previews in the file viewer. Its own
+  dependencies: lop, option, dingbat-to-unicode (BSD-2-Clause), duck (BSD), sprintf-js (BSD-3-Clause),
+  jszip (dual MIT OR GPL-3.0-or-later; used under MIT), pako (MIT and Zlib), @xmldom/xmldom, argparse,
+  base64-js, underscore, xmlbuilder, lie, immediate, setimmediate, readable-stream, string_decoder,
+  safe-buffer, core-util-is, isarray, process-nextick-args, util-deprecate (MIT) and inherits (ISC)
+- ffmpeg and ffprobe are not shipped with Orchy. When they are installed on the machine (optional), Orchy runs
+  them as separate programs to make previews; their own licenses (LGPL/GPL, depending on the build) apply to them

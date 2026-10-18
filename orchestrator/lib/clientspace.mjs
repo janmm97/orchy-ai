@@ -247,15 +247,45 @@ export function taskFile(ws, run, rel) {
 
 // only types that can't run script open in the browser tab; anything else downloads
 const INLINE = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.csv': 'text/plain; charset=utf-8', '.log': 'text/plain; charset=utf-8' };
-/** Send a file from a task's folder. */
-export function sendTaskFile(res, file, headers = {}) {
-  const type = INLINE[path.extname(file).toLowerCase()];
-  res.writeHead(200, {
+// video and audio answer byte ranges (seeking). Their inline types are for the artifact routes only (they pass
+// `media: true`); everywhere else they still download, as before.
+export const MEDIA = { '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.opus': 'audio/ogg', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.flac': 'audio/flac' };
+
+/** `Range: bytes=…` → { start, end } (inclusive), 'bad' if it can't be satisfied, or null for a full answer. */
+export function parseRange(header, size) {
+  const m = String(header || '').trim().match(/^bytes=(\d*)-(\d*)$/i); // one range only; a list gets the whole file
+  if (!m || (m[1] === '' && m[2] === '')) return null;
+  let start, end;
+  if (m[1] === '') { const n = Number(m[2]); if (!n) return 'bad'; start = Math.max(0, size - n); end = size - 1; }
+  else { start = Number(m[1]); end = m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1); }
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start >= size || end < start) return 'bad';
+  return { start, end };
+}
+
+/**
+ * Send a file from a task's folder (video/audio: Range → 206 + Content-Range). The artifact routes (artifacts.mjs)
+ * also pass `media` (inline video/audio), `types` (more viewer-safe inline types), `download` (always an attachment),
+ * `name` (the download's name) and `cache` (a Cache-Control for previews keyed by version).
+ */
+export function sendTaskFile(res, file, headers = {}, { req = null, media = false, types = null, download = false, name = null, cache = null } = {}) {
+  const ext = path.extname(file).toLowerCase();
+  const type = INLINE[ext] || (media ? MEDIA[ext] || types?.[ext] : null);
+  const size = fs.statSync(file).size;
+  const ranged = !!MEDIA[ext];
+  const range = ranged && req ? parseRange(req.headers.range, size) : null;
+  const base = {
     ...headers,
-    'Content-Type': type || 'application/octet-stream', 'Content-Length': fs.statSync(file).size, 'Cache-Control': 'no-store',
+    'Content-Type': type || 'application/octet-stream', 'Cache-Control': cache || 'no-store',
     'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
-    'Content-Disposition': `${type ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(path.basename(file))}`,
-  });
+    'Content-Disposition': `${type && !download ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(name || path.basename(file))}`,
+    ...(ranged && { 'Accept-Ranges': 'bytes' }),
+  };
+  if (range === 'bad') { res.writeHead(416, { ...base, 'Content-Range': `bytes */${size}`, 'Content-Length': 0 }); return res.end(); }
+  if (range) {
+    res.writeHead(206, { ...base, 'Content-Range': `bytes ${range.start}-${range.end}/${size}`, 'Content-Length': range.end - range.start + 1 });
+    return fs.createReadStream(file, { start: range.start, end: range.end }).pipe(res);
+  }
+  res.writeHead(200, { ...base, 'Content-Length': size });
   fs.createReadStream(file).pipe(res);
 }
 

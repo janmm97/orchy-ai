@@ -70,6 +70,12 @@ export function ownerState(req, port) {
   return 'paired';
 }
 
+/**
+ * Reads of workspace file contents (the viewer's <img>, <video> and <iframe> can't send the key header): a cookie of
+ * a browser the owner paired is enough. A program on this PC (an agent's curl) has no cookie, so it gets nothing.
+ */
+export const isOwnerBrowser = (req, port) => ownerState(req, port) !== 'none';
+
 /** Is this request from a browser the owner paired? Its cookie and its key both have to match the same entry. */
 export const isOwner = (req, port) => ownerState(req, port) === 'paired';
 

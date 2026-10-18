@@ -166,13 +166,13 @@ export function bootReport() {
 // with the owner's OK, every time (never "always allow").
 export const GUARDED_GLOBS = [
   'orchestrator/lib/policy.mjs', 'orchestrator/lib/gate.mjs', 'orchestrator/lib/workspaces.mjs', 'orchestrator/lib/clients.mjs',
-  'orchestrator/lib/clientspace.mjs', 'orchestrator/lib/backend.mjs', 'orchestrator/lib/owner.mjs', 'orchestrator/lib/cfaccess.mjs', 'orchestrator/portal.mjs', 'orchestrator/mcp/bridge.mjs',
-  'orchestrator/scripts/restart.mjs', 'orchestrator/config.json', '.env', '.claude/**', '.codex/**', '.one/**', '.mcp.json',
+  'orchestrator/lib/clientspace.mjs', 'orchestrator/lib/backend.mjs', 'orchestrator/lib/owner.mjs', 'orchestrator/lib/cfaccess.mjs', 'orchestrator/portal.mjs', 'orchestrator/mcp/bridge.mjs', 'orchestrator/mcp/cwd-hook.mjs',
+  'orchestrator/lib/artifacts.mjs', 'orchestrator/lib/recover.mjs', 'orchestrator/lib/huddlecoach.mjs', 'orchestrator/scripts/restart.mjs', 'orchestrator/config.json', '.env', '.claude/**', '.codex/**', '.one/**', '.mcp.json',
 ];
 const GUARDED = new RegExp(`^(${GUARDED_GLOBS.map(g => g.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\/\*\*$/, '(/.*)?')).join('|')})$`, 'i');
 // …and the same rules where they're wired into other files (the dashboard's origin lock, the account check before a
 // run, Claude Code's permission tool): an edit that takes out text naming one asks too
-export const LOCK_MARKERS = /\b(accountCheck|crossSite|LOCAL_HOSTS|LOCAL_ORIGINS|oneScope|clientDenyRules|clientSettingsFile|backendSettingsFile|gateAndWait|BRIDGE_TOKEN|NO_SCHEDULER|isOwner|ownerOnly|OWNERLESS|RESTART_TOKEN|REPORT_TOKEN)\b|cf-ray|cf-connecting-ip|sec-fetch-site|permission-prompt-tool/i;
+export const LOCK_MARKERS = /\b(accountCheck|crossSite|LOCAL_HOSTS|LOCAL_ORIGINS|oneScope|clientDenyRules|clientSettingsFile|backendSettingsFile|gateAndWait|BRIDGE_TOKEN|NO_SCHEDULER|isOwner|isOwnerBrowser|ownerOnly|OWNERLESS|FILE_READS|resolveFile|retryGate|RESTART_TOKEN|REPORT_TOKEN)\b|cf-ray|cf-connecting-ip|sec-fetch-site|permission-prompt-tool/i;
 
 /** A path inside the Orchy folder as Windows reads it ("CLAUDE.md ", "x::$DATA" are the same files), relative with /, or null. */
 export function rootRel(p) {

@@ -41,11 +41,11 @@ ${logs}`;
  * Ask Claude as Orchy. With a session it remembers that conversation and can open files in Uploads
  * (its working folder, the only one Read reaches); without one it starts fresh, tool-less.
  */
-async function think(prompt, { model, session = null, timeoutMs } = {}) {
+async function think(prompt, { model, session = null, timeoutMs, purpose = 'chat', workspace = null } = {}) {
   const useResume = session?.orchySessionId;
   try {
     const r = await quickClaude({
-      prompt, model: model || config.orchy.chatModel, systemFile: orchyPersonaFile(), timeoutMs,
+      prompt, model: model || config.orchy.chatModel, systemFile: orchyPersonaFile(), timeoutMs, purpose, workspace,
       ...(session ? { cwd: UPLOADS_DIR, tools: 'Read,Glob' } : { cwd: ROOT }),
       ...(useResume ? { resume: useResume } : { sessionId: crypto.randomUUID() }),
     });
@@ -54,7 +54,7 @@ async function think(prompt, { model, session = null, timeoutMs } = {}) {
   } catch (e) {
     // only a memory Claude no longer has starts over; a timeout or outage keeps it for next time
     if (useResume && /no conversation found|session.{0,60}(not found|does not exist)/i.test(e.message)) {
-      session.orchySessionId = null; save(); return think(prompt, { model, session, timeoutMs });
+      session.orchySessionId = null; save(); return think(prompt, { model, session, timeoutMs, purpose, workspace });
     }
     throw e;
   }
@@ -83,7 +83,7 @@ export async function reply(text, { model, viaVoice, session, messageId, direct 
   try {
     // "Just answer" on a routing card: the owner chose an answer over a run, so nothing went to any agent
     const own = direct ? `${ownerName()} pressed "Just answer" on the routing card: answer this yourself. Nothing was sent to any agent, so never say you sent or handed it on. If it truly needs an agent to look something up in a client's apps, say so in one line and suggest ${ownerName()} sends it as a task.\n\n` : '';
-    const answer = await think(`${snapshot(session.id)}\n\n${threadText(session.id, messageId)}${own}${ownerName()} says: ${text}`, { model, session });
+    const answer = await think(`${snapshot(session.id)}\n\n${threadText(session.id, messageId)}${own}${ownerName()} says: ${text}`, { model, session, purpose: 'chat' });
     return say(answer || 'Hmm, I drew a blank there. Try me again?', { speak: viaVoice, session: session.id });
   } catch (e) {
     return say(`I couldn't think that through: ${e.message}`, { error: true, session: session.id });
@@ -105,7 +105,7 @@ ${filesBrief(files)}
 This is a file review: open every file before answering, and be as thorough as ${ownerName()}'s request needs. Short paragraphs and simple lists are fine here (still no tables, headings or code blocks). Point to the exact spot (page, slide, sheet, line) when it matters. Never describe anything you couldn't open; say which file and why.
 
 ${ownerName()} says: ${text || 'Have a look at this and tell me what you think.'}`;
-    const answer = await think(prompt, { model: 'sonnet', session, timeoutMs: 600_000 });
+    const answer = await think(prompt, { model: 'sonnet', session, timeoutMs: 600_000, purpose: 'review' });
     return say(answer || 'I opened it but drew a blank. Ask me something specific about it?', { speak: viaVoice, session: session.id, kind: 'review' });
   } catch (e) {
     return say(`I couldn't review that: ${e.message}`, { error: true, session: session.id });
@@ -120,6 +120,8 @@ ${ownerName()} says: ${text || 'Have a look at this and tell me what you think.'
  */
 export async function reportRun(run, ws, extra = {}) {
   const r = run.report || {};
+  // Orchy's own check of the run (validate.mjs): what's off, said in the report; flags only, nothing is re-run
+  const off = (run.validation?.checks || []).filter(c => !c.ok).map(c => `${c.name}: ${c.note || 'not ok'}`).join('; ');
   const facts = run.backend ? `You just finished working on your own code (Orchy's), because ${ownerName()} reported a problem. Tell ${ownerName()} in 1-2 short spoken sentences, in the first person, what was wrong and what you changed (or why you couldn't). Don't mention restarting, reloading or what happens next; that's said right after.
 ${ownerName()} said: ${run.instruction.slice(0, 400)}
 Outcome: ${run.outcome}
@@ -131,10 +133,11 @@ ${run.clientName ? `Started by: ${run.clientName}, from their own client page (t
 Outcome: ${run.outcome}
 Summary: ${(r.summary || run.resultText || run.error || '').slice(0, 1500)}
 Follow-ups: ${(r.follow_ups || []).join('; ') || 'none'}
-New/updated agents: ${(run.createdAgents || []).map(a => a.error ? `${a.slug} (BROKEN FILE, can't run until fixed: ${a.error.split('\n')[0]})` : a.slug).join(', ') || 'none'}`;
+New/updated agents: ${(run.createdAgents || []).map(a => a.error ? `${a.slug} (BROKEN FILE, can't run until fixed: ${a.error.split('\n')[0]})` : a.slug).join(', ') || 'none'}${off ? `
+Your own check of its report found something off (say what in one short clause, plainly, as your check, not the agent's words; don't suggest you fixed or re-ran anything): ${off.slice(0, 500)}` : ''}`;
   let text;
   try {
-    text = await think(facts, { model: config.orchy.summaryModel });
+    text = await think(facts, { model: config.orchy.summaryModel, purpose: 'report', workspace: ws.id });
   } catch {
     const ok = run.outcome === 'completed';
     text = run.backend
@@ -208,7 +211,7 @@ ${recent}
 Reply with the greeting only.`;
     let text = '';
     try {
-      text = (await think(prompt, { model: 'sonnet' }) || '').trim().replace(/^["“]|["”]$/g, '').replace(/[*_#`]/g, '');
+      text = (await think(prompt, { model: 'sonnet', purpose: 'greeting' }) || '').trim().replace(/^["“]|["”]$/g, '').replace(/[*_#`]/g, '');
     } catch (e) {
       console.warn('[orchy] greeting fell back:', e.message);
     }
