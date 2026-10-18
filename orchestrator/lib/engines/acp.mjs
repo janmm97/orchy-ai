@@ -22,6 +22,7 @@
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { killTree } from './shared.mjs';
+import { briefFor } from '../activity.mjs';
 
 export const PROTOCOL_VERSION = 1;
 /** What Orchy tells the agent it can do for it: nothing. No fs reads/writes, no terminals. */
@@ -298,7 +299,8 @@ export function launchAcpRun(opts, hooks, io = {}) {
     recorded.add(tc.toolCallId);
     flushText();
     const f = feedTool(tc, { cwd, serverNames });
-    hooks.record({ kind: 'tool', tool: f.tool, input: f.input });
+    tc.feedName = f.tool;
+    hooks.record({ kind: 'tool', tool: f.tool, toolUseId: tc.toolCallId, input: f.input });
   }
 
   function onUpdate(params) {
@@ -320,9 +322,15 @@ export function launchAcpRun(opts, hooks, io = {}) {
         const tc = mergeTool(u);
         if (!tc) return;
         maybeRecord(tc);
-        if (u.status === 'failed') {
+        if (u.status === 'failed' && !tc.endSent) {
+          tc.endSent = true;
           const out = asText(tc.rawOutput?.error ?? tc.rawOutput?.message ?? '') || (Array.isArray(tc.content) ? tc.content.map(c => c?.content?.text).filter(Boolean).join(' ') : '');
-          hooks.record({ kind: 'tool_error', text: (out || 'The tool failed').slice(0, 600) });
+          hooks.record({ kind: 'tool_error', toolUseId: tc.toolCallId, tool: tc.feedName, text: (out || 'The tool failed').slice(0, 600) });
+        }
+        // a finished tool: a safe brief only (counts), never its output
+        if (u.status === 'completed' && !tc.endSent && recorded.has(tc.toolCallId)) {
+          tc.endSent = true;
+          hooks.record({ kind: 'tool_done', toolUseId: tc.toolCallId, tool: tc.feedName, ok: true, brief: briefFor(tc.feedName, tc.content ?? tc.rawOutput) });
         }
         checkAsked(tc);
         return;

@@ -4,7 +4,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
-import { env, expandPath } from './env.mjs';
+import { env, expandPath, DATA_DIR } from './env.mjs';
+
+/** Orchy's own model calls (chat, reports, reviews…), one line each in data/orchy-costs.jsonl (the Usage tab reads it). */
+function appendOrchyCostLine(entry) {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.appendFileSync(path.join(DATA_DIR, 'orchy-costs.jsonl'), JSON.stringify(entry) + '\n');
+  } catch {}
+}
 
 /** Standard install folders for CLI tools on this OS (npm globals, Homebrew, ~/.local/bin). Finder/Dock launches have a minimal PATH, so macOS needs these. */
 export function standardBinDirs() {
@@ -115,10 +123,11 @@ export function authStatus(configDir, { force = false, maxAge = 60_000 } = {}) {
 }
 
 /**
- * One-shot Claude call (for Orchy's own replies). Returns {text, sessionId, costUsd}.
+ * One-shot Claude call (for Orchy's own replies). Returns {text, sessionId, costUsd, tokens}.
+ * `purpose` and `workspace` label its line in data/orchy-costs.jsonl.
  * Tool-less unless `tools` names some (e.g. 'Read'); they never ask, so reads outside `cwd` are refused.
  */
-export function quickClaude({ prompt, systemFile, model = 'haiku', cwd, resume, sessionId, tools = '', timeoutMs = 120_000, configDir }) {
+export function quickClaude({ prompt, systemFile, model = 'haiku', cwd, resume, sessionId, tools = '', timeoutMs = 120_000, configDir, purpose = 'orchy', workspace = null }) {
   const args = ['-p', '--output-format', 'json', '--model', model, '--tools', tools, '--strict-mcp-config', '--disable-slash-commands'];
   if (tools) args.push('--permission-mode', 'dontAsk');
   if (systemFile) args.push('--append-system-prompt-file', systemFile);
@@ -136,7 +145,13 @@ export function quickClaude({ prompt, systemFile, model = 'haiku', cwd, resume, 
       try {
         const j = JSON.parse(out);
         if (j.is_error) return reject(new Error(j.result || 'Claude returned an error'));
-        resolve({ text: (j.result || '').trim(), sessionId: j.session_id, costUsd: j.total_cost_usd });
+        const u = j.usage;
+        const input = u ? (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0) : 0;
+        const output = u ? (u.output_tokens || 0) : 0;
+        const tokens = u ? { input, output, total: input + output, uncachedInput: u.input_tokens || 0, cacheRead: u.cache_read_input_tokens || 0, cacheCreate: u.cache_creation_input_tokens || 0 } : null;
+        const costUsd = typeof j.total_cost_usd === 'number' ? Math.round(j.total_cost_usd * 100000) / 100000 : null;
+        appendOrchyCostLine({ t: new Date().toISOString(), purpose, costUsd, model, ...(tokens ? { tokens } : {}), ...(workspace ? { workspace } : {}) });
+        resolve({ text: (j.result || '').trim(), sessionId: j.session_id, costUsd: j.total_cost_usd, tokens });
       } catch {
         reject(new Error((err || out || `claude exited ${code}`).trim().slice(0, 600)));
       }

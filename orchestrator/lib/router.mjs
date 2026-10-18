@@ -9,6 +9,7 @@ import { workspaces, tierModel, modelsFor, modelFor, handles, BACKEND_ID } from 
 import { listAgents, BUILDER_SLUG } from './agents.mjs';
 import { db } from './store.mjs';
 import { nameOf } from './voiceagents.mjs';
+import { budgetLine, budgetPace } from './usagereview.mjs';
 
 function agentKey(wsId, slug) { return `${wsId}/${slug || 'general'}`; }
 
@@ -219,7 +220,7 @@ const statusQuestion = () => ({
  * `ask`, `workspaces`, `agents`, `names` (voice names) and `primer` (jev-primer.md) let tests fake Jev and the setup. `purpose` labels the Jev call in the log
  * ('live' when Jev reads as the owner types, livejev.mjs). `files`: names of files the owner attached to the message.
  */
-export async function route(text, { recent = [], runs = [], files = [], purpose = 'routing', ask: askJev = ask,workspaces: all = workspaces(), agents: allAgents = listAgents(), names = nameOf, primer = jevPrimer() } = {}) {
+export async function route(text, { recent = [], runs = [], files = [], purpose = 'routing', ask: askJev = ask,workspaces: all = workspaces(), agents: allAgents = listAgents(), names = nameOf, primer = jevPrimer(), budget = currentBudget() } = {}) {
   const wss = all.filter(w => w.enabled);
   const live = new Set(wss.map(w => w.id));
   const agents = allAgents.filter(a => !a.isBuilder && live.has(a.workspace));
@@ -272,6 +273,7 @@ export async function route(text, { recent = [], runs = [], files = [], purpose 
     workspace_named_earlier_in_conversation: lastNamed || '(none)',
     earlier_tasks_by_workspace: earlierTasks(text, wss),
     ...(runs.length ? { runs_earlier_in_this_conversation: runs.map((r, i) => `r${i}: ${clipRun(r)}`).join('\n') } : {}),
+    ...(budget?.line ? { usage_this_week: budget.line } : {}),
   };
   const questions = {
     intent: {
@@ -296,7 +298,7 @@ export async function route(text, { recent = [], runs = [], files = [], purpose 
     },
     agent: {
       type: 'choice',
-      instructions: `Which agent is the best fit to do this work? An agent ${ownerName()} names (agents_named_in_instruction) is the one ${ownerName()} means; with two, the first named leads. Changing an agent or what it may use is its workspace's AI Agent Builder's job.`,
+      instructions: `Which agent is the best fit to do this work? An agent ${ownerName()} names (agents_named_in_instruction) is the one ${ownerName()} means; with two, the first named leads. Changing an agent or what it may use is its workspace's AI Agent Builder's job.` + (budget?.tight ? ' Usage is running high this week (usage_this_week): for a small, quick ask that needs no specialist knowledge, the workspace generalist is the cheaper fit.' : ''),
       criteria: agentCriteria,
     },
     effort: {
@@ -396,16 +398,24 @@ export async function route(text, { recent = [], runs = [], files = [], purpose 
   if (intent === 'task' && agentWs === wsChoice && agentSlug) pickedAgent = agentSlug;
 
   const score = A.effort?.score ?? 1;
-  const tier = score < 0.6 ? 0 : score < 1.5 ? 1 : 2;
+  let tier = score < 0.6 ? 0 : score < 1.5 ? 1 : 2;
+  // budget-aware: when the week runs high, a score just over a tier boundary (a close call) takes the cheaper tier
+  const leaned = !!budget?.tight && intent === 'task' && ((tier === 2 && score < 1.5 + BUDGET_MARGIN) || (tier === 1 && score < 0.6 + BUDGET_MARGIN));
+  if (leaned) tier -= 1;
   const chosen = wss.find(w => w.id === wsChoice);
-  // an agent pinned to its own engine (a Codex agent in a Claude workspace) runs on its own model
-  const pinned = pickedAgent ? agents.find(a => a.workspace === wsChoice && a.slug === pickedAgent && a.engine) : null;
+  const pickedAgentObj = pickedAgent ? agents.find(a => a.workspace === wsChoice && a.slug === pickedAgent) : null;
+  // an agent pinned to its own engine (a Codex agent in a Claude workspace) runs on its own model; any other agent
+  // with a model in its frontmatter runs on exactly that one (ceilingTierModel); the rest get the tier
+  const pinned = pickedAgentObj?.engine ? pickedAgentObj : null;
+  const taskModel = chosen ? (intent === 'build_agent' ? tierModel(chosen, 2)
+    : pinned ? modelFor(chosen, pinned.model, pinned.engine)
+    : ceilingTierModel(chosen, pickedAgentObj, tier)) : null;
 
   return finalize({
     intent,
     workspace: wsChoice || null,
     agent: intent === 'build_agent' ? BUILDER_SLUG : pickedAgent,
-    model: chosen ? (intent === 'build_agent' ? tierModel(chosen, 2) : pinned ? modelFor(chosen, pinned.model, pinned.engine) : tierModel(chosen, tier)) : null,
+    model: taskModel,
     tier: intent === 'build_agent' ? 2 : tier,
     confidence: Math.min(cont ? erP : wsConf || 0, A.intent?.confidence ?? 1),
     source: forced ? 'jev+mention' : 'jev',
@@ -422,8 +432,51 @@ export async function route(text, { recent = [], runs = [], files = [], purpose 
     earlierRun,
     statusAbout: A.status_about?.choice ? { kind: A.status_about.choice, confidence: A.status_about.confidence ?? 0 } : null,
     effortScore: score,
+    ...(budget?.pace != null ? { budget: { pace: budget.pace, leaned } } : {}),
     jev: { model: res.model, ms: res.ms, via: res.via, usage: res.usage },
   });
+}
+
+const BUDGET_MARGIN = 0.15; // how far over a tier boundary still counts as a close call when the week runs high
+
+/** This week's usage vs a usual week, for routing (usagereview.mjs). Never blocks routing. */
+function currentBudget() {
+  try {
+    const line = budgetLine();
+    if (!line) return null;
+    const p = budgetPace();
+    return { line, pace: p.pace, tight: p.tight };
+  } catch { return null; }
+}
+
+/** The model for an agent at a tier: an agent's own frontmatter model, exactly, when it names one this engine has;
+ *  only the generalist and agents without a model take tierModel(ws, tier, runtime). */
+export function ceilingTierModel(ws, agent, tier, runtime = agent?.engine || ws.runtime) {
+  const list = modelsFor(ws, runtime);
+  if (agent?.model && agent.model !== 'inherit') {
+    const exact = modelFor(ws, agent.model, runtime);
+    if (list.includes(exact)) return exact;
+  }
+  return tierModel(ws, Math.max(0, Math.min(tier, list.length - 1)), runtime);
+}
+
+/**
+ * The model for a run that didn't go through Jev (a pane's "Give a task", a follow-up, a schedule, a hand-off): the
+ * agent's own model when it has one, else a tier read from the size of the ask (small lookups light, big strategy
+ * work strong, everything else the middle).
+ */
+export function unroutedModel(ws, agent, instruction = '', { kind = 'task', isScheduled = false, isDelegated = false, isFollowUp = false, runtime = agent?.engine || ws.runtime } = {}) {
+  if (kind === 'build' || agent?.isBuilder) return tierModel(ws, 2, runtime);
+  const t = String(instruction || '').trim();
+  let tier = 1;
+  if (isScheduled || isDelegated) {
+    tier = t.length > 0 && t.length < 70 && /^(?:check|list|count|ping|status)\b/i.test(t) ? 0 : 1;
+  } else if (t.length > 0 && t.length < 95 && /^(?:what|where|when|who|show|list|send me|give me|share)\b/i.test(t) && !/\b(?:write|build|draft|create|analyse|analyze|research|audit|design|plan|refactor|update|change|fix)\b/i.test(t)) {
+    tier = 0;
+  } else if (!isFollowUp && (t.length > 420 || /\b(?:architect|comprehensive|deep[- ]dive|full audit|strategy|contract|legal|financial model|board deck|rewrite entire)\b/i.test(t))) {
+    tier = 2;
+  }
+  return ceilingTierModel(ws, agent, tier, runtime);
 }
 
 /** When the owner moves a card to another workspace, keep the same strength of model on its engine. */

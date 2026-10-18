@@ -84,7 +84,10 @@ export function dueSlots(agents, at = new Date(), scheduled = {}) {
   });
 }
 
-export function startScheduler({ startRun, onStarted, onError }) {
+// Scheduled slots wait while this many runs are live: a slot held back still runs within its lateness window
+export const HOLD_AT_LIVE = 2;
+
+export function startScheduler({ startRun, liveCount = () => 0, onStarted, onError }) {
   const st = db();
   st.scheduled ||= {};
   let ticking = false; // starting runs can outlast the 20s interval: one tick at a time, so no slot starts twice
@@ -98,7 +101,10 @@ export function startScheduler({ startRun, onStarted, onError }) {
       const idle = dueSlots(agents.filter(a => !on.has(a.workspace)), new Date(), st.scheduled);
       for (const d of idle) for (const k of [d.key, ...d.passed.map(p => p.key)]) st.scheduled[k] = new Date().toISOString();
       if (idle.length) save();
-      for (const { agent: a, key, late, slot, passed } of dueSlots(agents.filter(a => on.has(a.workspace)), new Date(), st.scheduled)) {
+      // while HOLD_AT_LIVE or more runs are live, scheduled slots wait (they catch up within the window once fewer are)
+      const busy = () => (Number(liveCount()) || 0) >= HOLD_AT_LIVE;
+      for (const { agent: a, key, late, slot, passed } of busy() ? [] : dueSlots(agents.filter(a => on.has(a.workspace)), new Date(), st.scheduled)) {
+        if (busy()) break;
         if (st.scheduled[key]) continue;
         st.scheduled[key] = new Date().toISOString();
         for (const p of passed) st.scheduled[p.key] = st.scheduled[key];

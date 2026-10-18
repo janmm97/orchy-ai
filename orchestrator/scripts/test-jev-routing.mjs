@@ -1,6 +1,6 @@
 // What Orchy does with Jev's routing answers, with Jev faked: follow-ups to earlier runs, quick status
 // answers, and when a card waits for the owner instead of counting down. Run: node orchestrator/scripts/test-jev-routing.mjs
-import { route as realRoute, earlierRuns, earlierRunQuestion } from '../lib/router.mjs';
+import { route as realRoute, earlierRuns, earlierRunQuestion, ceilingTierModel, unroutedModel } from '../lib/router.mjs';
 import { quickStatus } from '../lib/status.mjs';
 import { db } from '../lib/store.mjs';
 import { tierModel } from '../lib/workspaces.mjs';
@@ -18,10 +18,11 @@ const AGENTS = [
   { workspace: 'alpha', slug: 'support', displayName: 'Support Agent', description: 'Answers the support inbox' },
   { workspace: 'beta', slug: 'editor', displayName: 'Editor', description: 'Edits lab reports' },
 ];
-const route = (text, opts) => realRoute(text, { workspaces: Object.values(W), agents: AGENTS, ...opts });
+// budget: null keeps this week's real usage on this PC out of the test
+const route = (text, opts) => realRoute(text, { workspaces: Object.values(W), agents: AGENTS, budget: null, ...opts });
 const agent = 'support';
 let asked = null;
-const jev = ({ intent = 'task', intentP = { task: 0.9, chat: 0.05, status: 0.05 }, agentConf = 0.8, status = ['other', 0.9], earlier = null, ws = 'alpha', pick = `alpha/${agent}` } = {}) => async (state, questions, opts) => {
+const jev = ({ intent = 'task', intentP = { task: 0.9, chat: 0.05, status: 0.05 }, agentConf = 0.8, status = ['other', 0.9], earlier = null, ws = 'alpha', pick = `alpha/${agent}`, effort = 1 } = {}) => async (state, questions, opts) => {
   asked = { state, questions, opts };
   return {
     model: 'fake', ms: 1,
@@ -29,7 +30,7 @@ const jev = ({ intent = 'task', intentP = { task: 0.9, chat: 0.05, status: 0.05 
       intent: { choice: intent, confidence: intentP[intent] ?? 0.9, probabilities: intentP },
       workspace: { choice: ws, confidence: 0.9, probabilities: { [ws]: 0.9 } },
       agent: { choice: pick, confidence: agentConf, probabilities: { [pick]: agentConf } },
-      effort: { score: 1 },
+      effort: { score: effort },
       status_about: { choice: status[0], confidence: status[1] },
       ...(earlier ? { earlier_run: { choice: earlier[0], confidence: earlier[1] } } : {}),
     },
@@ -151,6 +152,38 @@ const runs = [
     ok(a?.runId === done.id && /finished|trouble|stopped|blocked/.test(a.text) && a.text.includes(done.report.summary.slice(0, 30).replace(/\s+/g, ' ')), 'a run: its report, with a link to it', a?.text?.slice(0, 120));
   }
   ok(quickStatus({ intent: 'status', statusAbout: { kind: 'run', confidence: 0.9 } }) === null, 'a run question without a run Jev is sure of goes to Orchy');
+}
+
+// ── budget-aware routing (usagereview.mjs): a high week takes the cheaper tier on a close call only ──
+{
+  const tight = { line: 'Agent runs in the last 7 days: $900, 200% of a usual week ($450). Usage is running high.', pace: 2, tight: true };
+  const calm = { line: 'Agent runs in the last 7 days: $400, 90% of a usual week ($450). Usage is within the usual range.', pace: 0.9, tight: false };
+  const close = await route('draft the support reply for Alpha', { ask: jev({ effort: 1.55 }), budget: tight });
+  ok(close.tier === 1 && close.budget?.leaned === true, 'high week: a score just over the top boundary takes the middle tier', JSON.stringify({ t: close.tier, b: close.budget }));
+  ok(asked.state.usage_this_week === tight.line && /generalist is the cheaper fit/.test(asked.questions.agent.instructions), 'Jev is told the week, and to prefer the generalist for small asks');
+  const clear = await route('draft the support reply for Alpha', { ask: jev({ effort: 1.9 }), budget: tight });
+  ok(clear.tier === 2 && !clear.budget.leaned, 'high week: a clearly complex task keeps the top tier', JSON.stringify({ t: clear.tier }));
+  const lowEdge = await route('check the support inbox for Alpha', { ask: jev({ effort: 0.65 }), budget: tight });
+  ok(lowEdge.tier === 0, 'high week: just over the low boundary takes the cheapest tier', String(lowEdge.tier));
+  const normal = await route('draft the support reply for Alpha', { ask: jev({ effort: 1.55 }), budget: calm });
+  ok(normal.tier === 2 && !normal.budget.leaned && !/cheaper fit/.test(asked.questions.agent.instructions), 'usual week: no lean', JSON.stringify({ t: normal.tier }));
+  const none = await route('draft the support reply for Alpha', { ask: jev({ effort: 1.55 }), budget: null });
+  ok(none.tier === 2 && !('usage_this_week' in asked.state) && !('budget' in none), 'no history: no budget line, no lean');
+}
+
+// ── models: an agent's own model is exact; tiers only for the generalist and agents without one ──
+{
+  const ws = W.alpha;
+  const own = { workspace: 'alpha', slug: 'writer', model: 'haiku' };
+  ok(ceilingTierModel(ws, own, 2) === 'haiku' && ceilingTierModel(ws, null, 2) === tierModel(ws, 2) && ceilingTierModel(ws, { model: 'inherit' }, 0) === tierModel(ws, 0), 'ceilingTierModel: the agent’s model exactly, else the tier');
+  const routed = await route('draft the support reply for Alpha', { agents: [...AGENTS, { workspace: 'alpha', slug: 'writer', displayName: 'Writer', description: 'Writes', model: 'haiku' }], ask: jev({ effort: 1.9, pick: 'alpha/writer' }) });
+  ok(routed.agent === 'writer' && routed.model === 'haiku', 'a routed task to an agent with a model runs on that model', JSON.stringify({ a: routed.agent, m: routed.model }));
+  ok(unroutedModel(ws, null, 'what is the link to the deck?') === tierModel(ws, 0), 'unrouted: a short lookup takes the light tier');
+  ok(unroutedModel(ws, null, 'Draft the reply to the supplier about the late order') === tierModel(ws, 1), 'unrouted: ordinary work takes the middle tier');
+  ok(unroutedModel(ws, null, 'Write a comprehensive strategy for next year') === tierModel(ws, 2), 'unrouted: big strategy work takes the top tier');
+  ok(unroutedModel(ws, null, 'Write a comprehensive strategy for next year', { isFollowUp: true }) === tierModel(ws, 1), 'unrouted: a follow-up never jumps to the top tier on its words alone');
+  ok(unroutedModel(ws, own, 'Write a comprehensive strategy') === 'haiku' && unroutedModel(ws, { isBuilder: true }, 'x') === tierModel(ws, 2), 'unrouted: the agent’s own model wins; the builder works on the top tier');
+  ok(unroutedModel(ws, null, 'check the inbox', { isScheduled: true }) === tierModel(ws, 0) && unroutedModel(ws, null, 'Prepare the weekly numbers', { isDelegated: true }) === tierModel(ws, 1), 'unrouted: schedules and hand-offs stay light or middle');
 }
 
 console.log(fail ? `\n${fail} failing` : '\nall pass');

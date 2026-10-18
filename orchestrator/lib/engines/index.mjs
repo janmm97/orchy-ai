@@ -24,6 +24,10 @@
 //   launch(run, ws, opts, rt)        start the run; register rt.live.set(run.id, { fingerprint, stop }) and set run.pid.
 //                                    opts: { prompt, agentSlug, agentMarkdown, mcp, resume, fingerprint, planText }
 //                                    rt (runner.mjs): { live, record, finish, save, hooks(run, ws), instructions(…), … }
+//                                    Events carry `toolUseId` on tool / tool_done / tool_error; a finished tool's
+//                                    tool_done has a counts-only `brief` (rt.briefFor). A run that fails on its
+//                                    account's session/usage limit (rt.SESSION_LIMIT_RE) pauses via rt.limitPause;
+//                                    engines using rt.hooks get both for free.
 import claude from './claude.mjs';
 import codex from './codex.mjs';
 import opencode from './opencode.mjs';

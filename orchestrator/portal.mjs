@@ -82,7 +82,8 @@ export function clientRun(r) {
   // what they asked (the note about attached files is shown as file chips instead); the owner's follow-ups are scrubbed too
   const asked = String(r.instruction || '').replace(/\n\nFiles (?:[^\n]*) attached \(in this folder; open them with Read\):[\s\S]*$/, '');
   return {
-    id: r.id, agent: r.agentSlug, agentName: r.agentName, status: r.status, outcome: r.outcome || null,
+    // a run waiting its turn on the owner's account (queued, or paused on a usage limit) is just "starting" to the client
+    id: r.id, agent: r.agentSlug, agentName: r.agentName, status: r.status === 'queued' || r.status === 'paused-limit' ? 'starting' : r.status, outcome: r.outcome || null,
     instruction: r.ownerReply ? s(asked) : asked,
     by: r.ownerReply ? ownerName() : null, files: (r.files || []).map(p => path.posix.basename(p)),
     startedAt: r.startedAt, endedAt: r.endedAt || null, parentRunId: r.parentRunId || null,

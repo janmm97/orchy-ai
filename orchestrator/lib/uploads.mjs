@@ -180,6 +180,47 @@ function pptxText(zip) {
   }).join('\n\n'));
 }
 
+// ── Office files as tables and slides, for previews (no dependency: the same small zip reader as above) ──
+const colIndex = ref => { let n = 0; for (const ch of String(ref).replace(/\d+$/, '').toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64); return n - 1; };
+
+/** The sheets of an .xlsx: [{ name, rows: [[cell…]], truncated }], values as Excel stores them (dates stay serials). */
+export function xlsxSheets(file, { maxRows = 1000, maxCols = 200, maxSheets = 20 } = {}) {
+  const zip = unzip(fs.readFileSync(file));
+  const shared = zip.has('xl/sharedStrings.xml') ? [...zip.get('xl/sharedStrings.xml')().matchAll(/<si>([\s\S]*?)<\/si>/g)].map(m => unxml(m[1])) : [];
+  const names = zip.has('xl/workbook.xml') ? [...zip.get('xl/workbook.xml')().matchAll(/<sheet\b[^>]*\bname="([^"]*)"/g)].map(m => unxml(m[1])) : [];
+  return numbered(zip, /^xl\/worksheets\/sheet\d+\.xml$/).slice(0, maxSheets).map((k, i) => {
+    const rows = [];
+    let truncated = false;
+    for (const r of zip.get(k)().matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
+      if (rows.length >= maxRows) { truncated = true; break; }
+      const row = [];
+      for (const c of r[1].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+        const at = c[1].match(/\br="([A-Z]+\d+)"/)?.[1];
+        const col = at ? colIndex(at) : row.length;
+        if (col < 0 || col >= maxCols) { if (col >= maxCols) truncated = true; continue; }
+        const type = c[1].match(/\bt="(\w+)"/)?.[1];
+        const v = c[2]?.match(/<v>([\s\S]*?)<\/v>/)?.[1];
+        const val = type === 's' ? shared[Number(v)] ?? '' : type === 'inlineStr' ? unxml(c[2]?.match(/<is>([\s\S]*?)<\/is>/)?.[1] || '') : type === 'b' ? (v === '1' ? 'TRUE' : 'FALSE') : v != null ? unxml(v) : '';
+        while (row.length < col) row.push('');
+        row[col] = val.slice(0, 2000);
+      }
+      rows.push(row);
+    }
+    while (rows.length && rows.at(-1).every(v => !v)) rows.pop();
+    return { name: names[i] || `Sheet ${i + 1}`, rows, truncated };
+  });
+}
+
+/** The slides of a .pptx: [{ n, text, notes }]. */
+export function pptxSlides(file) {
+  const zip = unzip(fs.readFileSync(file));
+  const text = x => tidy(unxml(x.replace(/<\/a:p>/g, '\n')));
+  return numbered(zip, /^ppt\/slides\/slide\d+\.xml$/).map((k, i) => {
+    const notes = zip.get(`ppt/notesSlides/notesSlide${k.match(/(\d+)\.xml$/)[1]}.xml`);
+    return { n: i + 1, text: text(zip.get(k)()), notes: notes ? text(notes()).replace(/\s+/g, ' ').trim() : '' };
+  });
+}
+
 function odfText(zip) {
   return zip.has('content.xml') ? tidy(unxml(zip.get('content.xml')().replace(/<\/text:(p|h)>/g, '\n').replace(/<text:tab\/>/g, '\t').replace(/<\/table:table-cell>/g, '\t').replace(/<\/table:table-row>/g, '\n'))) : '';
 }

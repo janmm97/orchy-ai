@@ -9,6 +9,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { env, expandPath } from './env.mjs';
 import { findBinary } from './claude.mjs';
+import { briefFor } from './activity.mjs';
 
 const verOf = d => (d.match(/-(\d+(?:\.\d+)*)/)?.[1] || '0').split('.').map(Number);
 const newer = (a, b) => { const x = verOf(a), y = verOf(b); for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (y[i] || 0) - (x[i] || 0); return 0; };
@@ -198,6 +199,33 @@ export function unwrapShell(cmd) {
 const toolNameOf = (msg = '') => msg.match(/tool "([^"]+)"/)?.[1] || null;
 
 /**
+ * A finished Codex tool item as a run event: failure → tool_error, declined → tool_done ok:false, anything else →
+ * tool_done ok:true with a safe brief (counts, never output). Other item types → null.
+ */
+export function codexCompleted(it = {}) {
+  const toolUseId = it.id;
+  if (it.type === 'commandExecution') {
+    if (it.status === 'failed') return { kind: 'tool_error', toolUseId, tool: 'Bash', text: it.exitCode ? `Exit ${it.exitCode}: ${String(it.aggregatedOutput || '').trim().slice(-600)}` : 'The command failed.' };
+    if (it.status === 'declined') return { kind: 'tool_done', toolUseId, tool: 'Bash', ok: false, brief: 'declined' };
+    return { kind: 'tool_done', toolUseId, tool: 'Bash', ok: true, brief: briefFor('Bash', it.aggregatedOutput) };
+  }
+  if (it.type === 'mcpToolCall') {
+    const tool = `mcp__${it.server}__${it.tool}`;
+    if (it.error?.message) return { kind: 'tool_error', toolUseId, tool, text: it.error.message.slice(0, 600) };
+    if (it.status === 'failed') return { kind: 'tool_error', toolUseId, tool, text: 'The tool call failed.' };
+    return { kind: 'tool_done', toolUseId, tool, ok: true, brief: briefFor(tool, it.result?.content ?? it.result) };
+  }
+  if (it.type === 'fileChange') {
+    if (it.status === 'failed') return { kind: 'tool_error', toolUseId, tool: 'Edit', text: 'A file edit failed to apply.' };
+    if (it.status === 'declined') return { kind: 'tool_done', toolUseId, tool: 'Edit', ok: false, brief: 'declined' };
+    const n = (it.changes || []).length;
+    return { kind: 'tool_done', toolUseId, tool: 'Edit', ok: true, brief: n ? `${n} file${n === 1 ? '' : 's'}` : 'saved' };
+  }
+  if (it.type === 'webSearch') return { kind: 'tool_done', toolUseId, tool: 'WebSearch', ok: true, brief: 'done' };
+  return null;
+}
+
+/**
  * Run one Codex turn for a Orchy run.
  * opts: { cwd, codexHome, model, effort, prompt, developerInstructions, mcpServers, resumeThreadId }
  * hooks: {
@@ -231,16 +259,16 @@ export function launchCodexRun(opts, hooks) {
       const it = p.item || {};
       if (it.type === 'commandExecution') {
         const shown = (it.commandActions || []).map(a => a.command).filter(Boolean).join(' && ') || unwrapShell(it.command).command;
-        hooks.record({ kind: 'tool', tool: 'Bash', input: { command: shown }, codex: 'command' });
+        hooks.record({ kind: 'tool', tool: 'Bash', toolUseId: it.id, input: { command: shown }, codex: 'command' });
       } else if (it.type === 'mcpToolCall') {
         lastMcp.set(it.server, it.tool);
-        hooks.record({ kind: 'tool', tool: `mcp__${it.server}__${it.tool}`, input: it.arguments || {}, codex: 'mcp' });
+        hooks.record({ kind: 'tool', tool: `mcp__${it.server}__${it.tool}`, toolUseId: it.id, input: it.arguments || {}, codex: 'mcp' });
       } else if (it.type === 'fileChange') {
         const paths = (it.changes || []).map(c => c.path);
         fileChanges.set(it.id, paths);
-        hooks.record({ kind: 'tool', tool: 'Edit', input: { file_path: paths[0] || '' }, codex: 'patch', extra: paths.length > 1 ? paths.length - 1 : 0 });
+        hooks.record({ kind: 'tool', tool: 'Edit', toolUseId: it.id, input: { file_path: paths[0] || '' }, codex: 'patch', extra: paths.length > 1 ? paths.length - 1 : 0 });
       } else if (it.type === 'webSearch') {
-        hooks.record({ kind: 'tool', tool: 'WebSearch', input: { query: it.query || it.action?.query || '' }, codex: 'search' });
+        hooks.record({ kind: 'tool', tool: 'WebSearch', toolUseId: it.id, input: { query: it.query || it.action?.query || '' }, codex: 'search' });
       }
       return;
     }
@@ -250,12 +278,9 @@ export function launchCodexRun(opts, hooks) {
         lastText = it.text.trim();
         if (it.phase === 'final_answer') finalText = lastText;
         hooks.record({ kind: 'text', text: lastText });
-      } else if (it.type === 'commandExecution' && it.status === 'failed' && it.exitCode) {
-        hooks.record({ kind: 'tool_error', text: `Exit ${it.exitCode}: ${String(it.aggregatedOutput || '').trim().slice(-600)}` });
-      } else if (it.type === 'mcpToolCall' && it.error?.message) {
-        hooks.record({ kind: 'tool_error', text: it.error.message.slice(0, 600) });
-      } else if (it.type === 'fileChange' && it.status === 'failed') {
-        hooks.record({ kind: 'tool_error', text: 'A file edit failed to apply.' });
+      } else {
+        const done = codexCompleted(it);
+        if (done) hooks.record(done);
       }
       return;
     }

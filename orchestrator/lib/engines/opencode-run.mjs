@@ -18,6 +18,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { killTree } from './shared.mjs';
+import { briefFor } from '../activity.mjs';
 import { mapTool, permissionLooksSafe, modelParts, serverNamesOf, guardConfig } from './opencode-config.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -256,11 +257,16 @@ export function launchOpenCodeRun(opts, hooks, io = {}) {
       const shown = name === 'Bash' ? { command: input.command || '' }
         : name === 'Edit' || name === 'Write' || name === 'Read' ? { file_path: input.filePath || input.file_path || '' }
           : input;
-      hooks.record({ kind: 'tool', tool: name, input: shown });
+      hooks.record({ kind: 'tool', tool: name, toolUseId: key, input: shown });
     }
     if (status === 'error' && !texted.has(`err:${key}`)) {
       texted.add(`err:${key}`);
-      hooks.record({ kind: 'tool_error', text: String(state.error || 'The tool failed').slice(0, 600) });
+      hooks.record({ kind: 'tool_error', toolUseId: key, tool: name, text: String(state.error || 'The tool failed').slice(0, 600) });
+    }
+    // a finished tool: a safe brief only (counts), never its output
+    if (status === 'completed' && recorded.has(key) && !texted.has(`done:${key}`)) {
+      texted.add(`done:${key}`);
+      hooks.record({ kind: 'tool_done', toolUseId: key, tool: name, ok: true, brief: briefFor(name, state.output) });
     }
   };
 

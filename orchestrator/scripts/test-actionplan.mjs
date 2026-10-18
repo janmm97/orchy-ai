@@ -4,7 +4,7 @@
 // --live asks the real Jev and One (read-only in the apps: find/load) and prints the plan and its timings.
 // It leaves state.json alone, but logs its Jev calls to data/jev-calls.jsonl and may refresh One's app list
 // in data/platforms.json.
-import { agentActions, safeIntent, choose, budgetDocs, planText, buildPlan, planFor, planLine, demote, skipReason } from '../lib/actionplan.mjs';
+import { agentActions, safeIntent, choose, budgetDocs, planText, buildPlan, planFor, planLine, demote, skipReason, trimActionDoc, LIMITS } from '../lib/actionplan.mjs';
 import { workspace, workspaces } from '../lib/workspaces.mjs';
 import { getAgent } from '../lib/agents.mjs';
 
@@ -71,6 +71,27 @@ Notion:
   ok(planText([], []) === '', 'no picks, no section');
   const doc = ['# Get', '## Body', '```bash', '# a comment', '```', '##### deep'].join('\n');
   ok(demote(doc) === ['### Get', '#### Body', '```bash', '# a comment', '```', '##### deep'].join('\n'), 'doc headings pushed under the action, code left alone', JSON.stringify(demote(doc)));
+}
+
+// ── trimmed docs: method, URL, required params and one short sample; no error tables or response dumps ──
+{
+  const doc = [
+    '# Send Email', 'POST https://api.example.com/v1/messages', '', '## Required parameters', '- to: string', '- subject: string', '',
+    '```bash', 'one --agent actions execute gmail X KEY -d \'{"to":"a@example.com"}\'', '```', '',
+    '```json', '{"second":"sample"}', '```', '',
+    '## Errors', '| 400 | Bad request |', '| 401 | Unauthorized |', '### Error codes', 'x', '',
+    '## Response schema', '{"id":"…"}', '', '## Notes', 'Keep the thread id.',
+    '| 429 | Too many requests |',
+  ].join('\n');
+  const t = trimActionDoc(doc);
+  ok(t.includes('POST https://api.example.com/v1/messages') && t.includes('- subject: string') && t.includes('actions execute gmail'), 'trimmed doc keeps method, URL, required params and the first sample', t);
+  ok(!t.includes('"second"') && !/\| (400|401|429) \|/.test(t) && !/Errors|Error codes|Response schema/.test(t) && t.includes('Keep the thread id.'), 'trimmed doc drops the second sample, error tables, error and response sections, keeps later notes', t);
+  const long = trimActionDoc(['```', 'y'.repeat(2000), '```'].join('\n'));
+  ok(long.length < 700 && long.includes('// …'), 'a long sample is cut short', String(long.length));
+  ok(trimActionDoc('') === '' && trimActionDoc(null) === null, 'empty docs stay empty');
+  ok(LIMITS.maxActions === 3 && LIMITS.docsChars === 12_000, 'plans hold the top 3 actions and 12k characters of docs');
+  const b = budgetDocs([{ docs: `# A\n## Errors\n${'| 400 | x |\n'.repeat(200)}` }], 100);
+  ok(b[0].withDocs && b[0].docs.length < 100, 'the budget counts the trimmed docs');
 }
 
 // ── buildPlan with fakes (a made-up workspace: nothing here depends on the owner's setup) ──

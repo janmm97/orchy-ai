@@ -52,6 +52,8 @@ function launchClaude(rt, run, ws, { prompt, agentSlug, mcpFile, resume, fingerp
   const args = [
     '-p', '--output-format', 'stream-json', '--verbose',
     '--model', model,
+    // the agent's `effort:` (frontmatter), as Codex gets it
+    ...(run.effort ? ['--effort', run.effort] : []),
     '--mcp-config', mcpFile, '--strict-mcp-config',
     // a client's run edits nothing without the gate (default mode asks for every edit; the gate allows its own folder),
     // and a huddle turn changes nothing at all (no edit tools; every command passes the gate's talk-only rule)
@@ -100,12 +102,24 @@ function launchClaude(rt, run, ws, { prompt, agentSlug, mcpFile, resume, fingerp
   child.stderr.on('data', x => { stderr = (stderr + x).slice(-4000); });
   child.on('error', e => { stderr += `\n${e.message}`; });
   child.on('close', code => {
+    const entry = rt.live.get(run.id);
     const failed = code !== 0 || run.apiError;
-    if (failed && run.status !== 'stopping' && !run.report && !rt.live.get(run.id)?.acted
-      && AUTH_RACE.test(`${run.apiError || ''}\n${stderr}`) && (run.authRetries || 0) < AUTH_RETRIES) {
+    const errText = `${run.apiError || ''}\n${stderr}\n${run.resultText || ''}`;
+    if (failed && run.status !== 'stopping' && !run.report && !entry?.acted
+      && AUTH_RACE.test(errText) && (run.authRetries || 0) < AUTH_RETRIES) {
       return retryAfterAuthRace(rt, run, ws, fingerprint, () => {
         if (!resume) run.sessionId = crypto.randomUUID(); // the failed attempt may have claimed the old id
         launchClaude(rt, run, ws, { prompt, agentSlug, mcpFile, resume, fingerprint, planText });
+      });
+    }
+    // the account's session/usage limit: the run pauses (runner.mjs) and starts again when the window resets,
+    // in the same conversation once it has acted, else from the start
+    if (failed && run.status !== 'stopping' && !run.report && !run.huddleTalk && rt.SESSION_LIMIT_RE?.test(errText)) {
+      const again = entry?.acted ? run.sessionId : resume;
+      return rt.limitPause(run, ws, (run.apiError || stderr || 'Claude session/usage limit reached').trim(), () => {
+        run.apiError = null;
+        if (!again) run.sessionId = crypto.randomUUID();
+        launchClaude(rt, run, ws, { prompt, agentSlug, mcpFile, resume: again, fingerprint, planText });
       });
     }
     rt.finish(run, ws, code, stderr);
