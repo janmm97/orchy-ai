@@ -239,7 +239,7 @@ async function main() {
 
   // 4. Tools: every harness the engine registry knows (found / version / install / gated), plus the One CLI.
   //    None is fatal: a tester may have one harness (or none yet) and no One CLI. Orchy starts and says what's missing.
-  const { engines, engineTools } = await import(pathToFileURL(path.join(ROOT, 'orchestrator/lib/engines/index.mjs')).href);
+  const { engines, engineTools, brokenMessage } = await import(pathToFileURL(path.join(ROOT, 'orchestrator/lib/engines/index.mjs')).href);
   const { oneVersion } = await import(pathToFileURL(path.join(ROOT, 'orchestrator/lib/one.mjs')).href);
   const harnesses = engineTools();
   console.log('\n  Tools');
@@ -252,6 +252,7 @@ async function main() {
     const gate = t.gated ? 'approvals: yes' : 'approvals: NO (only runs where you allow it)';
     const label = `${t.label}${t.id === 'claude' ? ' (recommended)' : ''}`;
     if (v) console.log(`  ${OK} ${label.padEnd(28)} ${v}  [${gate}]`);
+    else if (e?.available()) console.log(`  ${NO} ${label.padEnd(28)} ${brokenMessage(e)}`); // there but won't start
     else console.log(`  ${NO} ${label.padEnd(28)} not found${t.optional ? ' (optional)' : ''}. Install: ${t.install}  [${gate}]`);
   }
   if (!harnesses.some(t => found[t.id])) {

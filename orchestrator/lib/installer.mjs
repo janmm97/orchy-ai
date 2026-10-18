@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { DATA_DIR } from './env.mjs';
-import { engine, engineOffered, engineInstallCmd, offeredRefusal } from './engines/index.mjs';
+import { engine, engineOffered, engineInstallCmd, offeredRefusal, engineHealth } from './engines/index.mjs';
 import { openShellWindow } from './workspaces.mjs';
 import { psq } from './engines/shared.mjs';
 
@@ -27,12 +27,17 @@ export function installBinDirs({ win = process.platform === 'win32', home = os.h
 // the variables that would point a sign-in at another profile than the default one
 const PROFILE_VARS = ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'HERMES_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME', 'OPENCODE_CONFIG_DIR', 'OPENCODE_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'CLAUDECODE'];
 
-/** The install script for this OS: install, refresh the PATH, then sign in when the program is there. */
+/**
+ * The install script for this OS: install, refresh the PATH, then sign in once the program runs (answers --version).
+ * One that is there but won't start (an install that didn't finish) gets the engine's repair command instead.
+ */
 export function installScript(e, { win = process.platform === 'win32', dirs = installBinDirs({ win }) } = {}) {
   const i = e.install || {};
   const cmd = engineInstallCmd(e, { win });
   const bin = i.bin || e.id;
   const label = e.label.replace(/\s+/g, ' ');
+  const brokenNote = `${label} installed but won't start: its install didn't finish. ${win && i.winRepair ? 'To finish it, run this, then go back to Orchy and press Re-check:' : "Scroll up for the installer's message, then try again from Orchy."}`;
+  const repairLine = win && i.winRepair ? `\n  Write-Host ${psq(`  ${i.winRepair}`)}` : '';
   if (win) {
     // the BOM makes Windows PowerShell read it as UTF-8
     return `﻿# Orchy: install ${label}
@@ -42,11 +47,17 @@ Write-Host ${psq(`> ${cmd}`)}
 ${cmd}
 $env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + ${psq(dirs.join(';'))}
 foreach ($v in @(${PROFILE_VARS.map(psq).join(', ')})) { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }
-if (Get-Command ${psq(bin)} -ErrorAction SilentlyContinue) {
+$found = [bool](Get-Command ${psq(bin)} -ErrorAction SilentlyContinue)
+$global:LASTEXITCODE = 1
+if ($found) { try { & ${psq(bin)} --version *> $null } catch { } }
+if ($found -and $global:LASTEXITCODE -eq 0) {
   Write-Host ''
   Write-Host ${psq(`${label} is installed.${i.signIn ? ' Now sign in to your account (a browser window may open).' : ''}`)} -ForegroundColor Green
 ${i.signIn ? `  ${i.signIn}\n` : ''}  Write-Host ''
   Write-Host 'Done. Go back to Orchy: it notices on its own.' -ForegroundColor Green
+} elseif ($found) {
+  Write-Host ''
+  Write-Host ${psq(brokenNote)} -ForegroundColor Red${repairLine}
 } else {
   Write-Host ''
   Write-Host ${psq(`${label} didn't install. Scroll up for the installer's message, then try again from Orchy.`)} -ForegroundColor Red
@@ -60,9 +71,11 @@ printf '> %s\\n' ${shq(cmd)}
 ${cmd}
 PATH="${dirs.join(':')}:$PATH"; export PATH
 unset ${PROFILE_VARS.join(' ')}
-if command -v ${shq(bin)} >/dev/null 2>&1; then
+if ${shq(bin)} --version >/dev/null 2>&1; then
   printf '\\n%s\\n' ${shq(`${label} is installed.${i.signIn ? ' Now sign in to your account (a browser window may open).' : ''}`)}
 ${i.signIn ? `  ${i.signIn}\n` : ''}  printf '\\nDone. Go back to Orchy: it notices on its own.\\n'
+elif command -v ${shq(bin)} >/dev/null 2>&1; then
+  printf '\\n%s\\n' ${shq(brokenNote)}
 else
   printf '\\n%s\\n' ${shq(`${label} didn't install. Scroll up for the installer's message, then try again from Orchy.`)}
 fi
@@ -77,7 +90,7 @@ export function installHarness(id) {
   if (!engineOffered(e)) throw Object.assign(new Error(offeredRefusal(e)), { status: 409 });
   const cmd = engineInstallCmd(e);
   if (!cmd || !e.install) throw Object.assign(new Error(`Orchy has no installer for ${e.label}. Install it yourself, then press Re-check.`), { status: 400 });
-  if (e.available()) return { already: true, cmd };
+  if (engineHealth(e) === 'ok') return { already: true, cmd }; // 'broken' installs again, which reruns its setup step
   const win = process.platform === 'win32';
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const file = path.join(DATA_DIR, `install-${e.id}.${win ? 'ps1' : 'sh'}`);

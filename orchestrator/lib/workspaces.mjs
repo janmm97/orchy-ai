@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { ROOT, DATA_DIR, config, saveConfig, expandPath, env, ownerName, readJson, setAside } from './env.mjs';
 import { one, oneInteractive, listConnections, whoami } from './one.mjs';
-import { engine, engines, engineInfo, registerEngine, engineOffered, offeredRefusal } from './engines/index.mjs';
+import { engine, engines, engineInfo, registerEngine, engineOffered, offeredRefusal, engineHealth, brokenMessage, engineRepairCmd } from './engines/index.mjs';
 import { envPrefix, psq, profilePath } from './engines/shared.mjs';
 import { findBinary } from './claude.mjs';
 export { toClaudeMcp } from './engines/claude.mjs';
@@ -276,21 +276,32 @@ export function openLoginWindow(ws, runtime = ws.runtime) {
   if (!e) throw bad(`Unknown engine "${runtime}"`);
   const a = accountFor(ws, runtime);
   if (e.accountModel === 'profile' ? !a.profileDir : !a.email) throw bad(`${ws.name} has no ${runtimeLabel(runtime)} ${e.accountModel === 'profile' ? 'profile' : 'account'} set`);
+  // a program that won't start can't sign in: say how to finish its install instead of opening a window that fails
+  if (engineHealth(e) === 'broken') throw bad(brokenMessage(e));
   fs.mkdirSync(expandPath(a.profileDir || DATA_DIR), { recursive: true });
   const file = path.join(DATA_DIR, `login-${ws.id}${runtime === ws.runtime ? '' : `-${runtime}`}.ps1`);
   const name = ws.name.replace(/\s+/g, ' '), label = runtimeLabel(a.runtime);
   if (process.platform !== 'win32') return openPosixLogin(ws, runtime, a, name, label);
   // names and emails only ever go in single quotes; the BOM makes Windows PowerShell read it as UTF-8
   // (as ANSI, some letters' bytes read as curly quotes)
-  fs.writeFileSync(file, `\uFEFF# Orchy: log a workspace in to ${label.replace(/\s+/g, ' ')}\n$Host.UI.RawUI.WindowTitle = ${psq(`Log in ${name}`)}\nWrite-Host ${psq(`Logging ${name} in to ${label}. ${a.email ? `Sign in as ${a.email} in the browser.` : 'Follow the prompts to sign in.'}`)} -ForegroundColor Yellow\n${loginHint(ws, runtime)}\nWrite-Host ""; Write-Host "Done. Go back to Orchy and press Re-check." -ForegroundColor Green\n`);
+  fs.writeFileSync(file, `\uFEFF# Orchy: log a workspace in to ${label.replace(/\s+/g, ' ')}\n$Host.UI.RawUI.WindowTitle = ${psq(`Log in ${name}`)}\nWrite-Host ${psq(`Logging ${name} in to ${label}. ${a.email ? `Sign in as ${a.email} in the browser.` : 'Follow the prompts to sign in.'}`)} -ForegroundColor Yellow\n${loginRun(loginHint(ws, runtime), { win: true })}`);
   spawn('cmd.exe', ['/c', 'start', '""', 'powershell', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', file], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
 }
 
 function openPosixLogin(ws, runtime, a, name, label) {
   const file = path.join(DATA_DIR, `login-${ws.id}${runtime === ws.runtime ? '' : `-${runtime}`}.sh`);
   const intro = `Logging ${name} in to ${label}. ${a.email ? `Sign in as ${a.email} in the browser.` : 'Follow the prompts to sign in.'}`;
-  fs.writeFileSync(file, `#!/bin/sh\n# Orchy: log a workspace in to ${label.replace(/\s+/g, ' ')}\nprintf '%s\\n\\n' ${shq(intro)}\n${loginHint(ws, runtime)}\nprintf '\\nDone. Go back to Orchy and press Re-check.\\n'\nexec "\${SHELL:-/bin/sh}"\n`, { mode: 0o700 });
+  fs.writeFileSync(file, `#!/bin/sh\n# Orchy: log a workspace in to ${label.replace(/\s+/g, ' ')}\nprintf '%s\\n\\n' ${shq(intro)}\n${loginRun(loginHint(ws, runtime), { win: false })}exec "\${SHELL:-/bin/sh}"\n`, { mode: 0o700 });
   openShellWindow(file, loginHint(ws, runtime));
+}
+
+const LOGIN_DONE = 'Done. Go back to Orchy and press Re-check.';
+const LOGIN_FAILED = "The sign-in didn't finish. Scroll up for the message, fix it, then press Log in in Orchy again.";
+/** The login command, then "Done" only when it succeeded (a program that won't start, or a cancelled sign-in, says so). */
+export function loginRun(cmd, { win = process.platform === 'win32' } = {}) {
+  // native programs set the global $LASTEXITCODE; $? is false when one fails or can't start at all
+  if (win) return `$global:LASTEXITCODE = 0\n${cmd}\nif ($? -and $global:LASTEXITCODE -eq 0) { Write-Host ""; Write-Host ${psq(LOGIN_DONE)} -ForegroundColor Green } else { Write-Host ""; Write-Host ${psq(LOGIN_FAILED)} -ForegroundColor Red }\n`;
+  return `${cmd}\nif [ $? -eq 0 ]; then printf '\\n%s\\n' ${shq(LOGIN_DONE)}; else printf '\\n%s\\n' ${shq(LOGIN_FAILED)}; fi\n`;
 }
 
 /** Run a shell script in a terminal window on macOS (Terminal) or Linux (the desktop's terminal); none: paste `hint`. */
@@ -777,7 +788,10 @@ export function purgeRetired(id) {
   return { id, clientsRemoved };
 }
 
-/** Is each registered engine's CLI on this PC? (For the Add window.) */
+/** Does each registered engine's CLI run on this PC? (For the Add window.) One that is there but won't start is `broken`. */
 export function runtimeAvailability() {
-  return Object.fromEntries(engines().map(e => [e.id, { available: !!e.available() }]));
+  return Object.fromEntries(engines().map(e => {
+    const h = engineHealth(e);
+    return [e.id, { available: h === 'ok', broken: h === 'broken', repair: h === 'broken' ? engineRepairCmd(e) || null : null }];
+  }));
 }

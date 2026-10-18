@@ -14,10 +14,10 @@
 //   sharedLogin?: true                one sign-in per computer: every workspace on it must name the same account
 //       gated: false = Orchy can't put every risky action behind its approval gate; startRun refuses it unless the
 //       workspace has `allowUngated: true` in config.json
-//   install: { cmd, winCmd?, signIn?, bin?, optional, note, shellNote? }   how the setup guide / `npm run setup` /
+//   install: { cmd, winCmd?, winRepair?, signIn?, bin?, optional, note, shellNote? }   how the setup guide / `npm run setup` /
 //                                    `npm run check` / the Add window install it (installer.mjs runs it for the owner):
 //                                    cmd for macOS/Linux, winCmd for Windows PowerShell, then signIn (the default
-//                                    profile's sign-in) once `bin` is on the PATH
+//                                    profile's sign-in) once `bin` runs; winRepair finishes a half-done Windows install
 //   bin() → path|null, version() → string|null, available() → boolean
 //   account(profileDir, { force, maxAge }) → Promise<{ loggedIn, email?, label, error?, subscription?, sandbox? }>
 //   profileEnv(profileDir) → { ENV_VAR: value }   the variables that pick the per-workspace profile
@@ -100,6 +100,28 @@ export function engineInstallCmd(e, { win = process.platform === 'win32' } = {})
   const i = e?.install || {};
   if (win && i.winCmd) return i.winCmd;
   return (i.cmd || '') + (i.shellNote && win ? '   (run in WSL or Git Bash)' : '');
+}
+
+/**
+ * 'ok' (its program answers --version), 'broken' (the program is there but won't start: an install that didn't finish,
+ * e.g. npm left OpenCode's placeholder opencode.exe when its postinstall didn't run) or 'missing'.
+ */
+export function engineHealth(e) {
+  if (!e?.available()) return 'missing';
+  if (!e.version) return 'ok';
+  try { return e.version() ? 'ok' : 'broken'; } catch { return 'broken'; }
+}
+
+/** The command that finishes a half-done install: the engine's own repair on Windows, else installing it again. */
+export function engineRepairCmd(e, { win = process.platform === 'win32' } = {}) {
+  return (win && e?.install?.winRepair) || engineInstallCmd(e, { win });
+}
+
+/** What to tell the owner when engineHealth says 'broken'. */
+export function brokenMessage(e, { win = process.platform === 'win32' } = {}) {
+  const i = e?.install || {};
+  const fix = engineRepairCmd(e, { win });
+  return `${e.label} is on this computer but won't start (${e.bin() || i.bin || e.id}): its install didn't finish.${fix ? ` Run this in a terminal, then press Re-check: ${fix}` : ' Install it again, then press Re-check.'}`;
 }
 
 /** Every registered engine as a setup-guide row: found / version / install command / gated (setup, the dashboard's Tools step and `npm run check` all read this). */

@@ -5,7 +5,8 @@ import { route as realRoute } from '../lib/router.mjs';
 import { askViaHarness, firstJson, brainEngine, HERMES_BRAIN_ARGS } from '../lib/brain.mjs';
 import { offlineAnswer } from '../lib/orchy.mjs';
 import { installScript, installBinDirs } from '../lib/installer.mjs';
-import { engine, engineInstallCmd } from '../lib/engines/index.mjs';
+import { engine, engineInstallCmd, engineHealth, engineRepairCmd, brokenMessage } from '../lib/engines/index.mjs';
+import { loginRun } from '../lib/workspaces.mjs';
 
 let fail = 0;
 const ok = (cond, label, extra = '') => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${label}${cond ? '' : `  ${extra}`}`); if (!cond) fail++; };
@@ -98,11 +99,29 @@ const route = (text, opts = {}) => realRoute(text, { workspaces: ONE, agents: AG
     const e = engine(id);
     ok(engineInstallCmd(e, { win: false }) === posix && engineInstallCmd(e, { win: true }) === win && e.install.signIn === signIn, `${id}: macOS/Linux and Windows installers, then ${signIn}`);
     const ps = installScript(e, { win: true, dirs: installBinDirs({ win: true, home: 'C:\\Users\\u', appData: 'C:\\A', localAppData: 'C:\\L' }) });
-    ok(ps.includes(`\n${win}\n`) && ps.includes(`Get-Command '${e.install.bin}'`) && ps.includes(`  ${signIn}\n`) && /GetEnvironmentVariable\('Path', 'User'\)/.test(ps) && ps.includes("'CLAUDE_CONFIG_DIR'"), `${id}: the PowerShell window installs, refreshes PATH, clears profile variables, signs in`);
+    ok(ps.includes(`\n${win}\n`) && ps.includes(`Get-Command '${e.install.bin}'`) && ps.includes(`& '${e.install.bin}' --version`) && ps.includes(`  ${signIn}\n`) && /GetEnvironmentVariable\('Path', 'User'\)/.test(ps) && ps.includes("'CLAUDE_CONFIG_DIR'"), `${id}: the PowerShell window installs, refreshes PATH, clears profile variables, signs in`);
     const sh = installScript(e, { win: false });
-    ok(sh.includes(`\n${posix}\n`) && sh.includes(`command -v '${e.install.bin}'`) && sh.includes(`  ${signIn}\n`) && /\nunset CLAUDE_CONFIG_DIR CODEX_HOME/.test(sh) && sh.includes('$HOME/.local/bin'), `${id}: the shell window does the same on macOS/Linux`);
+    ok(sh.includes(`\n${posix}\n`) && sh.includes(`if '${e.install.bin}' --version >/dev/null 2>&1; then`) && sh.includes(`command -v '${e.install.bin}'`) && sh.includes(`  ${signIn}\n`) && /\nunset CLAUDE_CONFIG_DIR CODEX_HOME/.test(sh) && sh.includes('$HOME/.local/bin'), `${id}: the shell window does the same on macOS/Linux`);
   }
   ok(installBinDirs({ win: true, home: 'H', appData: 'A', localAppData: 'L' }).some(d => /Programs[\\/]OpenAI[\\/]Codex[\\/]bin$/.test(d)), 'Windows PATH includes where the Codex installer puts codex');
+}
+
+// ── half-done installs: the program is there but won't start (npm's placeholder opencode.exe) ──
+{
+  const fake = (over = {}) => ({ id: 'fake', label: 'Fake', install: { winCmd: 'npm i -g fake', cmd: 'curl fake | sh', winRepair: 'node fix.mjs', bin: 'fake' }, bin: () => 'C:\\x\\fake.exe', available: () => true, version: () => '1.0', ...over });
+  ok(engineHealth(fake()) === 'ok', 'a program that answers --version is ok');
+  ok(engineHealth(fake({ version: () => null })) === 'broken', 'one that is there but fails --version is broken');
+  ok(engineHealth(fake({ version: () => { throw new Error('boom'); } })) === 'broken', 'a probe that throws reads as broken');
+  ok(engineHealth(fake({ available: () => false })) === 'missing', 'one that is not there is missing');
+  ok(engineRepairCmd(fake(), { win: true }) === 'node fix.mjs' && engineRepairCmd(fake(), { win: false }) === 'curl fake | sh', 'repair: the Windows fix there, installing again elsewhere');
+  ok(/won't start/.test(brokenMessage(fake(), { win: true })) && brokenMessage(fake(), { win: true }).includes('node fix.mjs'), 'the message says it won\'t start and how to finish it');
+  ok(/postinstall\.mjs/.test(engineRepairCmd(engine('opencode'), { win: true })), 'OpenCode on Windows: rerun its postinstall');
+  const ps = installScript(engine('opencode'), { win: true, dirs: [] });
+  ok(/\} elseif \(\$found\) \{/.test(ps) && ps.includes("won''t start") && ps.includes('postinstall.mjs') && ps.indexOf('opencode auth login') < ps.indexOf('elseif ($found)'), 'the install window signs in only when it runs, else shows the repair');
+  const win = loginRun("& 'x' auth login", { win: true });
+  ok(/^\$global:LASTEXITCODE = 0\n& 'x' auth login\nif \(\$\? -and \$global:LASTEXITCODE -eq 0\)/.test(win) && win.includes("didn''t finish") && win.includes('Done.'), 'the login window says Done only when the sign-in succeeded (PowerShell)');
+  const sh = loginRun("'x' auth login", { win: false });
+  ok(/^'x' auth login\nif \[ \$\? -eq 0 \]; then/.test(sh) && sh.includes('finish'), 'and in the macOS/Linux shell');
 }
 
 if (fail) { console.log(`\n${fail} brain check(s) failed`); process.exit(1); }
