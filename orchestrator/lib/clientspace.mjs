@@ -55,6 +55,9 @@ export function clientReadDirs(ws, home) {
   const out = [];
   const skills = path.join(ws.dir, '.claude', 'skills');
   if (fs.existsSync(skills)) out.push(skills);
+  // a workspace's skills may live in Resources/Skills/<name>, with .claude/skills/<name> linking there
+  const real = path.join(ws.dir, 'Resources', 'Skills');
+  if (fs.existsSync(real)) out.push(real);
   const own = sessionDir(ws, home);
   fs.mkdirSync(own, { recursive: true });
   out.push(own);
@@ -204,9 +207,25 @@ export function filesNote(paths, who) {
 }
 
 // ── What's in a task's folder (for the client's page and the owner's run window) ──
+/**
+ * The Tasks folder a run, huddle or mission keeps its task folder in, relative to the workspace: its `taskRoot`
+ * (e.g. `Marketing/Writer/Tasks`, once agents have homes of their own) or `Tasks`. A client's is always `Tasks`
+ * inside their own corner. A taskRoot that isn't a plain path inside the workspace ending in Tasks falls back to `Tasks`.
+ */
+export function taskRootRel(rec) {
+  const r = String(rec?.taskRoot || '');
+  if (rec?.client || !r) return 'Tasks';
+  const parts = r.split('/');
+  return parts.length > 1 && parts.length < 6 && parts.every(s => s && s !== '..' && !s.startsWith('.') && !/[\\:\0]/.test(s)) && parts.at(-1) === 'Tasks' ? r : 'Tasks';
+}
+/** Where a task folder sits relative to the folder its agent starts in (a client's: `Tasks/<task>`). */
+export const taskRel = rec => (rec?.taskDir ? `${taskRootRel(rec)}/${rec.taskDir}` : null);
+/** The Tasks folder itself, on disk. */
+export const tasksBase = (ws, rec) => (rec?.client ? path.join(clientHome(ws, rec.client), 'Tasks') : path.join(ws.dir, ...taskRootRel(rec).split('/')));
+
 export function taskRoot(ws, run) {
   if (!run?.taskDir) return null;
-  return path.join(run.client ? clientHome(ws, run.client) : ws.dir, 'Tasks', run.taskDir);
+  return path.join(tasksBase(ws, run), run.taskDir);
 }
 
 /** Every file in the task's folder (no hidden ones), newest first. */

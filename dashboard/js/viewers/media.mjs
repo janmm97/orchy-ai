@@ -114,7 +114,7 @@ async function remoteSource(stage, s, ctx, m) {
   }
   const r = await s.remotePlay();
   if (!ctx.live()) return null;
-  if (r.off) { stage.innerHTML = `${poster}${stateHTML('Video playback isn’t switched on yet', 'The owner has been told. It plays right here once it is.')}`; return null; }
+  if (r.off) { stage.innerHTML = `${poster}${stateHTML('Video playback isn’t switched on yet', r.note || 'The owner has been told. It plays right here once it is.')}`; return null; }
   if (!r.url) {
     stage.innerHTML = `<div class="vvideo pending">${m.poster ? `<img class="vposter" src="${esc(s.mediaURL('poster'))}" alt="">` : ''}<span class="label${r.state === 'error' ? '' : ' blink'}">${esc(REMOTE_WAIT[r.state] || r.message || 'Getting it ready…')}</span></div>${r.state === 'error' ? stateHTML('It isn’t ready', 'Try again in a minute.', { retry: true }) : ''}`;
     stage.querySelector('[data-retry]')?.addEventListener('click', ctx.rerender);

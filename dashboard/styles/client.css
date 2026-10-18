@@ -1,5 +1,5 @@
 /* Orchy · client page (portal.mjs): one column, phone first. Tokens in tokens.css; buttons, plates,
-   inputs, feed rows and Markdown come from app.css. each workspace wears its own ink. */
+   inputs, feed rows and Markdown come from app.css. Each workspace wears its own ink. */
 
 body.client { overflow: auto; min-height: 100dvh; }
 .cbar { position: sticky; top: 0; height: 64px; }
@@ -111,3 +111,23 @@ html:has(.gone) { background: var(--paper); }
 .outs.files a { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; overflow-wrap: anywhere; }
 .outs.files .sz { font: 400 var(--px)/1 var(--f-px); text-transform: uppercase; white-space: nowrap; opacity: .64; }
 .tfiles { display: grid; gap: var(--s2); }
+.tfiles .vfile { min-height: 48px; }
+.tfiles .vfile .nm b, .tfiles .vfile .nm span { font-size: var(--read-sm); }
+
+/* the file viewer (viewer.mjs#mountViewer, the same one as the owner's dashboard): a sheet over the page */
+.cview { width: min(1040px, calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 32px); padding: 0; border: var(--rule) solid var(--ink); background: var(--paper); color: var(--ink); overflow: hidden; }
+.cview[open] { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.cview.large { width: calc(100vw - 16px); height: calc(100dvh - 16px); max-height: none; }
+.cview::backdrop { background: var(--ink); -webkit-mask: var(--d50); mask: var(--d50); }
+.cvbar { display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s3); background: var(--shell); color: var(--on-shell); }
+.cvbar b { flex: 1; min-width: 0; font: 400 var(--px)/1.2 var(--f-px); text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cvbar .btn { border-color: var(--on-shell); color: var(--on-shell); background: transparent; }
+.cvbar .btn:hover { background: var(--on-shell); color: var(--shell); }
+.cvbody { min-height: 0; overflow: auto; padding: var(--s4); align-content: start; }
+.cvbody .vstage { align-content: start; }
+.cview.large .vimg, .cview.large .vpdf { height: calc(100dvh - 240px); }
+.cview.large .vcode, .cview.large .vtable, .cview.large .vdoc, .cview.large .vslides { max-height: calc(100dvh - 220px); }
+@media (max-width: 720px) {
+  .cview { width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; border: 0; }
+  .cvbody { padding: var(--s3); }
+}

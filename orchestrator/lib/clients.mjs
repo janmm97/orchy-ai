@@ -7,6 +7,7 @@ import { config, saveConfig, env, ownerName } from './env.mjs';
 import { workspace, engineFor } from './workspaces.mjs';
 import { engine } from './engines/index.mjs';
 import { listAgents } from './agents.mjs';
+import { forgetClientCopies } from './r2.mjs';
 
 export const CLIENT_PORT = () => Number(env('CLIENT_PORT', '8009'));
 const bad = (msg, status = 400) => Object.assign(new Error(msg), { status });
@@ -108,12 +109,16 @@ export function removeClient(id) {
   if (i < 0) throw bad('No such client', 404);
   list().splice(i, 1);
   saveConfig();
+  // their video copies in R2 go too (nothing to do when R2 isn't set up; the bucket's 30-day rule catches the rest)
+  forgetClientCopies(id).catch(e => console.warn('[client video] R2 copies not removed:', e.message));
 }
 
 // ── What a client's run may touch ──
 // It works on the client's task with the agents shared with them: it never hands work to the workspace's other
 // agents (the Builder included), and never edits the workspace's own setup (agents, instructions, connections).
 export const SETUP_GLOBS = ['.claude/**', '.codex/**', '.agents/**', '.jos/**', '.one/**', '**/CLAUDE.md', '**/AGENTS.md', '.mcp.json'];
+// setup only at the workspace's top, named by its absolute path (a client's own task may well make a folder called Resources)
+export const WS_SETUP_GLOBS = ['Resources/**'];
 
 /** The agents shared with the client who started this run (null for the owner's own runs). */
 export const clientShared = run => (run?.client ? clientById(run.client)?.agents || [] : null);
@@ -134,7 +139,7 @@ export function clientDenyRules(run, wsAgentSlugs) {
   const helpers = wsAgentSlugs.filter(s => !shared.includes(s)).flatMap(s => [`Agent(${s})`, `Task(${s})`]);
   let root = null;
   try { root = absRule(workspace(run.workspace).dir); } catch {}
-  const globs = root ? [...SETUP_GLOBS, ...SETUP_GLOBS.map(g => `${root}/${g}`)] : SETUP_GLOBS;
+  const globs = root ? [...SETUP_GLOBS, ...[...SETUP_GLOBS, ...WS_SETUP_GLOBS].map(g => `${root}/${g}`)] : SETUP_GLOBS;
   const setup = globs.map(g => `Edit(${g})`);
   return [...helpers, ...setup];
 }
