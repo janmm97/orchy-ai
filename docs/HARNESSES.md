@@ -14,11 +14,11 @@ Hermes and Antigravity were run against their real binaries (Windows, 2026-10-19
 | Hermes | yes, through its `pre_tool_call` hook (every tool call asks Orchy first) | checked against the real binary (Hermes 0.21.7, Windows) |
 | Antigravity | yes, through its `PreToolUse` hook (every tool call asks Orchy first) | checked against the real binary (agy 1.4.2, Windows). Off by default (`ORCHY_ANTIGRAVITY=1` in `.env`) |
 
-Every harness shipped here is gated. An engine registered as not gated (one Orchy cannot prove asks before every file change, command or tool call) would be refused: `startRun` refuses the workspace unless the owner sets `allowUngated: true` for it in `orchestrator/config.json` (Workspaces, the workspace, "allow it to run without approvals"). A workspace on any ungated harness also needs its own One login (`startRun` refuses it otherwise, code `ONE_SCOPE`): Orchy doesn't see every command such a harness runs, so the One CLI could fall back to another account. The README table carries the same statuses.
+Every harness shipped here is gated. An engine registered as not gated (one Orchy cannot prove asks before every file change, command or tool call) would be refused: `startRun` refuses the workspace unless the owner sets `allowUngated: true` for it in `orchestrator/config.json` (Workspaces, the workspace, "allow it to run without approvals"). A workspace on any ungated harness also needs its own One login (`startRun` refuses it otherwise, code `ONE_SCOPE`): Orchy doesn't see every command such a harness runs, so the One CLI could fall back to another account. The README's simple table carries the same gated answers.
 
-## Which instructions a run reads
+## Which instructions an agent run reads
 
-Workspaces live in `workspaces/` inside this repo, whose root CLAUDE.md and AGENTS.md are for coding agents working on Orchy, not for agent runs.
+Agent runs read only the workspace's own instructions, never the CLAUDE.md / AGENTS.md at the root of this repo. Workspaces live in `workspaces/` inside this repo, whose root CLAUDE.md and AGENTS.md are for coding agents working on Orchy, not for agent runs. Keep a CLAUDE.md or AGENTS.md in every workspace (new ones get both).
 
 - **Claude Code:** the run's settings file lists them in `claudeMdExcludes` (`runner.mjs#setupSettingsFile`).
 - **Codex:** Codex joins every AGENTS.md from the project root (the nearest folder with a `project_root_markers` entry, `.git` by default) down to the run's folder. Orchy starts `codex -c project_root_markers=[] app-server` and repeats `project_root_markers: []` in each thread's config; an empty list disables the parent walk, so only the workspace's own AGENTS.md is read (checked against Codex's source, `codex-rs/core/src/agents_md.rs`; unverified against a real install here).
@@ -85,7 +85,7 @@ Changed because of the docs: `experimental.mcp_timeout` was removed (the docs do
 5. Start `opencode serve` by hand with your own `OPENCODE_SERVER_PASSWORD` and read `GET /doc` and `GET /event` during an ask: confirm the permission route, the event name and the payload field names listed above.
 6. Put `"permission": {"*": "allow"}` in an `opencode.json` inside the workspace and confirm a run still asks (the `OPENCODE_CONFIG_CONTENT` guard wins).
 7. Leave a `jos_ask_user` unanswered for longer than five minutes and confirm the run waits.
-8. When all of that holds, change the status above and copy it into the README table.
+8. When all of that holds, change the status above and keep the README's simple harness table in step.
 
 ## ACP (Agent Client Protocol) engines
 
@@ -176,4 +176,4 @@ Every harness is an engine module in `orchestrator/lib/engines/` registered in `
 
 ## Updating this file
 
-After testing a harness, change its row in the status table and copy the same status into the table in README.md between the `HARNESS-STATUS` markers. Never write "supported" for an engine whose gating is not confirmed by tests plus docs.
+After testing a harness, change its row in the status table above, and keep the simple table in README.md (Supported harnesses: install and "Gated?") in step with it. Never write "supported" for an engine whose gating is not confirmed by tests plus docs.
