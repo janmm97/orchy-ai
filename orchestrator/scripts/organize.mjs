@@ -37,7 +37,10 @@ const ROOT = path.resolve(ORCH, '..');
 const DATA = path.join(ORCH, 'data');
 const CONFIG = path.join(ORCH, 'config.json');
 const STATE = path.join(DATA, 'state.json');
-const PORT = Number(process.env.PORT) || 8008;
+// the port Orchy listens on, read the way env.mjs reads it (.env first, then the environment): the "stop Orchy first"
+// check must ask the running one, or it would move folders under it
+const envFilePort = () => { try { return fs.readFileSync(path.join(ROOT, '.env'), 'utf8').match(/^\s*PORT\s*=\s*["']?(\d+)/m)?.[1]; } catch { return null; } };
+const PORT = Number(envFilePort()) || Number(process.env.PORT) || 8008;
 const WIN = process.platform === 'win32';
 // Windows and macOS see "marketing" and "Marketing" as one name; Linux sees two
 const FOLD = WIN || process.platform === 'darwin';

@@ -148,7 +148,7 @@ export default {
   instructionFile: 'CLAUDE.md',
   defaultProfileLabel: '(default ~/.claude)',
   // the native installers from code.claude.com/docs/en/quickstart (both put claude in ~/.local/bin)
-  install: { cmd: 'curl -fsSL https://claude.ai/install.sh | bash', winCmd: 'irm https://claude.ai/install.ps1 | iex', signIn: 'claude auth login', bin: 'claude', optional: false, note: 'The usual choice of agent harness.' },
+  install: { cmd: 'curl -fsSL https://claude.ai/install.sh | bash', winCmd: 'powershell -ExecutionPolicy ByPass -c "irm https://claude.ai/install.ps1 | iex"', signIn: 'claude auth login', bin: 'claude', optional: false, note: 'The usual choice of agent harness.' },
   capabilities: {
     gated: true, mcp: true, resume: true, headless: true,
     // can this engine be kept inside a client's folder / talk without changing anything / take handed-over work?

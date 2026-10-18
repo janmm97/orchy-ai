@@ -1,5 +1,5 @@
 // Shared ACP client (Agent Client Protocol, https://agentclientprotocol.com): JSON-RPC 2.0 over stdio, one JSON
-// message per line, between Orchy (the client) and a coding-agent subprocess (`hermes acp`, `dsh --profile acp`…).
+// message per line, between Orchy (the client) and a coding-agent subprocess (`hermes acp`…).
 // Used by the Hermes adapter. Checked against the real Hermes 0.21 (docs/HARNESSES.md) and a fake ACP agent
 // (scripts/test-engine-acp.mjs).
 //

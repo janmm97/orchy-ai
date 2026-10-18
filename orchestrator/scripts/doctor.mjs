@@ -45,7 +45,7 @@ else if (cv) off(`Claude Code runs from ${CLAUDE_BIN}`);
 
 console.log('\nOne CLI');
 const oneV = oneVersion();
-if (!oneV) warn('One CLI not found. It connects agents to Gmail, Slack, Notion and 750+ apps (strongly recommended)', 'npm install -g @withone/cli (then open a new terminal). Guide: docs/ONE.md');
+if (!oneV) warn('One CLI not found. It connects agents to Gmail, Slack, Notion and 1000+ apps (strongly recommended)', 'npm install -g @withone/cli (then open a new terminal). Guide: docs/ONE.md');
 else {
   ok(`One CLI ${oneV}`);
   try {

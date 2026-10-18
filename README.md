@@ -6,7 +6,7 @@
 
 **One chat box for all your AI agents: Orchy runs them on your own computer and asks you first.**
 
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-000000?style=flat-square)](docs/LICENSE) [![Node 20+](https://img.shields.io/badge/node-20%2B-000000?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org) [![Platforms: Windows, macOS, Linux](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-000000?style=flat-square)](#supported-harnesses) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-000000?style=flat-square)](docs/CONTRIBUTING.md)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-000000?style=flat-square)](LICENSE) [![Node 20+](https://img.shields.io/badge/node-20%2B-000000?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org) [![Platforms: Windows, macOS, Linux](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-000000?style=flat-square)](#supported-harnesses) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-000000?style=flat-square)](docs/CONTRIBUTING.md)
 
 [Quick start](#quick-start) · [How it works](#how-it-works) · [Harnesses](#supported-harnesses) · [Privacy](#what-leaves-your-machine) · [Docs](docs/)
 
@@ -256,7 +256,7 @@ The short version. Every detail is in **[docs/CONCEPTS.md](docs/CONCEPTS.md)**.
 | 🕘 | [Scheduling](docs/CONCEPTS.md#scheduling) | `schedule: weekdays 9:00` in an agent's frontmatter runs it by itself while Orchy is running. |
 | 🧵 | [Sessions](docs/CONCEPTS.md#sessions) | Each conversation with Orchy has its own thread, memory and runs. |
 | 🌐 | [Client pages](#client-pages) | Share chosen agents with a client on their own page and sandbox. |
-| 🔧 | [Orchy fixing itself](docs/CONCEPTS.md#orchy-fixing-itself) | Tell Orchy what is broken; a "Fix Orchy" card always waits for your OK, and the report has an Undo. |
+| 🔧 | [Orchy fixing itself](docs/CONCEPTS.md#orchy-fixing-itself) | Tell Orchy what is broken; a "Fix Orchy" card always waits for your OK, and the report has an Undo. Runs on Claude Code: setup, the card or Settings → Accounts picks the account. |
 
 ### Client pages
 
@@ -280,7 +280,7 @@ Putting them online (Cloudflare Tunnel, Access, and R2 for video) is in [docs/CO
 | **Hermes** | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash`; on Windows (PowerShell) `iex (irm https://hermes-agent.nousresearch.com/install.ps1)` | ✅ yes |
 | **Antigravity** (off by default) | Google's `agy` CLI (see antigravity.google), then `ORCHY_ANTIGRAVITY=1` in `.env` | ✅ yes |
 
-"Gated" means every risky action asks Orchy first. You don't have to type these: **Install** in the dashboard (Add workspace, or Set up Orchy → Tools) runs the right one for your computer in a terminal window, then the sign-in. A harness whose program is there but won't start (an install that didn't finish) shows as **won't start**, with the command that fixes it.
+"Gated" means every risky action asks Orchy first. How far each one has been tested against its real program is in [docs/HARNESSES.md](docs/HARNESSES.md). OpenCode and Hermes offer the models their sign-in lists, and take any model id you type. You don't have to type these: **Install** in the dashboard (Add workspace, or Set up Orchy → Tools) runs the right one for your computer in a terminal window, then the sign-in. A harness whose program is there but won't start (an install that didn't finish) shows as **won't start**, with the command that fixes it.
 
 Details, headless commands, config locations, the evidence behind each "gated" answer, [which instructions an agent run reads](docs/HARNESSES.md#which-instructions-an-agent-run-reads) and manual verification checklists are in [docs/HARNESSES.md](docs/HARNESSES.md).
 
@@ -311,7 +311,7 @@ orchy-ai/
 ├── dashboard/      the UI: plain ES modules, no build step
 ├── scripts/        setup.mjs (npm run setup)
 ├── launchers/      double-click launchers for Windows, macOS and Linux
-├── docs/           ONE.md, HARNESSES.md, CONCEPTS.md, ARCHITECTURE.md, SECURITY.md, CONTRIBUTING.md, LICENSE, NOTICE
+├── docs/           ONE.md, HARNESSES.md, CONCEPTS.md, ARCHITECTURE.md, SECURITY.md, CONTRIBUTING.md
 ├── assets/         the logo and README images
 └── workspaces/     your workspaces (git-ignored)
 ```
@@ -324,7 +324,7 @@ PRs are welcome. See [CONTRIBUTING.md](docs/CONTRIBUTING.md). Run `npm test` fir
 
 ## License
 
-Apache-2.0. See [LICENSE](docs/LICENSE) and [NOTICE](docs/NOTICE).
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 <div align="center">
 <sub>Jev is made by <a href="https://typesafe.ai">TypeSafe</a>, a separate company with no affiliation to Orchy.</sub>

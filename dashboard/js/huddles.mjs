@@ -18,7 +18,7 @@ const STATUS = {
   talking: 'Talking', wrapping: 'Writing the agreement', agreed: 'Agreed · waiting for you', approved: 'Approved · at work',
   stopped: 'Stopped', failed: 'Stopped early', closed: 'Closed',
 };
-const isOwnerLine = t => t.by === 'owner' || t.by === 'jan'; // 'jan': huddles stored by older builds
+const isOwnerLine = t => t.by === 'owner';
 const used = h => h.turns.filter(t => !isOwnerLine(t) && t.by !== 'orchy' && !t.wrap).length; // the agreement isn't a turn, nor Orchy's lines
 
 /** Live updates: the window follows the huddle, and the dashboard's list too. */
@@ -80,8 +80,8 @@ function coachFacts(h) {
 }
 
 // an agreement's questions as { id, q, why, options, recommended, covers, orchy, answer }; older agreements only have text
-const questionsOf = g => (g?.questions?.length ? g.questions : (g?.questions_for_owner || g?.questions_for_jan || []).map((q, i) => ({ id: `q${i + 1}`, q })));
-const openQuestions = g => g?.questions_for_owner || g?.questions_for_jan || [];
+const questionsOf = g => (g?.questions?.length ? g.questions : (g?.questions_for_owner || []).map((q, i) => ({ id: `q${i + 1}`, q })));
+const openQuestions = g => g?.questions_for_owner || [];
 
 export function agreementHTML(h) {
   const g = h.agreement;

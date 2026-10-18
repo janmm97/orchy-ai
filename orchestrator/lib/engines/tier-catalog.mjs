@@ -14,6 +14,7 @@ import { execFile } from 'node:child_process';
 import YAML from 'yaml';
 import { expandPath } from '../env.mjs';
 import { parseHermesStatus } from './hermes-config.mjs';
+import { openCodeEnv } from './opencode-run.mjs';
 
 const WIN = process.platform === 'win32';
 const MAX_MODELS = 120; // a provider like OpenRouter lists hundreds; the dropdown keeps the first ones
@@ -183,7 +184,8 @@ export function parseOpenCodeAuthList(text) {
   for (const raw of String(text || '').split(/\r?\n/)) {
     const line = raw.replace(/\x1b\[[0-9;]*m/g, '').replace(/^[\s●•*✓✔│├└─┌┐┘┴┬]+/, '').trimEnd();
     if (!OC_AUTH_TYPES.test(line)) continue;
-    const name = line.split(/\s{2,}/)[0].trim();
+    // OpenCode 2 pads columns ("OpenCode Console  Default   stored"); OpenCode 1 puts one space before the type ("Anthropic oauth")
+    const name = line.replace(OC_AUTH_TYPES, '').split(/\s{2,}/)[0].trim();
     if (name && !/^(credentials|provider|environment)\b/i.test(name)) out.push(name);
   }
   return [...new Set(out)];
@@ -199,11 +201,17 @@ function execText(bin, args, env, timeout) {
   });
 }
 
-let ocProbe = async (bin, env, isolated) => {
+/** OpenCode's major version from `opencode --version` ("opencode v2.0.28" → 2, "1.19.3" → 1), 0 when unknown. */
+export const openCodeMajor = v => Number(String(v || '').match(/(\d+)\.\d+/)?.[1]) || 0;
+
+let ocProbe = async (bin, env, standalone) => {
+  // OpenCode 2 answers through a background service signed in as the computer: a profile asks a private server of its
+  // own (`--standalone`; without it the service's port clashes and nothing is listed). OpenCode 1 has neither the
+  // service nor the flag, and its strict parser refuses an unknown flag.
+  const own = standalone ? ['--standalone'] : [];
   const [auth, models] = await Promise.all([
-    execText(bin, ['auth', 'list'], env, 8000),
-    // a profile gets a private server so the background one (the PC's login) never answers for it
-    execText(bin, isolated ? ['models', '--standalone'] : ['models'], env, 10000),
+    execText(bin, ['auth', 'list', ...own], env, standalone ? 20000 : 8000),
+    execText(bin, ['models', ...own], env, standalone ? 20000 : 10000),
   ]);
   return { providers: parseOpenCodeAuthList(auth), models: models.split(/\r?\n/).map(l => l.trim()).filter(l => /^[a-z0-9][\w.-]*\/\S+$/i.test(l)) };
 };
@@ -211,14 +219,19 @@ let ocProbe = async (bin, env, isolated) => {
 export function setOpenCodeProbeForTests(fn) { const prev = ocProbe; ocProbe = fn; return () => { ocProbe = prev; }; }
 
 /** OpenCode sign-in, plan/tier and model list for one profile (or the PC's default login when profileDir is null). */
-export async function inspectOpenCodeAccount(profileDir, { authPath = null, binPath = null, profileEnv = {} } = {}) {
-  const files = profileDir
+export async function inspectOpenCodeAccount(profileDir, { authPath = null, binPath = null, profileEnv = {}, v2 = false } = {}) {
+  // OpenCode 2 keeps sign-ins in its own database and never reads auth.json: only its CLI's answer counts there
+  const standalone = !!profileDir && v2;
+  const files = v2 ? [] : profileDir
     ? [authPath || path.join(expandPath(profileDir), 'data', 'opencode', 'auth.json')]
     : [process.env.XDG_DATA_HOME && path.join(process.env.XDG_DATA_HOME, 'opencode', 'auth.json'), path.join(os.homedir(), '.local', 'share', 'opencode', 'auth.json'), WIN && process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'opencode', 'auth.json')].filter(Boolean);
   let auth = {};
   for (const f of files) { const j = readJson(f); if (j && typeof j === 'object' && Object.values(j).some(Boolean)) { auth = j; break; } }
 
-  const cli = binPath ? await ocProbe(binPath, { ...process.env, ...profileEnv }, !!profileDir).catch(() => ({ providers: [], models: [] })) : { providers: [], models: [] };
+  // a profile is asked with the environment its runs get (opencode-run.mjs#openCodeEnv: no computer API keys or
+  // OPENCODE_* settings), so the list shows what its runs can actually use
+  const probeEnv = profileDir ? openCodeEnv(profileEnv) : { ...process.env, ...profileEnv };
+  const cli = binPath ? await ocProbe(binPath, probeEnv, standalone).catch(() => ({ providers: [], models: [] })) : { providers: [], models: [] };
   const providers = [...new Set([...Object.keys(auth).filter(k => auth[k]), ...cli.providers.map(ocKey)])];
   if (!providers.length) return { loggedIn: false, email: null, label: null, providers: [], plan: null, tier: null, subscription: null, models: [] };
 

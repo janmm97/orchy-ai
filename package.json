@@ -26,5 +26,10 @@
   },
   "devDependencies": {
     "pdfjs-dist": "6.3.289"
+  },
+  "overrides": {
+    "mammoth": {
+      "argparse": "2.0.1"
+    }
   }
 }

@@ -187,6 +187,24 @@ export async function oneStep({ version, interactive, yesNo, install, log = cons
   return found;
 }
 
+/** The Claude Code account "Fix Orchy" runs under (Orchy working on his own code): a fresh install has none. This
+ *  computer's Claude Code sign-in is offered; Settings → Accounts changes it later. Never asked with --yes.
+ *  io is swapped for fakes in test-setup.mjs. Returns the account set, or null. */
+export async function backendAccountStep({ config, saveConfig, signedInAs, interactive, yesNo, log = console.log }) {
+  const set = config.orchy?.claudeAccount;
+  if (set) { log(`  ${OK} "Fix Orchy" runs as ${set}`); return set; }
+  if (!signedInAs) { log('  - "Fix Orchy" (Orchy working on his own code) needs a Claude Code account: sign in with `claude auth login`, then pick it in Settings → Accounts.'); return null; }
+  if (!interactive || !(await yesNo(`  "Fix Orchy" lets Orchy work on his own code with Claude Code. Use ${signedInAs} for that?`, true))) {
+    log('  - "Fix Orchy" account not set: pick it later in Settings → Accounts, or on the Fix Orchy card.');
+    return null;
+  }
+  (config.orchy ||= {}).claudeAccount = signedInAs;
+  config.orchy.claudeConfigDir = null; // this computer's own Claude Code profile, the one signed in as that account
+  saveConfig();
+  log(`  ${OK} "Fix Orchy" runs as ${signedInAs}`);
+  return signedInAs;
+}
+
 export const LAUNCHERS = { win32: 'Start Orchy.cmd', darwin: 'Start Orchy.command' }; // anything else: Start Orchy.sh
 
 /** Put this computer's launcher (from launchers/) in the Orchy folder, so there's one "Start Orchy" to double-click.
@@ -253,7 +271,7 @@ async function main() {
     const label = `${t.label}${t.id === 'claude' ? ' (recommended)' : ''}`;
     if (v) console.log(`  ${OK} ${label.padEnd(28)} ${v}  [${gate}]`);
     else if (e?.available()) console.log(`  ${NO} ${label.padEnd(28)} ${brokenMessage(e)}`); // there but won't start
-    else console.log(`  ${NO} ${label.padEnd(28)} not found${t.optional ? ' (optional)' : ''}. Install: ${t.install}  [${gate}]`);
+    else console.log(`  ${NO} ${label.padEnd(28)} not found${t.optional ? ' (optional)' : ''}. ${t.install ? `Install: ${t.install}` : t.note}  [${gate}]`);
   }
   if (!harnesses.some(t => found[t.id])) {
     console.log(`\n  ! No agent harness yet. Orchy starts, but agents can't run until you install one. Claude Code is recommended:\n      ${harnesses[0].install}${mac ? '\n      (then open a new Terminal window so the PATH updates)' : ''}`);
@@ -262,6 +280,14 @@ async function main() {
     version: oneVersion(), interactive, yesNo,
     install: () => sh('npm', ['install', '-g', '@withone/cli']).status === 0 && hasOne(),
   });
+
+  // 4b. the Claude Code account Orchy fixes his own code under (Fix Orchy)
+  if (found.claude) {
+    const { config, saveConfig } = await import(pathToFileURL(path.join(ROOT, 'orchestrator/lib/env.mjs')).href);
+    let signedInAs = null;
+    try { const a = await engines().find(e => e.id === 'claude').account(null, { force: true }); signedInAs = a?.loggedIn ? a.email || null : null; } catch {}
+    await backendAccountStep({ config, saveConfig, signedInAs, interactive, yesNo });
+  }
 
   // 5. Voice, Jev and scripts
   if (interactive) {

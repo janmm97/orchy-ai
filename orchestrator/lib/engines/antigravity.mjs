@@ -271,7 +271,8 @@ export default {
   optIn: 'ORCHY_ANTIGRAVITY',
   instructionFile: 'AGENTS.md',
   defaultProfileLabel: '(~/.antigravity-orchy/<workspace>)',
-  install: { cmd: 'See antigravity.google for the agy CLI', optional: true, note: 'Optional and off by default (ORCHY_ANTIGRAVITY=1 in .env): Google’s Antigravity CLI.' },
+  // no install command: Google ships agy from antigravity.google (the Install button and setup show the note instead)
+  install: { optional: true, note: 'Optional and off by default (ORCHY_ANTIGRAVITY=1 in .env): Google’s Antigravity CLI, `agy`, from antigravity.google.' },
   capabilities: {
     gated: true, mcp: true, resume: true, headless: true,
     clientSafe: false,

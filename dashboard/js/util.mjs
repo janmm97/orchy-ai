@@ -140,6 +140,8 @@ export function platformName(p) {
 // Orchy's own built-in workspace (fixing himself) isn't in the list: it only names his fix runs, in plain ink.
 let WS = [], RETIRED = [], BACKEND = { id: 'orchy', name: 'Orchy', models: ['haiku', 'sonnet', 'opus'] };
 export function setWorkspaces(list, retired, backend) { WS = list || WS; RETIRED = retired || RETIRED; BACKEND = backend || BACKEND; }
+/** Orchy's own backend: its models, and `account` (the Claude Code account he fixes himself under, and who to suggest). */
+export const backendInfo = () => BACKEND;
 const findWs = id => WS.find(w => w.id === id) || RETIRED.find(w => w.id === id) || (id === BACKEND.id ? BACKEND : null);
 // A workspace's own name, unless the owner switched on `owner.hideBusinessNames` in config.json (handy when sharing
 // a screen): then "Business A, B, C…" in the order they sit in the list (retired ones after, so old runs keep a label).
@@ -190,17 +192,39 @@ export function wsModels(id) {
   const w = findWs(id);
   return w?.availableModels?.length ? w.availableModels : w?.models || ['haiku', 'sonnet', 'opus'];
 }
-export function wsPlan(id) {
+/** The plan/tier to show for a run: an agent pinned to another engine shows that engine's account's, not the workspace's. */
+export function wsPlan(id, agent = null) {
   const w = findWs(id);
+  if (agent?.engine && agent.engine !== w?.runtime) {
+    const x = (w?.extraAccounts || []).find(e => e.runtime === agent.engine);
+    return x?.plan || x?.subscription || null;
+  }
   return w?.plan || w?.account?.plan || w?.account?.subscription || null;
 }
+/** The model a dropdown starts on: an agent's own, or "default" ("inherit" names no model). */
+export const startModel = m => (m && m !== 'inherit' ? m : 'default');
 export function wsRuntime(id) { return findWs(id)?.runtime || 'claude'; }
 /** The dropdown's options: "default" (the harness picks) first, then the account's models, and the current pick even if it isn't listed. */
 export const dropdownModels = (ms, current) => [...new Set(['default', ...ms.filter(m => m && m !== 'default'), ...(current ? [current] : [])])];
+/**
+ * The models to offer for a run: an agent pinned to another engine than its workspace's offers that engine's (the list
+ * its account reports, else its tiers), never the workspace's; anyone else, the workspace's.
+ */
+export function pickModels(id, agent = null) {
+  const w = findWs(id);
+  if (agent?.engine && agent.engine !== w?.runtime) {
+    const x = (w?.extraAccounts || []).find(e => e.runtime === agent.engine);
+    return x?.availableModels?.length ? x.availableModels : agent.models || [];
+  }
+  return wsModels(id);
+}
+// Engines that take any model id (provider/model): the server passes a typed one through (workspaces.mjs#modelFor)
+const OPEN_MODEL_ENGINES = new Set(['hermes', 'opencode']);
+/** Hermes and OpenCode: a dropdown of the models their account lists, plus a box to type any model id. */
+export const takesModelId = (id, agent = null) => OPEN_MODEL_ENGINES.has(agent?.engine || findWs(id)?.runtime);
 /** Hermes and OpenCode expose tier-dependent model lists via a dropdown instead of 3 segmented buttons. */
 export function wsUsesModelDropdown(id, agent = null) {
-  const rt = agent?.engine || findWs(id)?.runtime;
-  return rt === 'hermes' || rt === 'opencode' || wsModels(id).length > 3;
+  return takesModelId(id, agent) || pickModels(id, agent).length > 3;
 }
 /** The model buttons to show: each distinct model once (an engine whose three tiers are all "default" shows one button). */
 export const modelChoices = ms => [...new Set(ms)];

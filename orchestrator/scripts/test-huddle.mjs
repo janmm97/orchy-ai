@@ -334,12 +334,12 @@ try {
     H.stopHuddle(z.id);
   }
 
-  // ── huddles stored by older builds: 'jan' lines, text-only questions ──
+  // ── huddles stored by older builds: text-only questions ──
   {
     const old = {
       id: 'huddle_test_old', workspace: 'beta', session: 's_old', askedIn: null, topic: 'Old one.', startedBy: null, readyFrom: 0, maxTurns: 6, status: 'agreed', currentRunId: null, workRunIds: [], createdAt: new Date().toISOString(), endedAt: null,
       agents: [{ slug: 'analyst', name: 'Nora', role: 'Lab Analyst', sessionId: 'sess_old', runIds: [] }, { slug: 'agent-builder', name: 'Iris', role: 'AI Agent Builder', isBuilder: true, sessionId: null, runIds: [] }],
-      turns: [{ by: 'jan', name: 'Owner', text: 'Steer.' }, { by: 'analyst', name: 'Nora', text: 'ok', ready: true }],
+      turns: [{ by: 'owner', name: 'Owner', text: 'Steer.' }, { by: 'analyst', name: 'Nora', text: 'ok', ready: true }],
       agreement: { summary: 'Old.', decisions: [], work: [{ agent: 'analyst', task: 'Do the old thing.' }], questions_for_owner: ['Which week?'] },
     };
     db().huddles[old.id] = old;

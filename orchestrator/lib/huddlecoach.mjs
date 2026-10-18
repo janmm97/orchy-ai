@@ -43,7 +43,7 @@ export function coachSettings(s = deps.settings()) {
   };
 }
 
-const isOwnerLine = t => t.by === 'owner' || t.by === 'jan'; // 'jan': huddles stored by older builds
+const isOwnerLine = t => t.by === 'owner';
 const isTalk = t => !isOwnerLine(t) && t.by !== 'orchy';
 const isCoach = t => t.by === 'orchy' && t.kind === 'coach';
 const trim = (s, n) => { const t = String(s ?? '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1).trimEnd()}…` : t; };

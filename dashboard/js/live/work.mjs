@@ -146,9 +146,9 @@ function huddleWork(h) {
   const st = huddleState(h);
   const talking = ['talking', 'wrapping'].includes(h.status);
   const sp = speakerOf(h);
-  const used = h.turns.filter(t => t.by !== 'owner' && t.by !== 'jan' && t.by !== 'orchy' && !t.wrap).length;
+  const used = h.turns.filter(t => t.by !== 'owner' && t.by !== 'orchy' && !t.wrap).length;
   const work = (h.workRunIds || []).map(id => S.ctx.state.runs.get(id)).filter(Boolean);
-  const qn = (h.agreement?.questions_for_owner || h.agreement?.questions_for_jan)?.length || 0;
+  const qn = h.agreement?.questions_for_owner?.length || 0;
   return `<div class="lhead">
       <div class="lwho huddle"><span class="lpair">${h.agents.map(a => `<span class="sprite" title="${esc(a.name)}">${spriteFor(h.workspace, a.slug)}</span>`).join('')}</span>
         <span class="t"><b>${esc(huddleName(h))}</b><span><span class="plate ${wsClass(h.workspace)}">${esc(wsName(h.workspace))}</span> ${used}/${h.maxTurns} turns · started ${timeShort(h.createdAt)}</span></span>

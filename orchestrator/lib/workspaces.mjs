@@ -106,6 +106,21 @@ export function backendWorkspace() {
   };
 }
 
+/**
+ * The owner picks the Claude Code account Orchy fixes himself under (Settings → Accounts, or the Fix Orchy card).
+ * `ownProfile`: a profile folder of his own (an account other than this computer's sign-in), else the default profile.
+ * Only sets which account is expected: accountCheck still compares it with the actual sign-in before every fix.
+ */
+export function setBackendAccount({ account, ownProfile = false } = {}) {
+  const email = String(account || '').trim();
+  if (!EMAIL.test(email)) throw bad('Give the Claude Code account as an email address');
+  config.orchy ||= {};
+  config.orchy.claudeAccount = email;
+  config.orchy.claudeConfigDir = ownProfile ? (config.orchy.claudeConfigDir || profileDir('claude', BACKEND_ID)) : null;
+  saveConfig();
+  return backendWorkspace();
+}
+
 export function workspace(id) {
   if (id === BACKEND_ID) return backendWorkspace();
   const w = workspaces().find(x => x.id === id);
@@ -116,7 +131,7 @@ export function workspace(id) {
 // ── runtimes and models ──
 // A workspace has a default engine (`runtime`); an agent can pin another one (`engine:` in its file),
 // e.g. a Codex designer in a Claude workspace. Every helper below takes that engine, defaulting to the workspace's.
-// Only engines with an adapter in engines/ exist here: config.json may name more (hermes, deepseek…) but they are not listed.
+// Only engines with an adapter in engines/ exist here: config.json may name more, but they are not listed.
 /** The registered engines as config.json describes them: { id: { label, models, … capabilities } }. */
 export function runtimes() {
   const out = {};
@@ -137,6 +152,8 @@ export function tierModel(ws, i, runtime = ws.runtime) { const m = modelsFor(ws,
  */
 export function modelFor(ws, model, runtime = ws.runtime) {
   const mine = modelsFor(ws, runtime);
+  // "inherit" (an agent file's "the workspace's model") names no model: never sent to a harness as an id
+  if (model === 'inherit') model = null;
   if (model && mine.includes(model)) return model;
   if (mine.every(m => m === 'default')) {
     const s = String(model || '').trim();
@@ -145,6 +162,9 @@ export function modelFor(ws, model, runtime = ws.runtime) {
     if (!isOtherTier && engine(runtime)?.openModels && /^[\w][\w.:-]{1,79}$/.test(s)) return s;
     return 'default';
   }
+  // "default" (OpenCode's and Hermes's "the harness picks") on an engine with real tiers is its middle one, not the
+  // cheapest (every tier of those engines is "default", so the loop below would read it as tier 0)
+  if (model === 'default') return mine[1] || mine[0];
   for (const rt of Object.values(runtimes())) {
     const i = rt.models.indexOf(model);
     if (i >= 0) return tierModel(ws, i, runtime);
@@ -233,7 +253,7 @@ export async function accountCheck(ws, { force = false, runtime = ws.runtime } =
     tier: status.tier || null,
     availableModels: Array.isArray(status.models) && status.models.length ? status.models : null,
     sandbox: status.sandbox ?? null,
-    error: status.error || (a.email ? null : ws.builtin ? 'Orchy has no Claude Code account set for fixing himself (orchy.claudeAccount in config.json)' : `${ws.name} has no ${runtimeLabel(e.id)} account set (${e.fields.account} in config.json)`),
+    error: status.error || (a.email ? null : ws.builtin ? 'Orchy has no Claude Code account set for fixing himself yet. Pick one in Settings → Accounts' : `${ws.name} has no ${runtimeLabel(e.id)} account set (${e.fields.account} in config.json)`),
     fix: ok ? null : loginHint(ws, e.id),
     fixAlt: ok ? null : loginAlt(ws, e.id),
   };

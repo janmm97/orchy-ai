@@ -6,7 +6,7 @@
 //         conversation on screen) and each client with work opens a pane beside him. About a
 //         minute after the last task finishes, it folds back home.
 import { icon, orchySVG, orchyTopbarSVG, orchyStageSVG, createEl, hatch } from './pixel.mjs';
-import { esc, api, ownerHeaders, md, $, $$, wsName, wsShort, wsClass, wsModels, wsPlan, wsUsesModelDropdown, dropdownModels, modelChoices, modelIsFree, setWorkspaces, setOwner, ownerName, ownerKnown, setCallNames, agentName, runName, itemName, nameRole, timeShort, dur, clockET, onShift, setTimezone, timezone, zoneShort, clientOwn } from './util.mjs';
+import { esc, api, ownerHeaders, md, $, $$, wsName, wsShort, wsClass, wsPlan, wsUsesModelDropdown, pickModels, takesModelId, backendInfo, startModel, dropdownModels, modelChoices, modelIsFree, setWorkspaces, setOwner, ownerName, ownerKnown, setCallNames, agentName, runName, itemName, nameRole, timeShort, dur, clockET, onShift, setTimezone, timezone, zoneShort, clientOwn } from './util.mjs';
 import { initWindows, focusNextDecision, zoomRects, activePopDocument, getWindow, decisionWindows } from './windows.mjs';
 import { initPopups, openItem, closeItem } from './popups.mjs';
 import { initSheets, openRun, openAgent, openBuild, runEvent, runUpdated, runArtifact, recoverButtons, recoverAct, fixText } from './sheets.mjs';
@@ -657,6 +657,19 @@ function agentLabel(key) {
   return agentName(ws, slug, state.agents.find(a => a.workspace === ws && a.slug === slug)?.displayName);
 }
 
+/** On the Fix Orchy card: Orchy has no Claude Code account of his own yet (a fresh install), or it isn't signed in. */
+function fixAccountHTML() {
+  const a = backendInfo().account;
+  if (!a || a.ok) return '';
+  if (!a.expected) {
+    return `<div class="fixbar"><b>I need a Claude Code account to work on my own code.</b>
+      <span>${a.suggested ? `Claude Code on this computer is signed in as <b>${esc(a.suggested)}</b>. Use that account for my fixes?` : 'Sign in to Claude Code on this computer first (in a terminal: claude auth login), then pick the account in Settings → Accounts.'}</span>
+      <span class="btnrow">${a.suggested ? `<button class="btn sm primary" type="button" data-backend-use="${esc(a.suggested)}">${icon('check')}Use ${esc(a.suggested)}</button>` : ''}<button class="btn sm" type="button" data-open="settings">Settings</button></span></div>`;
+  }
+  return `<div class="fixbar"><b>I fix myself as ${esc(a.expected)}, but ${a.loggedIn ? `Claude Code is signed in as ${esc(a.actual || 'another account')}` : 'that Claude Code profile isn’t signed in'}.</b>
+    <span class="btnrow"><button class="btn sm" type="button" data-login="orchy">Log in</button><button class="btn sm" type="button" data-open="settings">Settings</button></span></div>`;
+}
+
 function routeCard(p) {
   const el = document.createElement('article');
   el.className = 'route';
@@ -683,9 +696,10 @@ function fillRoute(el, p) {
   // an agent pinned to its own engine (e.g. Codex in a Claude workspace) offers that engine's models
   const pinned = ch.intent === 'task' && ch.agent ? agentsInWs.find(a => a.slug === ch.agent && a.engine) : null;
   const wsId = ch.workspace || defaultWs();
-  const models = (pinned?.models && !pinned.models.every(m => m === 'default')) ? pinned.models : wsModels(wsId);
+  const models = pickModels(wsId, pinned);
   const useDropdown = wsUsesModelDropdown(wsId, pinned);
-  const plan = wsPlan(wsId);
+  const typeable = takesModelId(wsId, pinned); // Hermes, OpenCode: any provider/model id, listed or not
+  const plan = wsPlan(wsId, pinned);
   const agentBars = Object.entries(pr.agent || {}).sort((a, b) => b[1] - a[1]).slice(0, 3);
 
   if (done) {
@@ -700,14 +714,14 @@ function fillRoute(el, p) {
   const prev = ch.followUp ? state.runs.get(ch.followUp) : null;
   const choices = modelChoices(models);
   // the dropdown shows exactly what will be sent: the card's model, else "default"
-  const pickedModel = ch.model || 'default';
+  const pickedModel = startModel(ch.model);
   el.innerHTML = `
     <div class="rh"><span>${r.needsChoice && !p.held ? unsureHead : `Jev routed${r.jev ? ` · ${(r.jev.ms / 1000).toFixed(1)}s` : ''}`}</span><span>${esc(ch.followUp ? 'Follow-up' : intentLabel)}</span></div>
     <div class="rb">
       <q>${esc(p.text)}</q>
       ${p.files?.length && !fix ? `<p class="hint">${icon('clip')} ${p.files.length === 1 ? 'Your file goes' : `Your ${p.files.length} files go`} along: ${esc(p.files.join(', '))}</p>` : ''}
       ${ch.followUp ? `<div class="btnrow" style="justify-content:space-between;align-items:center"><span class="hint">${icon('refresh')} Continues ${fix ? 'my last fix' : `${esc(prev ? runName(prev) : 'an earlier run')}’s run`}${prev ? `: “${esc(prev.instruction.length > 90 ? `${prev.instruction.slice(0, 89)}…` : prev.instruction)}”` : ''}, in the same conversation${fix ? '' : ' and task folder'}</span><button type="button" class="btn sm" data-route-act="fresh">Start fresh</button></div>` : ''}
-      ${fix ? `<p class="hint">${icon('term')} I’d work on my own code: the server, the dashboard and the scripts. I snapshot it first, I can’t touch clients’ folders, and changes to my safety rules wait for your OK. If the fix needs a restart I do it myself, and if I wouldn’t start I put the old code back.${p.files?.length ? ` ${p.files.length === 1 ? 'Your file comes' : 'Your files come'} along.` : ''}</p>` : `<div class="bars"><div class="bh"><span>Client</span><span>${r.source === 'heuristic' ? 'best guess (Jev offline)' : ''}</span></div>
+      ${fix ? `<p class="hint">${icon('term')} I’d work on my own code: the server, the dashboard and the scripts. I snapshot it first, I can’t touch clients’ folders, and changes to my safety rules wait for your OK. If the fix needs a restart I do it myself, and if I wouldn’t start I put the old code back.${p.files?.length ? ` ${p.files.length === 1 ? 'Your file comes' : 'Your files come'} along.` : ''}</p>${fixAccountHTML()}` : `<div class="bars"><div class="bh"><span>Client</span><span>${r.source === 'heuristic' ? 'best guess (Jev offline)' : ''}</span></div>
         ${wsBars.map(({ w, v }) => `<div class="bar ${wsClass(w)} ${ch.workspace === w ? 'pick' : ''}"><span class="lbl">${esc(wsName(w))}</span><span class="trk"><span class="fill" data-w="${Math.round(v * 100)}"></span></span><span class="pct">${Math.round(v * 100)}%</span></div>`).join('')}
       </div>
       ${agentBars.length && ch.intent === 'task' && !ch.followUp ? `<div class="bars"><div class="bh"><span>Agent</span></div>
@@ -717,7 +731,7 @@ function fillRoute(el, p) {
           <span class="label">Do</span><div class="seg" role="group" aria-label="Intent">${[['task', 'Task'], ...(state.missionsOn ? [['mission', 'Mission']] : []), ['build_agent', 'Build agent'], ['huddle', 'Huddle'], ['fix_orchy', 'Fix Orchy']].map(([v, l]) => `<button type="button" data-set="intent" data-v="${v}" aria-pressed="${ch.intent === v}">${l}</button>`).join('')}</div></div>
         <div class="rowc">${huddle ? `<span class="label">Who</span>${Array.from({ length: Math.min(huddlers.length, Math.max(2, pair.length + 1)) }, (_, i) => `<select class="select" data-hpick="${i}" style="width:auto;min-height:32px;padding:2px 8px" aria-label="Huddle agent ${i + 1}"><option value="">${i < 2 ? 'pick an agent' : '+ add an agent'}</option>${huddlers.filter(a => a.slug === pair[i] || !pair.includes(a.slug)).map(a => `<option value="${esc(a.slug)}" ${pair[i] === a.slug ? 'selected' : ''}>${esc(nameRole(agentName(a.workspace, a.slug, a.displayName), a.displayName))}</option>`).join('')}</select>`).join('<span aria-hidden="true">⇄</span>')}` : ''}${ch.intent === 'task' ? `<span class="label">Agent</span><select class="select" data-set-select="agent" style="width:auto;min-height:32px;padding:2px 8px" aria-label="Agent"><option value="">${esc(wsName(ch.workspace || ''))} generalist</option>${agentsInWs.map(a => `<option value="${esc(a.slug)}" ${ch.agent === a.slug ? 'selected' : ''}>${esc(nameRole(agentName(a.workspace, a.slug, a.displayName), a.displayName))}</option>`).join('')}</select>` : ''}
           ${huddle ? '' : `<span class="label">${pinned ? `${esc(pinned.engineLabel)} model` : 'Model'}</span>${useDropdown
-            ? `<select class="select" data-set-model-select style="width:auto;min-height:32px;padding:2px 8px" aria-label="Model">${dropdownModels(choices, pickedModel).map(m => `<option value="${esc(m)}" ${pickedModel === m ? 'selected' : ''}>${esc(m === 'default' ? 'Default (tier automatic)' : m)}</option>`).join('')}</select>${plan ? `<span class="chip" title="Detected account plan / tier">${esc(plan)}</span>` : ''}`
+            ? `<select class="select" data-set-model-select style="width:auto;min-height:32px;padding:2px 8px" aria-label="Model">${dropdownModels(choices, pickedModel).map(m => `<option value="${esc(m)}" ${pickedModel === m ? 'selected' : ''}>${esc(m === 'default' ? 'Default (tier automatic)' : m)}</option>`).join('')}</select>${typeable ? `<input class="input" data-set-model type="text" spellcheck="false" autocomplete="off" placeholder="or type a model id, e.g. provider/model" aria-label="Model id" title="${choices.some(m => m !== 'default') ? 'Any model this harness takes, listed or not' : 'Orchy found no model list for this account yet (sign it in, then Re-check accounts). Any model id it takes works here.'}" style="min-width:14ch;max-width:26ch">` : ''}${plan ? `<span class="chip" title="Detected account plan / tier">${esc(plan)}</span>` : ''}`
             : `<div class="seg" role="group" aria-label="Model">${choices.map(m => `<button type="button" data-set="model" data-v="${esc(m)}" aria-pressed="${ch.model === m}" title="${esc(m)}">${esc(m.replace(/^gpt-/, ''))}</button>`).join('')}</div>${modelIsFree(models) ? `<input class="input" data-set-model type="text" spellcheck="false" autocomplete="off" placeholder="or a model id, e.g. provider/model" aria-label="Model id" value="${ch.model && ch.model !== 'default' ? esc(ch.model) : ''}" style="min-width:14ch;max-width:26ch">` : ''}`}`}</div>
       </div>
     </div>
@@ -730,6 +744,16 @@ function fillRoute(el, p) {
   el.querySelector('[data-set-model]')?.addEventListener('change', e => patchRoute(p.id, { model: e.target.value.trim() || 'default' }));
   el.querySelector('[data-set-model-select]')?.addEventListener('change', e => patchRoute(p.id, { model: e.target.value }));
   el.querySelector('[data-set-select]')?.addEventListener('change', e => patchRoute(p.id, { agent: e.target.value || null }));
+  el.querySelector('[data-backend-use]')?.addEventListener('click', async e => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const b = await api('/api/backend/account', { method: 'POST', body: { account: btn.dataset.backendUse } });
+      setWorkspaces(null, null, b);
+      fillRoute(el, state.proposals.get(p.id) || p);
+      toast(b.account?.ok ? `I’ll fix myself as ${b.account.expected}.` : `Saved. ${b.account?.error || 'Sign that account in to Claude Code, then press Fix it.'}`, b.account?.ok ? '' : 'warn');
+    } catch (err) { toast(err.message, 'warn'); btn.disabled = false; }
+  });
   el.querySelectorAll('[data-hpick]').forEach(sel => sel.addEventListener('change', () => patchRoute(p.id, { huddle: [...el.querySelectorAll('[data-hpick]')].map(x => x.value).filter(Boolean) })));
   el.querySelector('[data-route-act="send"]').addEventListener('click', async e => {
     const btn = e.currentTarget;
@@ -1161,7 +1185,7 @@ function connectEvents() {
   on('workspaces.changed', d => {
     if (d.workspaces) state.workspaces = d.workspaces;
     if (d.retired) state.retired = d.retired;
-    setWorkspaces(state.workspaces, state.retired);
+    setWorkspaces(state.workspaces, state.retired, d.backend);
     ensurePanes();
     if (d.added) api('/api/agents').then(a => { state.agents = a; refreshAgents(); }).catch(() => {});
     renderAll();

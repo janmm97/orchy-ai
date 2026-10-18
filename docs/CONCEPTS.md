@@ -88,4 +88,6 @@ You can share chosen agents with a client on their own page (second server, port
 
 ## Orchy fixing itself
 
-Tell Orchy what is broken. Jev makes a "Fix Orchy" card that always waits for your OK. A run then edits Orchy's own code after a snapshot. The guarded files (`GUARDED_GLOBS` in `orchestrator/lib/backend.mjs`) and any edit that removes a lock ask you every time, with the diff. It cannot touch workspace folders. If server code changed, Orchy restarts himself and rolls back if the new code does not start. The report has an Undo.
+Tell Orchy what is broken. Jev makes a "Fix Orchy" card that always waits for your OK. A run then edits Orchy's own code after a snapshot.
+
+Fixes run on Claude Code, under an account you pick once: `npm run setup` offers the account this computer's Claude Code is signed in as, and so do the Fix Orchy card ("Use …") and Settings → Accounts (where you can also give Orchy another account, in a Claude Code profile folder of his own). It is checked before every fix like any workspace's account. The guarded files (`GUARDED_GLOBS` in `orchestrator/lib/backend.mjs`) and any edit that removes a lock ask you every time, with the diff. It cannot touch workspace folders. If server code changed, Orchy restarts himself and rolls back if the new code does not start. The report has an Undo.

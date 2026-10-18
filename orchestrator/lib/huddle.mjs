@@ -70,8 +70,8 @@ export const getHuddle = hid => {
 };
 export const listHuddles = (limit = 30) => Object.values(all()).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
 export const publicHuddle = h => h;
-// the owner's lines ('jan' in huddles stored by older builds)
-const isOwnerLine = t => t.by === 'owner' || t.by === 'jan';
+// the owner's lines
+const isOwnerLine = t => t.by === 'owner';
 // an agent's turn (not the owner's lines, not Orchy's)
 const isTalk = t => !isOwnerLine(t) && t.by !== 'orchy';
 /** Has this agent pushed back on anything yet? Its `ready` only counts once it has. */
@@ -90,7 +90,7 @@ const nextAfter = (h, slug) => h.agents[(h.agents.findIndex(a => a.slug === slug
 export const nameList = names => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
 const whoRoles = list => nameList(list.map(o => `${o.name} (${o.role})`));
 /** The agreement's questions, for huddles stored before they were kept structured. */
-export const questionsOf = g => (g?.questions?.length ? g.questions : (g?.questions_for_owner || g?.questions_for_jan || []).map((q, i) => ({ id: `q${i + 1}`, q: String(q) })));
+export const questionsOf = g => (g?.questions?.length ? g.questions : (g?.questions_for_owner || []).map((q, i) => ({ id: `q${i + 1}`, q: String(q) })));
 
 function changed(h) {
   io.save();
@@ -332,7 +332,7 @@ export async function onTurnEnded(runId) {
       by: a.slug, name: a.name, text: String(r.message).slice(0, 6000), ...(challenge ? { challenge } : {}),
       // ready only counts from an agent that has pushed back on something (this turn included)
       ready: !!r.ready && earned, ...(r.ready && !earned ? { readyUnearned: true } : {}),
-      ...(wrapping ? { wrap: true } : {}), questions: (r.questions_for_owner || r.questions_for_jan || []).slice(0, 10), runId: run.id, at: new Date().toISOString(),
+      ...(wrapping ? { wrap: true } : {}), questions: (r.questions_for_owner || []).slice(0, 10), runId: run.id, at: new Date().toISOString(),
     });
     // a fresh challenge reopens the talk: everyone else agrees again after it (the challenger's own ready stands)
     if (challenge) h.readyFrom = h.turns.length - 1;
@@ -406,7 +406,7 @@ export function agreementFrom(h, raw, closing) {
     .filter(w => w.task && slugs.has(w.agent));
   // the wrap-up merges every question of the talk into a few broad ones; only when it wrote none do the turns' own
   // questions (since the owner last answered) stand in
-  const merged = dedupe(questionsIn(g.questions_for_owner ?? g.questions_for_jan));
+  const merged = dedupe(questionsIn(g.questions_for_owner));
   const questions = (merged.length ? merged : dedupe(openQuestionTurns(h).flatMap(t => t.questions || []).map(q => ({ q: String(q).trim() }))))
     .map((q, i) => ({ id: `q${i + 1}`, ...q, ...(q.covers ? { covers: q.covers.filter(s => slugs.has(s)) } : {}) }));
   return {
