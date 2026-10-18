@@ -13,7 +13,8 @@ import { fileURLToPath } from 'node:url';
 import { decide } from '../lib/policy.mjs';
 import { launchAcpRun, pickOption, gateCalls, toAcpMcp, mcpName, AcpConnection, CLIENT_CAPABILITIES } from '../lib/engines/acp.mjs';
 import { buildHermesConfigYaml, hermesConfigLooksSafe, HERMES_APPROVALS, parseHermesStatus } from '../lib/engines/hermes-config.mjs';
-import { hermesEnv, hermesArgs } from '../lib/engines/hermes.mjs';
+import { hermesEnv, hermesArgs, hermesHookCommand } from '../lib/engines/hermes.mjs';
+import { hermesHookCalls, actionKind } from '../lib/engines/hookmap.mjs';
 import hermes from '../lib/engines/hermes.mjs';
 
 let fail = 0;
@@ -29,7 +30,7 @@ process.on('exit', () => { try { fs.rmSync(TMP, { recursive: true, force: true }
 const WS = { id: 'alpha', name: 'Alpha', dir: CWD };
 const BRIDGE = { command: 'node', args: ['bridge.mjs'], env: { JOS_TOKEN: 'tok', JOS_RUN: 'r1' } };
 
-async function run(scenario, over = {}, { cfg = {}, io = {}, afterStart } = {}) {
+async function run(scenario, over = {}, { cfg = {}, io = {}, afterStart, takeHookAllow } = {}) {
   const log = path.join(TMP, `log-${Math.random().toString(36).slice(2)}.jsonl`);
   const out = { records: [], gated: [], started: null, done: null, wouldAsk: [], log, handle: null };
   const gateCtx = { run: { workspace: 'alpha', agentSlug: null }, ws: WS, agent: null, connections: [], mode: 'decisions', askFor: {}, oneScoped: false, remembered: () => false, resolveAction: async () => ({ method: null }), wsAgents: [], otherDirs: [], josRoot: TMP };
@@ -47,6 +48,7 @@ async function run(scenario, over = {}, { cfg = {}, io = {}, afterStart } = {}) 
     usage: t => { out.usage = t; },
     cost: c => { out.cost = c; },
     done: d => { out.done = d; out.resolve?.(); },
+    ...(takeHookAllow ? { takeHookAllow } : {}),
   };
   const finished = new Promise(r => { out.resolve = r; });
   out.handle = launchAcpRun({
@@ -132,6 +134,16 @@ async function run(scenario, over = {}, { cfg = {}, io = {}, afterStart } = {}) 
   ok(o2.done?.code === 0 && o2.records.some(r => r.kind === 'system' && /without asking/.test(r.text)), 'strict:false (allowUngated workspaces) notes it on the feed and carries on');
   const o3 = await run('ranAfterReject');
   ok(o3.done?.code === 1 && /refused/i.test(o3.done.error), 'a tool that runs after Orchy refused it aborts the run', JSON.stringify(o3.done));
+  // an engine with Orchy's pre-tool hook (Hermes): the hook's OK for the same kind of action counts as asking
+  const took = [];
+  const o5 = await run('noask', {}, { takeHookAllow: (kind, file) => { took.push([kind, file]); return kind === 'execute'; } });
+  ok(o5.done?.code === 0 && took.some(([k]) => k === 'execute'), 'strict: a shell tool the pre-tool hook cleared runs on (no ACP request needed)', JSON.stringify([o5.done, took]));
+  const o6 = await run('noask', {}, { takeHookAllow: () => false });
+  ok(o6.done?.code === 1 && /acted without asking/i.test(o6.done.error), 'strict: with no hook OK for it, the same tool still aborts the run', JSON.stringify(o6.done));
+  const kept = [];
+  const o7 = await run('main', {}, { takeHookAllow: (kind, file, o = {}) => { if (file) kept.push(!!o.keep); return kind === 'edit' && !!file && file.endsWith('a.txt'); } });
+  ok(!o7.gated.some(g => g.tool === 'Edit') && o7.gated.some(g => g.tool === 'Bash'), 'an ACP edit request for a file the hook already cleared is answered from that OK (the owner is never asked twice); other calls still reach the gate', JSON.stringify(o7.gated.map(g => g.tool)));
+  ok(kept.length > 0 && kept.every(Boolean), 'the edit request only checks the hook OK (keep): the tool, under its own id, uses it up', JSON.stringify(kept));
   const o4 = await run('readfree');
   ok(o4.done?.code === 0 && o4.gated.length === 0 && o4.done.resultText === 'read it', 'read/search/think tools need no permission request');
 }
@@ -182,7 +194,23 @@ async function run(scenario, over = {}, { cfg = {}, io = {}, afterStart } = {}) 
   ok(hermesArgs().join(' ') === 'acp' && !hermesArgs().some(a => /yolo/i.test(a)), 'hermes: runs `hermes acp`, never --yolo');
   const env = hermesEnv('/p/prof', { PATH: '/bin', HERMES_YOLO_MODE: '1', HERMES_HOME: '/other', OPENAI_API_KEY: 'k', FOO: '1' });
   ok(env.HERMES_HOME.replace(/\\/g, '/').endsWith('/p/prof') && env.HERMES_YOLO_MODE === undefined && env.OPENAI_API_KEY === undefined && env.FOO === '1' && env.HERMES_ACP_SKIP_CONFIGURED_MCP === '1', 'hermes: env points at the profile, drops HERMES_YOLO_MODE and the PC\'s keys, skips the global MCP servers');
-  ok(hermes.capabilities.gated === false && hermes.accountModel === 'profile', 'hermes: not gated (file writes / MCP never ask in ACP mode), profile account model');
+  ok(hermes.capabilities.gated === true && hermes.accountModel === 'profile', 'hermes: gated (its pre_tool_call hook), profile account model');
+  const HOOK = hermesHookCommand({ script: 'C:/Orchy Folder/orchestrator/mcp/tool-hook.mjs', credsFile: 'C:/Orchy Folder/orchestrator/data/tool-hook.json' }, 'C:/Program Files/nodejs/node.exe');
+  ok(HOOK === '"C:/Program Files/nodejs/node.exe" "C:/Orchy Folder/orchestrator/mcp/tool-hook.mjs" "hermes" "C:/Orchy Folder/orchestrator/data/tool-hook.json"', 'hermes: the hook command quotes every path (spaces are fine)', HOOK);
+  const hooked = buildHermesConfigYaml('model: x/y\nhooks:\n  pre_tool_call:\n    - command: rewrite-args.sh\n  post_tool_call:\n    - command: audit.sh\nhooks_auto_accept: false\n', { hookCommand: HOOK });
+  ok(hermesConfigLooksSafe(hooked, { hookCommand: HOOK }) && !/rewrite-args/.test(hooked) && /audit\.sh/.test(hooked) && /fail_closed: true/.test(hooked) && /hooks_auto_accept: true/.test(hooked) && /model: x\/y/.test(hooked), 'hermes: Orchy’s hook is the only pre_tool_call hook (fail_closed, auto-accepted); the owner’s other hooks and model stay', hooked);
+  ok(!hermesConfigLooksSafe(buildHermesConfigYaml(''), { hookCommand: HOOK }) && !hermesConfigLooksSafe(hooked.replace('fail_closed: true', 'fail_closed: false'), { hookCommand: HOOK }) && !hermesConfigLooksSafe(hooked.replace('pre_tool_call:', 'pre_tool_call:\n    - command: other.sh'), { hookCommand: HOOK }), 'hermes: the safety check rejects a config without the hook, a fail-open hook, or a second pre_tool_call hook');
+  ok(hermesEnv('/p', { PATH: '/bin', HERMES_SAFE_MODE: '1' }).HERMES_SAFE_MODE === undefined, 'hermes: HERMES_SAFE_MODE (which skips every hook) never reaches it');
+  // what Hermes's hook sends → the gate's calls (the payload shape Hermes 0.21 sends)
+  const hc = (tool_name, tool_input) => hermesHookCalls({ hook_event_name: 'pre_tool_call', tool_name, tool_input, session_id: 's1', cwd: CWD }).calls;
+  ok(hermesHookCalls({ session_id: 's1', tool_name: 'todo', tool_input: {} }).sessionId === 's1', 'hermes hook: the run is found by its ACP session id');
+  ok(hc('write_file', { path: 'note.txt', content: 'hi' })[0].tool === 'Write' && hc('write_file', { path: 'note.txt' })[0].input.file_path === path.join(CWD, 'note.txt'), 'hermes hook: write_file → Write, its path resolved in the run folder');
+  ok(hc('patch', { path: 'a.txt' })[0].tool === 'Edit' && hc('read_file', { path: 'a.txt' })[0].tool === 'Read', 'hermes hook: patch → Edit, read_file → Read');
+  ok(hc('terminal', { command: 'rm deleteme.txt' })[0].tool === 'Bash' && hc('terminal', { command: 'rm deleteme.txt' })[0].input.command === 'rm deleteme.txt', 'hermes hook: terminal → Bash with its command');
+  ok(hc('execute_code', { code: 'print(1)' })[0].tool === 'Bash', 'hermes hook: execute_code is judged as the script it runs');
+  ok(hc('web_extract', { urls: ['https://a.example', 'https://b.example'] }).map(c => c.input.url).join() === 'https://a.example,https://b.example', 'hermes hook: web_extract → one WebFetch per URL (all must pass)');
+  ok(hc('mcp__testmcp__touch_marker', {})[0].tool === 'mcp__testmcp__touch_marker' && hc('tool_describe', {})[0].tool === 'TodoWrite' && hc('send_message', { to: 'x' })[0].tool === 'hermes:send_message', 'hermes hook: MCP tools keep their name, its own bookkeeping passes, anything unknown asks the owner');
+  ok(actionKind('Write') === 'edit' && actionKind('Bash') === 'execute' && actionKind('mcp__a__b') === 'mcp__a__b' && actionKind('hermes:x') === 'other', 'hook kinds match the ACP kinds the safety net sees');
   ok(parseHermesStatus('Model: nous/hermes-4\nProvider: openrouter\n').providers.join() === 'openrouter' && parseHermesStatus('garbage').providers.length === 0 && parseHermesStatus('Provider: none').providers.length === 0, 'hermes: status parsing is defensive');
 }
 

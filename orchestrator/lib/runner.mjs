@@ -20,13 +20,14 @@ import { profilePath, shellLine } from './engines/shared.mjs';
 import { getAgent, listAgents, agentFingerprint, BUILDER_SLUG } from './agents.mjs';
 import { protocolFile, builderBrief, codexInstructions } from './prompts.mjs';
 import { namingBrief, nameOf } from './voiceagents.mjs';
-import { expireForRun, itemsForRun, createItem } from './inbox.mjs';
+import { expireForRun, itemsForRun, createItem, waitFor } from './inbox.mjs';
 import { appendRunLog, appendCostLine } from './logs.mjs';
 import { hasTaskDir, openTaskDir, saveTask } from './tasks.mjs';
 import { syncResources } from './resources.mjs';
 import { serversWithAuth } from './mcpauth.mjs';
 import { ensureHome, clientSettingsFile, clientReadDirs, adoptUploads, copyIntoTask, filesNote, taskRoot, tasksBase, taskRootRel, taskRel } from './clientspace.mjs';
-import { gateAndWait, waitAnswered } from './gate.mjs';
+import { gate, gateAndWait, waitAnswered } from './gate.mjs';
+import { actionKind } from './engines/hookmap.mjs';
 import { askFields, clientDenyRules } from './clients.mjs';
 import { teamFor, huddlePartners, nativeAgentDenyRules } from './delegation.mjs';
 import { planFor, planLine } from './actionplan.mjs';
@@ -576,6 +577,71 @@ export function setupSettingsFile(ws, run) {
   return file;
 }
 
+// ── Pre-tool hooks: Antigravity and Hermes run mcp/tool-hook.mjs before every tool call, and it asks here ──
+// The hook names its run by the session id the harness gives it (agy's conversation, Hermes's ACP session), so two
+// runs sharing an agy folder or a Hermes profile never answer for each other. Fail closed: no live hooked run with
+// that session, no answer.
+const toolHookRuns = new Map(); // runId → { engine, allows: [{ kind, file, at }], pending: Map(call → inbox item id) }
+const HOOK_ALLOW_TTL = 10 * 60_000;
+export const TOOL_HOOK_SCRIPT = path.join(ORCH_DIR, 'mcp', 'tool-hook.mjs');
+/** Where the hook finds Orchy and its bridge token: a file in Orchy's data folder, which no agent may read. */
+export function toolHookCreds() {
+  const file = path.join(DATA_DIR, 'tool-hook.json');
+  const body = JSON.stringify({ url: `http://127.0.0.1:${serverPort}`, token: BRIDGE_TOKEN });
+  let cur = '';
+  try { cur = fs.readFileSync(file, 'utf8'); } catch {}
+  if (cur !== body) { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(file, body, { mode: 0o600 }); }
+  return file;
+}
+
+/**
+ * One hook call (POST /api/bridge/tool-hook): every call it names goes through the gate; an ask waits for the owner up
+ * to maxWaitMs. Still unanswered then (Hermes stops a hook after 5 minutes): "still waiting", and the same call asked
+ * again waits on the same pop-up instead of opening another. Returns { allow, reason?, pending? }.
+ */
+export async function toolHook({ engine: eng, sessionId, calls, maxWaitMs = 270_000 }) {
+  const runId = sessionId && [...toolHookRuns.keys()].find(id => {
+    const r = db().runs[id];
+    return r && !r.endedAt && live.has(id) && r.sessionId === sessionId && toolHookRuns.get(id).engine === eng;
+  });
+  if (!runId) return { allow: false, reason: 'Orchy has no live run for this session, so the tool is refused.' };
+  if (!Array.isArray(calls) || !calls.length) return { allow: false, reason: 'No tool to check.' };
+  const run = db().runs[runId], th = toolHookRuns.get(runId);
+  const wait = Math.max(1000, Math.min(Number(maxWaitMs) || 0, 6 * 3600_000));
+  for (const c of calls.slice(0, 20)) {
+    const v = await hookDecide(run, th, String(c?.tool || ''), c?.input && typeof c.input === 'object' ? c.input : {}, wait);
+    if (!v.allow) return v;
+  }
+  for (const c of calls) th.allows.push({ kind: actionKind(c.tool), file: c.input?.file_path ? path.resolve(String(c.input.file_path)) : null, at: Date.now() });
+  return { allow: true };
+}
+
+async function hookDecide(run, th, tool, input, waitMs) {
+  const key = `${tool}\n${JSON.stringify(input)}`;
+  let itemId = th.pending.get(key);
+  if (!itemId) {
+    const v = await gate(run.id, tool, input);
+    if (v.decision === 'allow') return { allow: true };
+    if (v.decision === 'deny') return { allow: false, reason: `${v.reason} Don't try it another way.` };
+    itemId = v.itemId;
+    th.pending.set(key, itemId);
+  }
+  setRunStatus(run, 'waiting');
+  const until = Date.now() + waitMs;
+  let item = db().inbox[itemId];
+  while (item?.status === 'pending' && !run.endedAt && Date.now() < until) item = await waitFor(itemId, Math.min(25_000, until - Date.now()));
+  if (item?.status === 'pending' && !run.endedAt) {
+    return { allow: false, pending: true, reason: `Still waiting for ${ownerName()}'s OK on this: Orchy has asked. Try exactly the same action again in a minute, and don't do it another way meanwhile.` };
+  }
+  th.pending.delete(key);
+  if (!run.endedAt) setRunStatus(run, 'working');
+  if (item?.status === 'answered' && item.answer?.approve) return { allow: true };
+  const who = item?.askee || ownerName();
+  const reason = item?.status === 'answered' ? `${who} denied this${item.answer?.note ? `: ${item.answer.note}` : '.'} Don't try it another way.` : `No answer from ${who}.`;
+  record(run, { kind: 'denied', text: reason });
+  return { allow: false, reason };
+}
+
 /**
  * The hooks an engine whose adapter talks to a long-lived server (Codex, OpenCode) calls: the run's feed, its gate,
  * the owner's question box, usage, and the end. Same for every such engine.
@@ -616,9 +682,27 @@ function hooksFor(run, ws) {
       if (ok) setRunStatus(run, 'starting');
       return ok;
     },
+    // an engine gated by its own pre-tool hook (Antigravity, Hermes): from now on mcp/tool-hook.mjs asks for this run
+    useToolHook: eng => {
+      toolHookRuns.set(run.id, { engine: eng, allows: [], pending: new Map() });
+      return { credsFile: toolHookCreds(), script: TOOL_HOOK_SCRIPT };
+    },
+    // a tool the harness runs was OK'd by the hook (same kind, and the same file when both name one): used up once,
+    // unless `keep` (an ACP edit request for it, which comes under another tool-call id than the tool itself)
+    takeHookAllow: (kind, file = null, { keep = false } = {}) => {
+      const th = toolHookRuns.get(run.id);
+      if (!th) return false;
+      const now = Date.now();
+      th.allows = th.allows.filter(a => now - a.at < HOOK_ALLOW_TTL);
+      const i = th.allows.findIndex(a => a.kind === kind && (!file || !a.file || a.file === path.resolve(file)));
+      if (i < 0) return false;
+      if (!keep) th.allows.splice(i, 1);
+      return true;
+    },
     usage: tokens => { run.tokens = tokens; },
     cost: usd => { run.costUsd = usd; },
     done: ({ code, status, error, resultText }) => {
+      toolHookRuns.delete(run.id);
       if (resultText) run.resultText = resultText;
       run.apiError = code === 0 ? null : status === 'interrupted' ? 'Interrupted' : (error || `The ${runtimeLabel(run.runtime)} turn failed`);
       // the account's session/usage limit: pause instead of failing, and start again (in the same conversation if it acted)

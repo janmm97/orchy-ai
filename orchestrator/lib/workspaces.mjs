@@ -564,7 +564,11 @@ const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
 
 // New workspaces live in <ROOT>/workspaces/<Name> (git-ignored); older config.json entries may still sit straight under ROOT.
 export const WORKSPACES_DIR = path.join(ROOT, 'workspaces');
-const profileDir = (kind, id) => process.platform === 'win32' ? `%USERPROFILE%\\.${kind}-${id}` : `~/.${kind}-${id}`;
+// Hermes 0.21 rebuilds (and on Windows fails to rebuild) its runtime for a HERMES_HOME outside its own data folder, so a
+// Hermes workspace's profile is one of Hermes's own profiles: <data folder>/profiles/orchy-<id>
+const profileDir = (kind, id) => kind === 'hermes'
+  ? (process.platform === 'win32' ? `%LOCALAPPDATA%\\hermes\\profiles\\orchy-${id}` : `~/.hermes/profiles/orchy-${id}`)
+  : process.platform === 'win32' ? `%USERPROFILE%\\.${kind}-${id}` : `~/.${kind}-${id}`;
 
 export function checkFolderName(name) {
   const n = String(name || '').trim().replace(/\s+/g, ' ');
