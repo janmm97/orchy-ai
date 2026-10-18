@@ -16,6 +16,7 @@ import { buildHermesConfigYaml, hermesConfigLooksSafe, HERMES_APPROVALS, parseHe
 import { hermesEnv, hermesArgs, hermesHookCommand } from '../lib/engines/hermes.mjs';
 import { hermesHookCalls, actionKind } from '../lib/engines/hookmap.mjs';
 import hermes from '../lib/engines/hermes.mjs';
+import { inspectHermesAccount, hermesRootFor } from '../lib/engines/tier-catalog.mjs';
 
 let fail = 0;
 const ok = (cond, label, extra = '') => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${label}${cond ? '' : `  ${extra}`}`); if (!cond) fail++; };
@@ -212,6 +213,52 @@ async function run(scenario, over = {}, { cfg = {}, io = {}, afterStart, takeHoo
   ok(hc('mcp__testmcp__touch_marker', {})[0].tool === 'mcp__testmcp__touch_marker' && hc('tool_describe', {})[0].tool === 'TodoWrite' && hc('send_message', { to: 'x' })[0].tool === 'hermes:send_message', 'hermes hook: MCP tools keep their name, its own bookkeeping passes, anything unknown asks the owner');
   ok(actionKind('Write') === 'edit' && actionKind('Bash') === 'execute' && actionKind('mcp__a__b') === 'mcp__a__b' && actionKind('hermes:x') === 'other', 'hook kinds match the ACP kinds the safety net sees');
   ok(parseHermesStatus('Model: nous/hermes-4\nProvider: openrouter\n').providers.join() === 'openrouter' && parseHermesStatus('garbage').providers.length === 0 && parseHermesStatus('Provider: none').providers.length === 0, 'hermes: status parsing is defensive');
+}
+
+// ── Hermes sign-in: a profile uses its own sign-ins, else the computer's (Hermes 0.21 profile mode), never .env keys ──
+{
+  const NATIVE = path.join(TMP, 'hermes-home');
+  const put = (dir, file, body) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, file), typeof body === 'string' ? body : JSON.stringify(body)); };
+  put(NATIVE, 'auth.json', {
+    active_provider: 'nous',
+    providers: { nous: { access_token: 'pc-token', account_tier: 'plus' } },
+    credential_pool: { deepseek: [{ id: 'a', auth_type: 'api_key', access_token: 'sk-pc' }], openrouter: [{ id: 'b', source: 'env:OPENROUTER_API_KEY' }] },
+  });
+  put(NATIVE, '.env', 'FOO_API_KEY=pc-env-key\n');
+  put(NATIVE, 'config.yaml', 'model:\n  default: hermes-4\n  provider: nous\n  api_key: never-copied\n');
+  put(NATIVE, 'provider_models_cache.json', { nous: { models: ['hermes-4', 'hermes-4-mini'] } });
+
+  ok(hermesRootFor(path.join(NATIVE, 'profiles', 'orchy-a'), NATIVE) === path.resolve(NATIVE) && hermesRootFor(path.join(TMP, 'elsewhere', 'profiles', 'p'), NATIVE) === path.join(TMP, 'elsewhere')
+    && hermesRootFor(path.join(TMP, 'loose'), NATIVE) === null && hermesRootFor(NATIVE, NATIVE) === null, 'hermes: a profile falls back to the home it sits in, as Hermes resolves it');
+
+  const empty = path.join(NATIVE, 'profiles', 'orchy-empty');
+  fs.mkdirSync(empty, { recursive: true });
+  const a = inspectHermesAccount(empty, { native: NATIVE });
+  ok(a.loggedIn && a.providers.includes('nous') && a.providers.includes('deepseek') && !a.providers.includes('openrouter') && !a.providers.includes('foo'), 'hermes: an empty profile is signed in with the computer’s stored sign-ins, not env-sourced rows or .env keys', JSON.stringify(a.providers));
+  ok(/this computer's sign-in/.test(a.label) && a.computerProviders.length === 2 && a.configuredModel === 'hermes-4' && a.models.includes('hermes-4-mini') && a.plan === 'Nous Portal · Plus', 'hermes: it says the sign-in is the computer’s, and takes the computer’s model, list and plan', a.label);
+  ok(a.computerModel?.model?.default === 'hermes-4' && !('api_key' in a.computerModel.model), 'hermes: the computer’s model block carries over without its key', JSON.stringify(a.computerModel));
+
+  const own = path.join(NATIVE, 'profiles', 'orchy-own');
+  put(own, 'auth.json', { active_provider: 'nous', providers: { nous: { access_token: 'ws-token', account_tier: 'free' } } });
+  const b = inspectHermesAccount(own, { native: NATIVE });
+  ok(b.loggedIn && b.computerProviders.join() === 'deepseek' && /deepseek from this computer's sign-in/.test(b.label) && b.tier === 'free', 'hermes: a profile’s own sign-in wins; only the providers it lacks come from the computer', b.label);
+
+  const loose = path.join(TMP, 'loose-profile');
+  fs.mkdirSync(loose, { recursive: true });
+  ok(!inspectHermesAccount(loose, { native: NATIVE }).loggedIn, 'hermes: a profile outside any Hermes home borrows nothing');
+  ok(!inspectHermesAccount(null).computerProviders.length, 'hermes: the PC’s own home reports no borrowed sign-ins');
+
+  const custom = path.join(TMP, 'custom-home');
+  put(custom, 'auth.json', { providers: { nous: { access_token: 't' } } });
+  put(custom, 'config.yaml', 'model:\n  default: kimi\n  provider: custom\n  base_url: https://x.example\n');
+  const c = inspectHermesAccount(path.join(custom, 'profiles', 'p'), { native: NATIVE });
+  ok(c.loggedIn && c.computerModel === null && c.configuredModel === null, 'hermes: the computer’s model isn’t taken when its provider’s key isn’t one a profile can borrow');
+
+  const HOOK = '"node" "hook.mjs" "hermes" "creds.json"';
+  const filled = buildHermesConfigYaml('', { hookCommand: HOOK, fallbackModel: a.computerModel });
+  ok(hermesConfigLooksSafe(filled, { hookCommand: HOOK }) && /default: hermes-4/.test(filled) && !/never-copied/.test(filled), 'hermes: a profile without a model gets the computer’s, still safe', filled);
+  const kept = buildHermesConfigYaml('model: mine/x\n', { hookCommand: HOOK, fallbackModel: a.computerModel });
+  ok(/model: mine\/x/.test(kept) && !/hermes-4/.test(kept), 'hermes: a profile’s own model is never replaced');
 }
 
 console.log(fail ? `\n${fail} ACP check(s) FAILED` : '\nall ACP checks passed');

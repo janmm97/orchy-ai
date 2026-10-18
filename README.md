@@ -300,6 +300,7 @@ This health check tests each workspace's accounts, the One CLI, Jev, voice, agen
 | The dashboard says it can't make changes | The browser isn't paired: see Pairing under [First run](#first-run). |
 | A workspace says it is not signed in to One | Workspaces, the workspace, "Sign in to One". |
 | A run is refused for an account mismatch | The harness profile for that workspace is logged into the wrong account: sign in again with the right one. |
+| A workspace "isn't logged in", but you signed in to the harness in a terminal | A plain terminal signs in the computer's profile, not the workspace's. Hermes workspaces use the computer's Hermes sign-in on their own. For OpenCode, or a Claude Code or Codex workspace with its own profile, press **Log in** on the workspace: the window it opens signs in that workspace's profile. Then press Re-check. |
 
 ## Project structure
 

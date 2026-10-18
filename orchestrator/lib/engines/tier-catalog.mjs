@@ -3,9 +3,10 @@
 // Nothing is guessed: an unknown plan stays null and an unknown model list stays empty (the dashboard then offers
 // "default", and the harness picks).
 //
-// The account fence: a workspace's own profile folder is the only place looked at for that workspace. The PC's
-// default login (~/.hermes, ~/.local/share/opencode, …) is read only when no profile is given (the Add window's
-// "default" row), never as a fallback for a profile that isn't signed in.
+// The account fence: a workspace's own profile folder is where Orchy looks for that workspace. The PC's default login
+// (~/.hermes, ~/.local/share/opencode, …) is read when no profile is given (the Add window's "default" row), and for
+// Hermes only, the way Hermes itself reads it: a profile inside Hermes's home with no sign-in of its own for a provider
+// uses the home's auth.json for that provider (Hermes 0.21 profile mode). OpenCode keeps each profile's sign-ins apart.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -62,14 +63,46 @@ export function hermesHomes(profileDir) {
   return [...new Set(out)];
 }
 
+/** Hermes's own home on this computer: %LOCALAPPDATA%\hermes on Windows, ~/.hermes elsewhere (Orchy's runs never pass
+ * HERMES_DATA_DIR_SUFFIX, so no suffix). */
+export function hermesNativeHome() {
+  return WIN ? path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'hermes') : path.join(os.homedir(), '.hermes');
+}
+
+/**
+ * The home whose auth.json a profile falls back to, provider by provider: Hermes's `get_default_hermes_root` (0.21).
+ * A profile inside Hermes's own home → that home; <root>/profiles/<name> elsewhere → <root>; anything else → none.
+ */
+export function hermesRootFor(profileHome, native = hermesNativeHome()) {
+  const p = path.resolve(profileHome);
+  const rel = path.relative(path.resolve(native), p); // case-insensitive on Windows, as the filesystem is
+  if (!rel) return null; // the profile is the home itself
+  if (!rel.startsWith('..') && !path.isAbsolute(rel)) return path.resolve(native);
+  return path.basename(path.dirname(p)) === 'profiles' ? path.dirname(path.dirname(p)) : null;
+}
+
 function hermesConfig(dir) {
   try {
     const y = YAML.parse(fs.readFileSync(path.join(dir, 'config.yaml'), 'utf8')) || {};
     const m = y.model;
-    if (typeof m === 'string') return { provider: y.provider || null, model: m };
-    if (m && typeof m === 'object') return { provider: m.provider || y.provider || null, model: m.default || m.name || null };
+    if (typeof m === 'string') return { provider: y.provider || null, model: m, raw: { model: m, ...(y.provider ? { provider: y.provider } : {}) } };
+    if (m && typeof m === 'object') {
+      const { api_key: _key, ...model } = m; // a key never moves between files
+      return { provider: m.provider || y.provider || null, model: m.default || m.name || null, raw: { model, ...(y.provider ? { provider: y.provider } : {}) } };
+    }
   } catch {}
-  return { provider: null, model: null };
+  return { provider: null, model: null, raw: null };
+}
+
+/** The providers a Hermes home's auth.json is signed in to. `storedOnly`: count only rows that hold their secret (a row
+ * Hermes re-reads from an environment variable or the gh CLI holds none, and a profile can't borrow it). */
+function hermesAuthProviders(auth, { storedOnly = false } = {}) {
+  const out = new Set();
+  for (const [k, v] of Object.entries(auth.providers || {})) if (hasSecret(v)) out.add(k);
+  for (const [k, list] of Object.entries(auth.credential_pool || {})) {
+    if (Array.isArray(list) && (storedOnly ? list.some(hasSecret) : list.length)) out.add(k);
+  }
+  return out;
 }
 
 /** API-key providers Hermes reads from its home's .env (names only, values never read out). */
@@ -81,38 +114,58 @@ function hermesEnvProviders(dir) {
   return out;
 }
 
-/** Hermes sign-in, plan/tier and model list for one profile (or the PC's default home when profileDir is null). */
-export function inspectHermesAccount(profileDir, { statusText = '' } = {}) {
+/**
+ * Hermes sign-in, plan/tier and model list for one profile (or the PC's default home when profileDir is null).
+ * A profile is read the way Hermes reads it: its own sign-ins first, then, for a provider it has none for, the
+ * computer's (the home it sits in). Those are `computerProviders`. Keys in the computer's .env are not shared.
+ */
+export function inspectHermesAccount(profileDir, { statusText = '', native } = {}) {
   const parsed = parseHermesStatus(statusText);
   const homes = hermesHomes(profileDir);
   const home = homes.find(d => ['auth.json', 'config.yaml', '.env'].some(f => fs.existsSync(path.join(d, f)))) || homes[0] || null;
   const auth = (home && readJson(path.join(home, 'auth.json'))) || {};
-  const cfg = home ? hermesConfig(home) : { provider: null, model: null };
+  const cfg = home ? hermesConfig(home) : { provider: null, model: null, raw: null };
   const cache = (home && readJson(path.join(home, 'provider_models_cache.json'))) || {};
 
-  const signed = new Set(parsed.providers);
-  for (const [k, v] of Object.entries(auth.providers || {})) if (hasSecret(v)) signed.add(k);
-  for (const [k, list] of Object.entries(auth.credential_pool || {})) if (Array.isArray(list) && list.length) signed.add(k);
-  if (home) for (const p of hermesEnvProviders(home)) signed.add(p);
+  const own = hermesAuthProviders(auth);
+  for (const p of parsed.providers) own.add(p);
+  if (home) for (const p of hermesEnvProviders(home)) own.add(p);
+
+  // the computer's sign-ins, for the providers this profile has none of its own for
+  const root = profileDir && home ? hermesRootFor(home, native) : null;
+  const pcAuth = (root && readJson(path.join(root, 'auth.json'))) || {};
+  const computerProviders = root ? [...hermesAuthProviders(pcAuth, { storedOnly: true })].filter(p => !own.has(p)) : [];
+  const pcCfg = computerProviders.length ? hermesConfig(root) : { provider: null, model: null, raw: null };
+  const pcCache = (computerProviders.length && readJson(path.join(root, 'provider_models_cache.json'))) || {};
+
+  const signed = new Set([...own, ...computerProviders]);
   const providers = [...signed];
   const loggedIn = providers.length > 0;
-  const configuredModel = parsed.model || cfg.model || null;
-  const active = [auth.active_provider, cfg.provider].find(p => typeof p === 'string' && signed.has(p)) || providers[0] || null;
+  // the computer's model choice counts only when its provider is one this profile can sign in to
+  const pcModel = !cfg.model && pcCfg.model && (!pcCfg.provider || signed.has(pcCfg.provider)) ? pcCfg : null;
+  const configuredModel = parsed.model || cfg.model || pcModel?.model || null;
+  const active = [auth.active_provider, cfg.provider, pcModel?.provider, pcAuth.active_provider].find(p => typeof p === 'string' && signed.has(p)) || providers[0] || null;
 
-  const cred = auth.providers?.[active] || auth.credential_pool?.[active]?.[0] || null;
+  const borrowed = !own.has(active);
+  const cred = borrowed ? (pcAuth.providers?.[active] || pcAuth.credential_pool?.[active]?.find(hasSecret) || null) : (auth.providers?.[active] || auth.credential_pool?.[active]?.[0] || null);
   const { tier, email } = credentialPlan(cred);
-  let models = Array.isArray(cache[active]?.models) ? cache[active].models.filter(m => typeof m === 'string') : [];
+  const list = (borrowed ? pcCache : cache)[active]?.models || cache[active]?.models;
+  let models = Array.isArray(list) ? list.filter(m => typeof m === 'string') : [];
   if (tier === 'free' && models.some(m => /:free$|welcome/i.test(m))) models = models.filter(m => /:free$|welcome/i.test(m));
   if (configuredModel && configuredModel !== 'default') models = [configuredModel, ...models];
   const plan = loggedIn ? planLabel(active, tier) : null;
+  const whose = !computerProviders.length ? '' : own.size ? ` · ${computerProviders.join(', ')} from this computer's sign-in` : ` · this computer's sign-in`;
 
   return {
     loggedIn,
     email: loggedIn ? email : null,
-    label: loggedIn ? providers.join(', ') + (configuredModel ? ` (${configuredModel})` : '') : null,
+    label: loggedIn ? providers.join(', ') + (configuredModel ? ` (${configuredModel})` : '') + whose : null,
     providers,
+    computerProviders,
     activeProvider: active,
     configuredModel,
+    // the computer's model block, for a profile without one (hermes.mjs writes it in before a run)
+    computerModel: pcModel?.raw || null,
     plan,
     tier: loggedIn ? tier : null,
     subscription: plan,

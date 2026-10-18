@@ -487,7 +487,7 @@ function renderUnder() {
     const a = ws.account || {};
     if (a.ok) continue;
     problems.push(check(`login:${ws.id}:${a.expected || ''}:${a.actual || ''}`, `${esc(ws.name)} runs as ${esc(a.expected || '')}`,
-      `${a.loggedIn ? `Its ${esc(a.runtimeLabel || '')} profile is logged in as ${esc(a.actual || 'another account')}.` : `Its ${esc(a.runtimeLabel || '')} profile isn’t logged in yet.`} Paste into a terminal (PowerShell on Windows):<code>${esc(a.fix || '')}</code>`,
+      `${a.loggedIn ? `Its ${esc(a.runtimeLabel || '')} profile is logged in as ${esc(a.actual || 'another account')}.` : a.hint ? esc(a.hint) : `Its ${esc(a.runtimeLabel || '')} profile isn’t logged in yet.`} Paste into a terminal (PowerShell on Windows):<code>${esc(a.fix || '')}</code>`,
       `<button class="btn sm" data-login="${esc(ws.id)}">Log in</button><button class="btn sm" data-copy="${esc(a.fix || '')}">Copy</button>`));
   }
   // voice on but the service it speaks with has no key yet
