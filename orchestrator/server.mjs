@@ -31,8 +31,6 @@ import { gate, runCtx, resolveAction } from './lib/gate.mjs';
 import { pickTools } from './lib/toolpick.mjs';
 import { readLogs, computeUsage } from './lib/logs.mjs';
 import { weeklyReview, startUsageReview, usageBrief, REVIEW_DAYS } from './lib/usagereview.mjs';
-import { impact } from './lib/impact.mjs';
-import { writeMonthly, listMonthly, startMonthly, REPORTS_DIR } from './lib/monthly.mjs';
 import * as orchy from './lib/orchy.mjs';
 import * as voice from './lib/voice.mjs';
 import * as voiceAgents from './lib/voiceagents.mjs';
@@ -176,12 +174,6 @@ if (!env('NO_SCHEDULER')) {
   setTimeout(syncRes, 5_000).unref();
   setInterval(syncRes, 10 * 60_000).unref();
 }
-
-// ── monthly impact report: last month's, written on the 1st ──
-if (!env('NO_SCHEDULER')) startMonthly({
-  onWritten: r => orchy.say(`Your ${r.month} impact report is ready: ${r.totals.tasks} tasks finished, about $${r.totals.saved.toLocaleString('en-US')} saved against people.`, { kind: 'report', report: r.url }),
-  onError: e => console.error('[monthly]', e),
-});
 
 // ── routing proposals (Jev's pick, shown as a card before dispatch) ──
 const proposals = new Map();
@@ -435,7 +427,9 @@ async function workspaceSummary(ws, { force = false } = {}) {
   const [account, extra] = await Promise.all([accountCheck(ws, { force }), extraAccounts(ws, force)]);
   return {
     id: ws.id, name: ws.name, client: ws.client, blurb: ws.blurb, color: ws.color || null, aliases: ws.aliases || [], handles: handles(ws), folder: ws.folder, departments: departmentsOf(ws),
-    runtime: ws.runtime, runtimeLabel: runtimeLabel(ws.runtime), models: modelsFor(ws), enabled: ws.enabled,
+    runtime: ws.runtime, runtimeLabel: runtimeLabel(ws.runtime), models: modelsFor(ws),
+    availableModels: account.availableModels || null, plan: account.plan || account.subscription || null, tier: account.tier || null,
+    enabled: ws.enabled,
     claudeAccount: ws.claudeAccount || null, codexAccount: ws.codexAccount || null, ownProfile: !!ws[engine(ws.runtime)?.fields.profile],
     // every registered engine's account and profile for this workspace, and whether it may run an engine Orchy can't gate
     accounts: Object.fromEntries(engines().map(e => [e.id, { account: ws[e.fields.account] || null, ownProfile: !!ws[e.fields.profile] }])), allowUngated: ws.allowUngated === true, gated: engine(ws.runtime)?.capabilities.gated !== false,
@@ -446,7 +440,7 @@ async function workspaceSummary(ws, { force = false } = {}) {
 const retiredSummary = () => listRetired().map(r => ({ id: r.id, name: r.name, client: r.client, color: r.color || null, runtime: r.runtime || 'claude', runtimeLabel: runtimeLabel(r.runtime || 'claude'), archivedFolder: r.archivedFolder, retiredAt: r.retiredAt, dirExists: r.dirExists }));
 
 const ENV_KEYS = ['TYPESAFE_API_KEY', 'TYPESAFE_MODEL', 'OPENROUTER_API_KEY', 'DEEPGRAM_API_KEY', 'ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID', 'ELEVENLABS_MODEL', 'CLIENT_URL', 'CF_ACCESS_TEAM_DOMAIN', 'CF_ACCESS_AUD',
-  'JEV_PROVIDER', 'AI_GATEWAY_API_KEY', 'OPENCODE_API_KEY', 'OPENCODE_JEV_MODEL', 'VOICE_ENABLED'];
+  'JEV_PROVIDER', 'AI_GATEWAY_API_KEY', 'OPENCODE_API_KEY', 'OPENCODE_JEV_MODEL', 'VOICE_ENABLED', 'VOICE_PROVIDER'];
 const JEV_PROVIDERS = ['', 'typesafe', 'openrouter', 'vercel', 'opencode', 'off'];
 const SECRET = k => /KEY$/.test(k);
 
@@ -870,10 +864,20 @@ on('GET', '/api/runtimes', async () => {
   const shown = engines().filter(e => cfg[e.id]?.offered !== false || workspaces().some(w => w.runtime === e.id));
   const rows = await Promise.all(shown.map(async e => {
     // only an engine that runs here is asked who its default profile is signed in as
-    const a = have[e.id]?.available && e.accountModel === 'email' ? await e.account(null).catch(() => null) : null;
+    const a = have[e.id]?.available ? await e.account(null).catch(() => null) : null;
     // one sign-in per computer: the account the other workspaces on it already use comes first
     const shared = e.sharedLogin ? workspaces().map(w => w[e.fields.account]).find(Boolean) || null : null;
-    return [e.id, { ...cfg[e.id], available: !!have[e.id]?.available, version: have[e.id]?.available ? e.version?.() || null : null, defaultAccount: shared || a?.email || null, sandbox: a?.sandbox || null }];
+    return [e.id, {
+      ...cfg[e.id],
+      available: !!have[e.id]?.available,
+      version: have[e.id]?.available ? e.version?.() || null : null,
+      defaultAccount: shared || a?.email || a?.label || null,
+      loggedIn: !!a?.loggedIn,
+      plan: a?.plan || a?.subscriptionType || a?.subscription || null,
+      tier: a?.tier || null,
+      availableModels: Array.isArray(a?.models) && a.models.length ? a.models : null,
+      sandbox: a?.sandbox || null,
+    }];
   }));
   return Object.fromEntries(rows);
 });
@@ -1469,9 +1473,6 @@ on('POST', '/api/usage/review', async () => {
   const r = await weeklyReview({ say: reviewSay });
   return { ok: true, suggestions: r.suggestions.length };
 });
-on('GET', '/api/impact', async (req) => { const q = new URL(req.url, 'http://x').searchParams; return impact({ period: q.get('period') || 'month', rate: q.get('rate'), speedup: q.get('speedup') }); });
-on('GET', '/api/reports', async () => listMonthly());
-on('POST', '/api/reports', async (req) => { const b = await readBody(req); return writeMonthly(b.month, { rate: b.rate, speedup: b.speedup }); });
 on('GET', '/api/rules', async () => db().rules);
 on('DELETE', '/api/rules/:i', async (_req, _res, { i }) => {
   const n = Number(i);
@@ -1519,13 +1520,14 @@ on('POST', '/api/settings/env', async (req) => {
   if (!ENV_KEYS.includes(key)) throw Object.assign(new Error('Not an editable setting'), { status: 400 });
   let v = String(value ?? '').replace(/[\r\n]+/g, '').trim(); // one line in .env
   if (key === 'VOICE_ENABLED') v = /^(0|false|off|no)$/i.test(v) ? '0' : '1';
+  if (key === 'VOICE_PROVIDER' && !voice.VOICE_PROVIDERS.includes(v = v.toLowerCase())) throw Object.assign(new Error('Voice provider is elevenlabs or deepgram'), { status: 400 });
   if (key === 'JEV_PROVIDER' && !JEV_PROVIDERS.includes(v.toLowerCase())) throw Object.assign(new Error(`Jev provider is one of: ${JEV_PROVIDERS.filter(Boolean).join(', ')}`), { status: 400 });
   if (key === 'CLIENT_URL' && v) {
     if (!/^https?:\/\//i.test(v)) v = `https://${v}`;
     try { v = new URL(v).origin; } catch { throw Object.assign(new Error('That doesn’t look like a web address (e.g. https://clients.example.com)'), { status: 400 }); }
   }
   setEnv(key, v);
-  emit('settings.updated', { envKey: key, voice: voice.voiceConfig(), jev: { mode: jevMode(), label: jevLabel() } });
+  emit('settings.updated', { envKey: key, voice: voice.voiceConfig(), jev: { mode: jevMode(), label: jevLabel() }, envStatus: Object.fromEntries(ENV_KEYS.map(k => [k, SECRET(k) ? !!env(k) : env(k)])) });
   if (key === 'CLIENT_URL') clientsChanged();
   if (key === 'VOICE_ENABLED' || key === 'ELEVENLABS_API_KEY') voiceRefresh(false); // voice back on: its agents get made
   return { ok: true, set: !!env(key) };
@@ -1728,7 +1730,6 @@ const server = http.createServer(async (req, res) => {
       return send(res, 404, { error: `No route ${req.method} ${pathname}` });
     }
     if (pathname === '/' || pathname === '/index.html') return serveFile(res, path.join(DASHBOARD_DIR, 'index.html'));
-    if (pathname.startsWith('/reports/')) return serveFile(res, safeJoin(REPORTS_DIR, pathname.slice(9)));
     if (pathname.startsWith('/assets/')) return serveFile(res, safeJoin(path.join(ROOT, 'assets'), pathname.slice(8)));
     if (pathname === '/vendor/marked.js') return serveFile(res, path.join(ROOT, 'node_modules', 'marked', 'lib', 'marked.esm.js'));
     return serveFile(res, safeJoin(DASHBOARD_DIR, pathname.slice(1)));

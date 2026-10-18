@@ -6,18 +6,22 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
 import { env } from '../env.mjs';
 import { findBinary, probeVersion } from '../claude.mjs';
 import { profilePath, psq, sq, scrubbedEnv } from './shared.mjs';
 import { launchAcpRun, toAcpMcp } from './acp.mjs';
-import { buildHermesConfigYaml, hermesConfigLooksSafe, HERMES_DROP, parseHermesStatus } from './hermes-config.mjs';
+import { buildHermesConfigYaml, hermesConfigLooksSafe, HERMES_DROP } from './hermes-config.mjs';
+import { inspectHermesAccount } from './tier-catalog.mjs';
 
 let binCache = null;
 function resolveBin() {
   const explicit = env('HERMES_CLI_PATH');
   if (explicit && fs.existsSync(explicit)) return explicit;
-  return findBinary('hermes', [path.join(os.homedir(), '.local', 'bin'), path.join(os.homedir(), '.hermes', 'bin')]);
+  const extra = [path.join(os.homedir(), '.local', 'bin'), path.join(os.homedir(), '.hermes', 'bin')];
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    extra.push(path.join(process.env.LOCALAPPDATA, 'hermes', 'bin'));
+  }
+  return findBinary('hermes', extra);
 }
 const bin = () => { if (!binCache || !fs.existsSync(binCache)) binCache = resolveBin(); return binCache; };
 let probe = null;
@@ -42,22 +46,14 @@ export function writeHermesConfig(profileDir) {
   return file;
 }
 
-function runStatus(profileDir) {
-  return new Promise(resolve => {
-    const b = bin();
-    if (!b) return resolve('');
-    const shell = /\.(cmd|bat)$/i.test(b);
-    execFile(shell ? `"${b}"` : b, ['status'], { env: hermesEnv(profileDir), timeout: 8000, windowsHide: true, shell }, (err, out, errOut) => resolve(err ? '' : String(out || errOut || '')));
-  });
-}
-
 export default {
   id: 'hermes',
   label: 'Hermes',
   models: ['default', 'default', 'default'],
-  blurb: 'Nous Research’s Hermes Agent. Orchy can’t put its file edits behind your approvals, so it only runs where you allow that.',
+  blurb: 'Nous Research’s Hermes Agent. Sign in with OAuth (`hermes portal` or `hermes auth add <provider> --type oauth`); Orchy detects your plan/tier and shows only the models in your tier.',
   fields: { account: 'hermesAccount', profile: 'hermesProfile' },
   accountModel: 'profile',
+  openModels: true,
   instructionFile: 'AGENTS.md',
   defaultProfileLabel: '(its own profile folder)',
   install: { cmd: 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash', shellNote: true, optional: true, note: 'Optional: Nous Research’s agent harness.' },
@@ -76,25 +72,18 @@ export default {
     return probe.v;
   },
   available: () => !!bin(),
-  /** Which provider(s) this profile has (from `hermes status`, or its auth.json/.env when status says nothing). */
+  /** Which OAuth provider(s) and plan/tier this profile is signed into, plus its tier-filtered model list. */
   async account(profileDir, { force = false, maxAge = 60_000 } = {}) {
-    if (!profileDir) return { loggedIn: false, email: null, label: null, providers: [] };
-    const key = profilePath(profileDir);
+    const key = profileDir ? profilePath(profileDir) : '__default__';
     const hit = cache.get(key);
     if (!force && hit && Date.now() - hit.at < maxAge) return hit.v;
-    const text = await runStatus(profileDir);
-    const { providers, model } = parseHermesStatus(text);
-    let hasAuth = false;
-    try { const j = JSON.parse(fs.readFileSync(path.join(key, 'auth.json'), 'utf8')); hasAuth = !!j && Object.keys(j).length > 0; } catch {}
-    const loggedIn = providers.length > 0 || hasAuth;
-    const label = providers.length ? providers.join(', ') + (model ? ` (${model})` : '') : hasAuth ? 'logged in (provider not shown)' : null;
-    const v = { loggedIn, email: null, label, providers, subscription: null };
+    const v = inspectHermesAccount(profileDir ? key : null);
     cache.set(key, { at: Date.now(), v });
     return v;
   },
   profileEnv(profileDir) { return profileDir ? { HERMES_HOME: profilePath(profileDir) } : {}; },
-  loginCommand: (a, { win }) => (win ? `& ${psq(bin() || 'hermes')} setup` : `${sq(bin() || 'hermes')} setup`),
-  loginAlt: () => 'Choose the provider and model in the setup it opens, then check it with `hermes status` (same profile variable). Hermes may share OAuth logins (Anthropic, OpenAI Codex, xAI) from ~/.hermes/auth.json: use an API-key provider so the workspace keeps its own.',
+  loginCommand: (a, { win }) => (win ? `& ${psq(bin() || 'hermes')} portal` : `${sq(bin() || 'hermes')} portal`),
+  loginAlt: () => 'Signs in via OAuth to Nous Portal (`hermes portal`), or run `hermes auth add <provider> --type oauth` (e.g. openai-codex, anthropic, copilot, xai) in the same terminal to sign in with your ChatGPT Plus/Pro, Claude Pro/Max, GitHub Copilot, or SuperGrok subscription.',
   mcpConfig: ({ servers, allowed, bridge }) => toAcpMcp(servers, allowed, bridge),
   protocolNotes: ({ ownerName }) => `
 ## Working on Hermes

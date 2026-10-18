@@ -6,13 +6,13 @@
 //         conversation on screen) and each client with work opens a pane beside him. About a
 //         minute after the last task finishes, it folds back home.
 import { icon, orchySVG, orchyTopbarSVG, orchyStageSVG, createEl, hatch } from './pixel.mjs';
-import { esc, api, ownerHeaders, md, $, $$, wsName, wsShort, wsClass, wsModels, modelChoices, modelIsFree, setWorkspaces, setOwner, ownerName, ownerKnown, setCallNames, agentName, runName, itemName, nameRole, timeShort, dur, clockET, onShift, setTimezone, timezone, zoneShort, clientOwn } from './util.mjs';
+import { esc, api, ownerHeaders, md, $, $$, wsName, wsShort, wsClass, wsModels, wsPlan, wsUsesModelDropdown, dropdownModels, modelChoices, modelIsFree, setWorkspaces, setOwner, ownerName, ownerKnown, setCallNames, agentName, runName, itemName, nameRole, timeShort, dur, clockET, onShift, setTimezone, timezone, zoneShort, clientOwn } from './util.mjs';
 import { initWindows, focusNextDecision, zoomRects, activePopDocument, getWindow, decisionWindows } from './windows.mjs';
 import { initPopups, openItem, closeItem } from './popups.mjs';
 import { initSheets, openRun, openAgent, openBuild, runEvent, runUpdated, runArtifact, recoverButtons, recoverAct, fixText } from './sheets.mjs';
 import { openViewer, artifactChanged, kindFor, kindIcon } from './viewer.mjs';
 import { initSetup, openSetup, refreshSetup, maybeAutoOpenSetup } from './setup.mjs';
-import { initPanels, openLogs, openImpact, openConnections, openSettings, openAgents, refreshAgents, openHistory, refreshHistory, openAddWorkspace, refreshWorkspaceWindows } from './panels.mjs';
+import { initPanels, openLogs, openConnections, openSettings, openAgents, refreshAgents, openHistory, refreshHistory, openAddWorkspace, refreshWorkspaceWindows } from './panels.mjs';
 import { initPanes, renderPane, paneEvent } from './panes.mjs';
 import * as voice from './voice.mjs';
 import { initCalls, startCall, ringIn, callUpdated } from './call.mjs';
@@ -474,20 +474,30 @@ async function greet({ force = false } = {}) {
   try { localStorage.setItem('jos-greeted', g.date); } catch {}
 }
 
+// Notices under the chat box can be closed; a closed one stays closed in this browser until what it says changes.
+const DISMISSED = 'orchy-dismissed';
+const dismissedNotices = () => { try { return JSON.parse(localStorage.getItem(DISMISSED) || '[]'); } catch { return []; } };
+function dismissNotice(key) { try { localStorage.setItem(DISMISSED, JSON.stringify([...new Set([...dismissedNotices(), key])].slice(-50))); } catch {} }
+
 function renderUnder() {
-  const check = (title, text, extra = '') => `<div class="check todo"><span class="box"></span><span class="t"><b>${title}</b>${text}</span><span>${extra}</span></div>`;
+  const closed = new Set(dismissedNotices());
+  const check = (key, title, text, extra = '') => closed.has(key) ? '' : `<div class="check todo"><span class="box"></span><span class="t"><b>${title}</b>${text}</span><span class="btnrow">${extra}<button class="dismiss" type="button" data-dismiss="${esc(key)}" aria-label="Close this notice" title="Close">${icon('close')}</button></span></div>`;
   const problems = [];
   for (const ws of state.workspaces.filter(w => w.enabled !== false)) {
     const a = ws.account || {};
     if (a.ok) continue;
-    problems.push(check(`${esc(ws.name)} runs as ${esc(a.expected || '')}`,
+    problems.push(check(`login:${ws.id}:${a.expected || ''}:${a.actual || ''}`, `${esc(ws.name)} runs as ${esc(a.expected || '')}`,
       `${a.loggedIn ? `Its ${esc(a.runtimeLabel || '')} profile is logged in as ${esc(a.actual || 'another account')}.` : `Its ${esc(a.runtimeLabel || '')} profile isn’t logged in yet.`} Paste into a terminal (PowerShell on Windows):<code>${esc(a.fix || '')}</code>`,
-      `<span class="btnrow"><button class="btn sm" data-login="${esc(ws.id)}">Log in</button><button class="btn sm" data-copy="${esc(a.fix || '')}">Copy</button></span>`));
+      `<button class="btn sm" data-login="${esc(ws.id)}">Log in</button><button class="btn sm" data-copy="${esc(a.fix || '')}">Copy</button>`));
   }
-  if (voice.voiceOn() && !state.envStatus.DEEPGRAM_API_KEY && !state.envStatus.ELEVENLABS_API_KEY) problems.push(check('Voice', 'Add an ElevenLabs or Deepgram key in Settings, or switch voice off there. Until then I use the browser’s voice.', `<button class="btn sm" data-open="settings">Settings</button>`));
+  // voice on but the service it speaks with has no key yet
+  const vp = voice.voiceConfig().provider;
+  const vName = { elevenlabs: 'ElevenLabs', deepgram: 'Deepgram' }[vp];
+  const vKey = vp === 'elevenlabs' ? state.envStatus.ELEVENLABS_API_KEY : vp === 'deepgram' ? state.envStatus.DEEPGRAM_API_KEY : state.envStatus.DEEPGRAM_API_KEY || state.envStatus.ELEVENLABS_API_KEY;
+  if (voice.voiceOn() && !vKey) problems.push(check(`voice:${vp || 'any'}`, 'Voice', `Add ${vName ? `your ${vName}` : 'an ElevenLabs or Deepgram'} key in Settings, or switch voice off there. Until then I use the browser’s voice.`, `<button class="btn sm" data-open="settings">Settings</button>`));
   $('#composer-under').innerHTML = `
     <div class="keys"><span><kbd>/</kbd>type</span><span data-voice><kbd>Ctrl</kbd><kbd>Space</kbd>call</span><span><kbd>Enter</kbd>send</span></div>
-    ${problems.length ? `<div class="checklist">${problems.join('')}</div>` : ''}`;
+    ${problems.some(Boolean) ? `<div class="checklist">${problems.join('')}</div>` : ''}`;
 }
 
 // ─────────────── Orchy: home stage, his pane head, the top bar mark ───────────────
@@ -672,7 +682,10 @@ function fillRoute(el, p) {
   const agentsInWs = state.agents.filter(a => a.workspace === ch.workspace && !a.isBuilder);
   // an agent pinned to its own engine (e.g. Codex in a Claude workspace) offers that engine's models
   const pinned = ch.intent === 'task' && ch.agent ? agentsInWs.find(a => a.slug === ch.agent && a.engine) : null;
-  const models = pinned?.models || wsModels(ch.workspace || defaultWs());
+  const wsId = ch.workspace || defaultWs();
+  const models = (pinned?.models && !pinned.models.every(m => m === 'default')) ? pinned.models : wsModels(wsId);
+  const useDropdown = wsUsesModelDropdown(wsId, pinned);
+  const plan = wsPlan(wsId);
   const agentBars = Object.entries(pr.agent || {}).sort((a, b) => b[1] - a[1]).slice(0, 3);
 
   if (done) {
@@ -685,6 +698,9 @@ function fillRoute(el, p) {
   // why Jev left the card for the owner (router.mjs#finalize holdReason)
   const unsureHead = { fix: 'Fix Orchy? · your go', huddle: 'Which agents? · pick two or more', 'chat-or-task': 'Answer, or get it done? · pick one', agent: 'Jev isn’t sure which agent · pick one', workspace: 'Jev isn’t sure which client · pick one' }[r.holdReason] || 'Jev isn’t sure · pick one';
   const prev = ch.followUp ? state.runs.get(ch.followUp) : null;
+  const choices = modelChoices(models);
+  // the dropdown shows exactly what will be sent: the card's model, else "default"
+  const pickedModel = ch.model || 'default';
   el.innerHTML = `
     <div class="rh"><span>${r.needsChoice && !p.held ? unsureHead : `Jev routed${r.jev ? ` · ${(r.jev.ms / 1000).toFixed(1)}s` : ''}`}</span><span>${esc(ch.followUp ? 'Follow-up' : intentLabel)}</span></div>
     <div class="rb">
@@ -700,7 +716,9 @@ function fillRoute(el, p) {
         <div class="rowc"><span class="label">Client</span><div class="seg" role="group" aria-label="Client">${enabledIds().map(w => `<button type="button" data-set="workspace" data-v="${esc(w)}" aria-pressed="${ch.workspace === w}" title="${esc(wsName(w))}">${esc(wsShort(w))}</button>`).join('')}</div>
           <span class="label">Do</span><div class="seg" role="group" aria-label="Intent">${[['task', 'Task'], ...(state.missionsOn ? [['mission', 'Mission']] : []), ['build_agent', 'Build agent'], ['huddle', 'Huddle'], ['fix_orchy', 'Fix Orchy']].map(([v, l]) => `<button type="button" data-set="intent" data-v="${v}" aria-pressed="${ch.intent === v}">${l}</button>`).join('')}</div></div>
         <div class="rowc">${huddle ? `<span class="label">Who</span>${Array.from({ length: Math.min(huddlers.length, Math.max(2, pair.length + 1)) }, (_, i) => `<select class="select" data-hpick="${i}" style="width:auto;min-height:32px;padding:2px 8px" aria-label="Huddle agent ${i + 1}"><option value="">${i < 2 ? 'pick an agent' : '+ add an agent'}</option>${huddlers.filter(a => a.slug === pair[i] || !pair.includes(a.slug)).map(a => `<option value="${esc(a.slug)}" ${pair[i] === a.slug ? 'selected' : ''}>${esc(nameRole(agentName(a.workspace, a.slug, a.displayName), a.displayName))}</option>`).join('')}</select>`).join('<span aria-hidden="true">⇄</span>')}` : ''}${ch.intent === 'task' ? `<span class="label">Agent</span><select class="select" data-set-select="agent" style="width:auto;min-height:32px;padding:2px 8px" aria-label="Agent"><option value="">${esc(wsName(ch.workspace || ''))} generalist</option>${agentsInWs.map(a => `<option value="${esc(a.slug)}" ${ch.agent === a.slug ? 'selected' : ''}>${esc(nameRole(agentName(a.workspace, a.slug, a.displayName), a.displayName))}</option>`).join('')}</select>` : ''}
-          ${huddle ? '' : `<span class="label">${pinned ? `${esc(pinned.engineLabel)} model` : 'Model'}</span><div class="seg" role="group" aria-label="Model">${modelChoices(models).map(m => `<button type="button" data-set="model" data-v="${esc(m)}" aria-pressed="${ch.model === m}" title="${esc(m)}">${esc(m.replace(/^gpt-/, ''))}</button>`).join('')}</div>${modelIsFree(models) ? `<input class="input" data-set-model type="text" spellcheck="false" autocomplete="off" placeholder="or a model id, e.g. provider/model" aria-label="Model id" value="${ch.model && ch.model !== 'default' ? esc(ch.model) : ''}" style="min-width:14ch;max-width:26ch">` : ''}`}</div>
+          ${huddle ? '' : `<span class="label">${pinned ? `${esc(pinned.engineLabel)} model` : 'Model'}</span>${useDropdown
+            ? `<select class="select" data-set-model-select style="width:auto;min-height:32px;padding:2px 8px" aria-label="Model">${dropdownModels(choices, pickedModel).map(m => `<option value="${esc(m)}" ${pickedModel === m ? 'selected' : ''}>${esc(m === 'default' ? 'Default (tier automatic)' : m)}</option>`).join('')}</select>${plan ? `<span class="chip" title="Detected account plan / tier">${esc(plan)}</span>` : ''}`
+            : `<div class="seg" role="group" aria-label="Model">${choices.map(m => `<button type="button" data-set="model" data-v="${esc(m)}" aria-pressed="${ch.model === m}" title="${esc(m)}">${esc(m.replace(/^gpt-/, ''))}</button>`).join('')}</div>${modelIsFree(models) ? `<input class="input" data-set-model type="text" spellcheck="false" autocomplete="off" placeholder="or a model id, e.g. provider/model" aria-label="Model id" value="${ch.model && ch.model !== 'default' ? esc(ch.model) : ''}" style="min-width:14ch;max-width:26ch">` : ''}`}`}</div>
       </div>
     </div>
     <div class="rf"><span class="countdown" data-cd>${p.dispatchAt ? '' : p.held ? 'Held · press send' : r.needsChoice ? 'Waiting for you' : 'Press send'}</span>
@@ -710,6 +728,7 @@ function fillRoute(el, p) {
 
   el.querySelectorAll('[data-set]').forEach(b => b.addEventListener('click', () => patchRoute(p.id, { [b.dataset.set]: b.dataset.v })));
   el.querySelector('[data-set-model]')?.addEventListener('change', e => patchRoute(p.id, { model: e.target.value.trim() || 'default' }));
+  el.querySelector('[data-set-model-select]')?.addEventListener('change', e => patchRoute(p.id, { model: e.target.value }));
   el.querySelector('[data-set-select]')?.addEventListener('change', e => patchRoute(p.id, { agent: e.target.value || null }));
   el.querySelectorAll('[data-hpick]').forEach(sel => sel.addEventListener('change', () => patchRoute(p.id, { huddle: [...el.querySelectorAll('[data-hpick]')].map(x => x.value).filter(Boolean) })));
   el.querySelector('[data-route-act="send"]').addEventListener('click', async e => {
@@ -1133,7 +1152,7 @@ function connectEvents() {
   on('voice.agents', d => { state.voiceAgents = d.voiceAgents; setCallNames(d.voiceAgents); refreshAgents(); renderPanes(); });
   on('settings.updated', d => {
     if (d.settings) { state.settings = d.settings; renderLive(); }
-    if (d.voice) voice.setVoiceConfig(d.voice);
+    if (d.voice) { voice.setVoiceConfig(d.voice); renderUnder(); }
     if (d.jev) state.jev = { ...state.jev, ...d.jev };
     if (d.envStatus) { state.envStatus = d.envStatus; renderUnder(); }
   });
@@ -1181,7 +1200,6 @@ async function onClick(e) {
     if (t.dataset.open === 'agents') openAgents(defaultWs(), { from });
     if (t.dataset.open === 'huddles') openHuddles({ from, session: () => view.active });
     if (t.dataset.open === 'logs') openLogs({ from });
-    if (t.dataset.open === 'impact') openImpact({ from });
     if (t.dataset.open === 'connections') openConnections(defaultWs(), { from });
     if (t.dataset.open === 'settings') openSettings({ from });
     if (t.dataset.open === 'history') openHistory({ from });
@@ -1228,6 +1246,7 @@ async function onClick(e) {
   if (t.dataset.bubbleClose !== undefined) { setClosedBubble(t.dataset.bubbleClose); return renderBubble(); }
   if (t.hasAttribute('data-hear')) { const g = [...state.chat].reverse().find(m => m.meta?.kind === 'greeting'); if (g) voice.speak(g.text); return; }
   if (t.hasAttribute('data-next-decision')) { if (!nextDecision(t)) toast('Nothing is waiting on you.'); return; }
+  if (t.dataset.dismiss) { dismissNotice(t.dataset.dismiss); return renderUnder(); }
   if (t.dataset.copy !== undefined) { try { await navigator.clipboard.writeText(t.dataset.copy); toast('Copied. Paste it into PowerShell.'); } catch { toast('Copy failed: select the text instead.', 'warn'); } return; }
   if (t.hasAttribute('data-recheck')) {
     let ws;
@@ -1323,7 +1342,7 @@ $('#send .i').outerHTML = icon('send', 'ico lg');
 $('#call .i').outerHTML = icon('phone', 'ico lg');
 $('#attach .i').outerHTML = icon('clip', 'ico lg');
 $('#go-home .i').outerHTML = icon('home');
-$$('.tools .tbtn').forEach(b => { b.querySelector('.i').innerHTML = icon({ agents: 'team', huddles: 'huddle', live: 'live', impact: 'spark', logs: 'logs', connections: 'plug', settings: 'gear' }[b.dataset.open], 'ico lg'); });
+$$('.tools .tbtn').forEach(b => { b.querySelector('.i').innerHTML = icon({ agents: 'team', huddles: 'huddle', live: 'live', logs: 'logs', connections: 'plug', settings: 'gear' }[b.dataset.open], 'ico lg'); });
 
 // boot
 initWindows({
@@ -1364,7 +1383,6 @@ pairFromLink(PARAMS).then(load).then(async () => {
   if (open === 'agents') openAgents(PARAMS.get('ws') || defaultWs());
   if (open === 'logs') openLogs({ tab: PARAMS.get('tab') });
   if (open === 'usage') openLogs({ tab: 'usage' });
-  if (open === 'impact') openImpact();
   if (open === 'settings') openSettings();
   if (open === 'connections') openConnections(PARAMS.get('ws') || defaultWs());
   if (open === 'build') openBuild(PARAMS.get('ws') || defaultWs());

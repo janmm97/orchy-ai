@@ -186,7 +186,22 @@ export function wsInk(id) {
   drawHue(k);
   return { bg: `var(--tint-${k})`, fg: `var(--on-tint-${k})` };
 }
-export function wsModels(id) { return findWs(id)?.models || ['haiku', 'sonnet', 'opus']; }
+export function wsModels(id) {
+  const w = findWs(id);
+  return w?.availableModels?.length ? w.availableModels : w?.models || ['haiku', 'sonnet', 'opus'];
+}
+export function wsPlan(id) {
+  const w = findWs(id);
+  return w?.plan || w?.account?.plan || w?.account?.subscription || null;
+}
+export function wsRuntime(id) { return findWs(id)?.runtime || 'claude'; }
+/** The dropdown's options: "default" (the harness picks) first, then the account's models, and the current pick even if it isn't listed. */
+export const dropdownModels = (ms, current) => [...new Set(['default', ...ms.filter(m => m && m !== 'default'), ...(current ? [current] : [])])];
+/** Hermes and OpenCode expose tier-dependent model lists via a dropdown instead of 3 segmented buttons. */
+export function wsUsesModelDropdown(id, agent = null) {
+  const rt = agent?.engine || findWs(id)?.runtime;
+  return rt === 'hermes' || rt === 'opencode' || wsModels(id).length > 3;
+}
 /** The model buttons to show: each distinct model once (an engine whose three tiers are all "default" shows one button). */
 export const modelChoices = ms => [...new Set(ms)];
 /** An engine whose models are all "default" lets the owner type a model id (e.g. provider/model); the server passes it through. */

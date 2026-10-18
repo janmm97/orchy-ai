@@ -34,7 +34,6 @@ import claude from './claude.mjs';
 import codex from './codex.mjs';
 import opencode from './opencode.mjs';
 import hermes from './hermes.mjs';
-import deepseek from './deepseek.mjs';
 import antigravity from './antigravity.mjs';
 import { env } from '../env.mjs';
 
@@ -57,7 +56,7 @@ export function registerEngine(def) {
   return () => { if (prev) REG.set(def.id, prev); else REG.delete(def.id); };
 }
 
-for (const e of [claude, codex, opencode, hermes, deepseek, antigravity]) registerEngine(e);
+for (const e of [claude, codex, opencode, hermes, antigravity]) registerEngine(e);
 
 /** One registered engine, or null (an id that config.json mentions but this Orchy has no adapter for is not an engine). */
 export const engine = id => REG.get(id) || null;

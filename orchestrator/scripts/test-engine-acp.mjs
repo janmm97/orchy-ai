@@ -13,11 +13,8 @@ import { fileURLToPath } from 'node:url';
 import { decide } from '../lib/policy.mjs';
 import { launchAcpRun, pickOption, gateCalls, toAcpMcp, mcpName, AcpConnection, CLIENT_CAPABILITIES } from '../lib/engines/acp.mjs';
 import { buildHermesConfigYaml, hermesConfigLooksSafe, HERMES_APPROVALS, parseHermesStatus } from '../lib/engines/hermes-config.mjs';
-import { buildDshPatchYaml, dshPatchLooksSafe, dshArgs, parseDshConfig } from '../lib/engines/deepseek-config.mjs';
 import { hermesEnv, hermesArgs } from '../lib/engines/hermes.mjs';
-import { dshEnv } from '../lib/engines/deepseek.mjs';
 import hermes from '../lib/engines/hermes.mjs';
-import deepseek from '../lib/engines/deepseek.mjs';
 
 let fail = 0;
 const ok = (cond, label, extra = '') => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${label}${cond ? '' : `  ${extra}`}`); if (!cond) fail++; };
@@ -187,21 +184,6 @@ async function run(scenario, over = {}, { cfg = {}, io = {}, afterStart } = {}) 
   ok(env.HERMES_HOME.replace(/\\/g, '/').endsWith('/p/prof') && env.HERMES_YOLO_MODE === undefined && env.OPENAI_API_KEY === undefined && env.FOO === '1' && env.HERMES_ACP_SKIP_CONFIGURED_MCP === '1', 'hermes: env points at the profile, drops HERMES_YOLO_MODE and the PC\'s keys, skips the global MCP servers');
   ok(hermes.capabilities.gated === false && hermes.accountModel === 'profile', 'hermes: not gated (file writes / MCP never ask in ACP mode), profile account model');
   ok(parseHermesStatus('Model: nous/hermes-4\nProvider: openrouter\n').providers.join() === 'openrouter' && parseHermesStatus('garbage').providers.length === 0 && parseHermesStatus('Provider: none').providers.length === 0, 'hermes: status parsing is defensive');
-}
-// ── DeepSeek: the generated patch has the strict preset and no auto-approval ──
-{
-  const fresh = buildDshPatchYaml('');
-  ok(dshPatchLooksSafe(fresh) && /defaultPreset: workspace-write/.test(fresh), 'deepseek: the patch pins the workspace-write preset');
-  ok(!/auto/i.test(fresh.replace(/^#.*$/gm, '')) && !/danger-full-access|never/.test(fresh.replace(/^#.*$/gm, '')), 'deepseek: no auto-approval plugin, no full-access preset');
-  const hostile = buildDshPatchYaml('- id: llm-deepseek\n  config:\n    reasoningEffort: max\n- id: "@deepseek-ai/dsh-auto-approval-review"\n  config: {}\n- id: "@deepseek-ai/dsh-permission-presets"\n  config:\n    defaultPreset: danger-full-access\n');
-  const body = hostile.replace(/^#.*$/gm, '');
-  ok(dshPatchLooksSafe(hostile) && /llm-deepseek/.test(body) && !/auto-approval/.test(body) && !/danger-full-access/.test(body), 'deepseek: an auto-approval plugin and a full-access default are stripped, providers kept');
-  ok(!dshPatchLooksSafe('- id: "@deepseek-ai/dsh-auto-approval-review"\n  config: {}\n'), 'deepseek: the safety check rejects an auto-approval plugin');
-  ok(dshArgs().join(' ') === '--profile acp', 'deepseek: runs `dsh --profile acp` and nothing else');
-  const env = dshEnv('/p/dsh', { PATH: '/bin', DSH_PERMISSION_MODE: 'danger-full-access', DSH_HOME: '/other', DEEPSEEK_API_KEY: 'k' });
-  ok(env.DSH_HOME.replace(/\\/g, '/').endsWith('/p/dsh') && env.DSH_PERMISSION_MODE === 'workspace-write' && env.DEEPSEEK_API_KEY === undefined, 'deepseek: DSH_HOME is the profile, the permission mode is pinned, the PC\'s key is dropped');
-  ok(deepseek.capabilities.gated === false && deepseek.accountModel === 'profile', 'deepseek: not gated, profile account model');
-  ok(parseDshConfig('- id: llm-deepseek\n  config:\n    model: deepseek-chat\n').providers.join() === 'deepseek' && parseDshConfig('').providers.length === 0, 'deepseek: config parsing is defensive');
 }
 
 console.log(fail ? `\n${fail} ACP check(s) FAILED` : '\nall ACP checks passed');

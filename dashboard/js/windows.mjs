@@ -329,7 +329,7 @@ function unstash(child) {
 //     window that's up.
 // Close just closes. Opened from inside a window, a page or item still stands in for it with Back (stash). Popped-out
 // windows and decisions (questions, approvals, huddle proposals) are never swapped away.
-const PAGES = new Set(['agents', 'huddles', 'logs', 'impact', 'connections', 'settings', 'history']);
+const PAGES = new Set(['agents', 'huddles', 'logs', 'connections', 'settings', 'history']);
 const isItem = id => /^(run|agent|huddle)-/.test(String(id || '')) && !/^huddle-new-/.test(id);
 const groupOf = id => (PAGES.has(id) ? 'page' : isItem(id) ? 'item' : null);
 const rootOf = w => { let r = w; while (r.parent && wins.has(r.parent.id)) r = r.parent; return r; };
@@ -384,12 +384,29 @@ export function openWindow(opts) {
       el.remove();
       wins.delete(w.id);
       opts.onClose?.();
-      // windows this one stood in for come back; ones that stood in for it close with it
+      // closing via X / Escape / pop-out close closes the stashed chain completely; use back() to return to parent
       for (const o of [...wins.values()]) if (o.parent === w) { o.parent = null; o.close(); }
-      unstash(w);
+      const p = w.parent;
+      w.parent = null;
+      if (p && wins.has(p.id) && p.stashed) p.close();
       // one decision at a time: the next queued one steps up
       const next = w.kind === 'decision' && [...wins.values()].find(o => o.queued);
       if (next) { next.queued = false; next.restore(); }
+      renderDock();
+      const t = topWin();
+      if (t) focusWin(t);
+    },
+    back() {
+      if (!w.parent || !wins.has(w.parent.id) || !w.parent.stashed) return w.close();
+      w.closing = true;
+      clearInterval(w.watch);
+      try { w.pop?.close(); } catch {}
+      w.pop = null;
+      el.remove();
+      wins.delete(w.id);
+      opts.onClose?.();
+      for (const o of [...wins.values()]) if (o.parent === w) { o.parent = null; o.close(); }
+      unstash(w);
       renderDock();
       const t = topWin();
       if (t) focusWin(t);
@@ -402,7 +419,7 @@ export function openWindow(opts) {
       if (w.pop) { try { w.pop.focus(); } catch {} return; }
       // asked for again (its top-bar button) while another stands in for it: that one goes Back to it
       const child = w.stashed && [...wins.values()].find(o => o.parent === w);
-      if (child) { child.close(); return; }
+      if (child) { child.back(); return; }
       w.minimized = false; w.queued = false; el.hidden = false; renderDock(); focusWin(w);
     },
     /** The window now shows something else (a run's follow-up): file it under that id. */
@@ -416,7 +433,7 @@ export function openWindow(opts) {
   el.querySelector('[data-act="pop"]').addEventListener('click', () => (w.pop ? popIn(w) : popOut(w)));
   el.querySelector('[data-act="min"]').addEventListener('click', () => w.minimize());
   el.querySelector('[data-act="close"]')?.addEventListener('click', () => w.close());
-  el.querySelector('[data-act="back"]').addEventListener('click', () => w.close());
+  el.querySelector('[data-act="back"]').addEventListener('click', () => w.back());
   el.addEventListener('pointerdown', () => { if (!w.pop) focusWin(w); });
   setPopButton(w);
 

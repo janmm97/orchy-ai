@@ -28,7 +28,7 @@ ok(!r.asked.some(a => a.startsWith('key:')), 'no key is asked for when both answ
 
 // voice with ElevenLabs, Jev with TypeSafe
 r = await run({ answers: [true, 0, true, 0, 1], keys: { ELEVENLABS_API_KEY: 'el', TYPESAFE_API_KEY: 'ts' } });
-ok(r.store.VOICE_ENABLED === '1' && r.store.ELEVENLABS_API_KEY === 'el' && !('DEEPGRAM_API_KEY' in r.store), 'Voice, ElevenLabs: only its key is asked and saved');
+ok(r.store.VOICE_ENABLED === '1' && r.store.VOICE_PROVIDER === 'elevenlabs' && r.store.ELEVENLABS_API_KEY === 'el' && !('DEEPGRAM_API_KEY' in r.store), 'Voice, ElevenLabs: only its key is asked and saved, and it is the voice');
 ok(r.store.TYPESAFE_API_KEY === 'ts' && r.store.JEV_PROVIDER === 'typesafe', 'Jev, [1] TypeSafe: key saved, provider set');
 ok(r.store.SETUP_SCRIPTS === 'off', 'scripts: Off');
 

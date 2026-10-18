@@ -4,15 +4,28 @@ import { env } from './env.mjs';
 
 let ttsIssue = null;     // last ElevenLabs problem, shown in Settings
 
-/** VOICE_ENABLED=0 (npm run setup asks): chat only. Nothing speaks, nothing rings, no voice agents are made. */
-export const voiceEnabled = () => !/^(0|false|off|no)$/i.test(String(env('VOICE_ENABLED', '1')).trim());
+/**
+ * VOICE_ENABLED=0 (npm run setup asks): chat only. Nothing speaks, nothing rings, no voice agents are made.
+ * Left unset (an install that asked nothing, e.g. one an AI agent ran): off until a voice key is in .env.
+ */
+export const voiceEnabled = () => {
+  const v = String(env('VOICE_ENABLED') || '').trim();
+  if (!v) return !!(env('ELEVENLABS_API_KEY') || env('DEEPGRAM_API_KEY'));
+  return !/^(0|false|off|no)$/i.test(v);
+};
+
+/** Which service speaks: VOICE_PROVIDER=elevenlabs|deepgram (Settings → Voice), or '' for ElevenLabs first, Deepgram as backup. */
+export const VOICE_PROVIDERS = ['', 'elevenlabs', 'deepgram'];
+export const voiceProvider = () => { const p = String(env('VOICE_PROVIDER') || '').trim().toLowerCase(); return VOICE_PROVIDERS.includes(p) ? p : ''; };
 
 export function voiceConfig() {
-  const eleven = !!env('ELEVENLABS_API_KEY');
+  const provider = voiceProvider();
+  const eleven = provider !== 'deepgram' && !!env('ELEVENLABS_API_KEY');
   const deepgram = !!env('DEEPGRAM_API_KEY');
   const enabled = voiceEnabled();
   return {
     enabled,
+    provider,
     tts: !enabled ? 'off' : eleven || deepgram ? (eleven && !ttsIssue ? 'elevenlabs' : deepgram ? 'deepgram' : 'elevenlabs') : 'browser',
     voiceId: env('ELEVENLABS_VOICE_ID', '21m00Tcm4TlvDq8ikWAM'),
     auraVoice: env('DEEPGRAM_TTS_MODEL', 'aura-2-thalia-en'),
@@ -65,10 +78,10 @@ async function aura(text) {
   return r;
 }
 
-/** Stream speech for text into an HTTP response: ElevenLabs first, Deepgram Aura as backup. */
+/** Stream speech for text into an HTTP response: ElevenLabs first, Deepgram Aura as backup (Deepgram only when it was picked). */
 export async function speak(text, res) {
   const clean = String(text || '').slice(0, 2000);
-  if (env('ELEVENLABS_API_KEY')) {
+  if (env('ELEVENLABS_API_KEY') && voiceProvider() !== 'deepgram') {
     try {
       const r = await eleven(clean);
       ttsIssue = null;

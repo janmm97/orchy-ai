@@ -14,6 +14,7 @@ import { toClaudeMcp } from '../lib/engines/claude.mjs';
 import { toCodexMcp } from '../lib/engines/codex.mjs';
 import { OPENCODE_PERMISSION, permissionLooksSafe, mapTool, modelParts } from '../lib/engines/opencode-config.mjs';
 import { CODEX_ARGS } from '../lib/codex.mjs';
+import { setOpenCodeProbeForTests, parseOpenCodeAuthList } from '../lib/engines/tier-catalog.mjs';
 
 let fail = 0;
 const ok = (cond, label, extra = '') => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${label}${cond ? '' : `  ${extra}`}`); if (!cond) fail++; };
@@ -22,9 +23,9 @@ const keep = { workspaces: [...config.workspaces] };
 process.on('exit', () => { config.workspaces = keep.workspaces; });
 
 // ── the registry ──
-ok(JSON.stringify(engineIds()) === JSON.stringify(['claude', 'codex', 'opencode', 'hermes', 'deepseek', 'antigravity']), 'registry lists claude, codex, opencode, hermes, deepseek, antigravity', JSON.stringify(engineIds()));
-ok('hermes' in config.runtimes && !!engine('hermes') && !!engine('deepseek') && !engine('hermes').capabilities.gated && !engine('deepseek').capabilities.gated, 'hermes / deepseek are engines, registered as NOT gated (refused unless allowUngated)');
-ok(!!ungatedRefusal({ name: 'H' }, engine('hermes')) && !!ungatedRefusal({ name: 'D' }, engine('deepseek')) && ungatedRefusal({ name: 'H', allowUngated: true }, engine('hermes')) === null, 'hermes / deepseek are refused by default and allowed once the workspace opts in');
+ok(JSON.stringify(engineIds()) === JSON.stringify(['claude', 'codex', 'opencode', 'hermes', 'antigravity']), 'registry lists claude, codex, opencode, hermes, antigravity', JSON.stringify(engineIds()));
+ok('hermes' in config.runtimes && !!engine('hermes') && !engine('hermes').capabilities.gated && !engine('antigravity').capabilities.gated, 'hermes / antigravity are engines, registered as NOT gated (refused unless allowUngated)');
+ok(!!ungatedRefusal({ name: 'H' }, engine('hermes')) && ungatedRefusal({ name: 'H', allowUngated: true }, engine('hermes')) === null, 'hermes is refused by default and allowed once the workspace opts in');
 ok(JSON.stringify(Object.keys(runtimes())) === JSON.stringify(engineIds()), 'runtimes() lists registered engines only', JSON.stringify(Object.keys(runtimes())));
 ok(Object.values(runtimes()).every(r => r.capabilities && r.label && r.models.length === 3 && r.accountModel), 'every runtime carries label, models, accountModel and capabilities');
 for (const e of engines()) {
@@ -34,7 +35,7 @@ for (const e of engines()) {
 ok(engine('claude').capabilities.clientSafe && engine('claude').capabilities.huddles, 'claude: client-safe, huddles');
 ok(!engine('codex').capabilities.clientSafe && !engine('codex').capabilities.huddles && !!engine('codex').capabilities.clientReason, 'codex: not client-safe, no huddles, says why');
 ok(engine('opencode').capabilities.gated && !engine('opencode').capabilities.clientSafe && engine('opencode').accountModel === 'profile', 'opencode: gated, not client-safe, profile account model');
-ok(Object.keys(runtimeAvailability()).join() === 'claude,codex,opencode,hermes,deepseek,antigravity', 'runtimeAvailability asks every engine');
+ok(Object.keys(runtimeAvailability()).join() === 'claude,codex,opencode,hermes,antigravity', 'runtimeAvailability asks every engine');
 let bad = null;
 try { registerEngine({ id: 'half', label: 'Half' }); } catch (e) { bad = e; }
 ok(!!bad && !engine('half'), 'an incomplete engine is refused');
@@ -131,18 +132,48 @@ ok(loginHint({ runtime: 'codex', codexAccount: 'owner@example.com', codexHome: '
   const oc = engine('opencode');
   const w = { id: 'oc1', name: 'OC One', folder: 'workspaces/__oc1', runtime: 'opencode', opencodeAccount: null, opencodeProfile: dir, color: 'teal' };
   config.workspaces.push(w);
+  // no real `opencode` here: the CLI probe answers what the profile's env would show
+  let cli = { providers: [], models: [] }, probedEnv = null;
+  const undoProbe = setOpenCodeProbeForTests(async (_bin, env) => { probedEnv = env; return cli; });
   let a = await accountCheck(w, { force: true });
-  ok(!a.ok && !a.loggedIn && !a.profileProblem, 'opencode: a fresh profile is not logged in');
+  ok(!a.ok && !a.loggedIn && !a.profileProblem, 'opencode: a fresh profile is not logged in (the PC’s own OpenCode login never counts for it)');
   fs.mkdirSync(path.join(dir, 'data', 'opencode'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'data', 'opencode', 'auth.json'), JSON.stringify({ anthropic: { type: 'api', key: 'sk-test' }, openrouter: { type: 'api', key: 'k' } }));
   a = await accountCheck(w, { force: true });
-  ok(a.ok && a.actual === 'anthropic, openrouter', 'opencode: providers in auth.json make it logged in and are reported', JSON.stringify(a));
+  ok(a.ok && a.actual === 'anthropic, openrouter' && a.availableModels === null && a.plan === 'Claude + OpenRouter', 'opencode: providers in auth.json make it logged in; no plan or model is made up', JSON.stringify(a));
+  ok(probedEnv?.XDG_DATA_HOME === path.join(dir, 'data'), 'opencode: the CLI is asked under the workspace’s profile', JSON.stringify(probedEnv?.XDG_DATA_HOME));
+  cli = { providers: ['OpenCode Console'], models: ['opencode/big-pickle', 'anthropic/claude-sonnet-5-5'] };
+  a = await accountCheck(w, { force: true });
+  ok(a.ok && a.actual === 'anthropic, openrouter, opencode' && JSON.stringify(a.availableModels) === JSON.stringify(cli.models), 'opencode: a CLI-only sign-in (OpenCode Console) counts, and the models are the ones `opencode models` lists', JSON.stringify(a));
+  undoProbe();
+  ok(JSON.stringify(parseOpenCodeAuthList('OpenCode Console  Default                     stored\r\n●  Anthropic  oauth\nEnvironment\nOpenAI  OPENAI_API_KEY\n')) === '["OpenCode Console","Anthropic"]', 'opencode: `auth list` parsing (with and without bullets; env keys skipped)');
   const env = oc.profileEnv(dir);
   ok(env.XDG_DATA_HOME === path.join(dir, 'data') && env.OPENCODE_CONFIG_DIR === path.join(dir, 'config') && !!env.XDG_STATE_HOME, 'opencode: profileEnv pins data, state and config under the workspace profile');
   const hint = loginHint(w);
   ok(hint.includes('XDG_DATA_HOME') && hint.includes('OPENCODE_CONFIG_DIR') && /auth login$/.test(hint), 'opencode: login hint pins the profile and runs `auth login`', hint);
   config.workspaces.splice(config.workspaces.indexOf(w), 1);
   fs.rmSync(dir, { recursive: true, force: true });
+}
+{
+  // Hermes OAuth account + tier-dependent model selection
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orchy-hm-'));
+  const w = { id: 'hm1', name: 'HM One', folder: 'workspaces/__hm1', runtime: 'hermes', hermesAccount: null, hermesProfile: dir, color: 'violet', allowUngated: true };
+  config.workspaces.push(w);
+  let a = await accountCheck(w, { force: true });
+  ok(!a.ok && !a.loggedIn, 'hermes: a fresh profile is not logged in');
+  fs.writeFileSync(path.join(dir, 'auth.json'), JSON.stringify({ version: 1, active_provider: 'nous', providers: { nous: { access_token: 'tok', account_tier: 'pro' } } }));
+  a = await accountCheck(w, { force: true });
+  ok(a.ok && a.loggedIn && a.plan === 'Nous Portal · Pro' && a.tier === 'pro' && a.availableModels === null, 'hermes: Nous Portal OAuth reports its stored tier; with no model cache no model is made up', JSON.stringify(a));
+  fs.writeFileSync(path.join(dir, 'provider_models_cache.json'), JSON.stringify({ nous: { models: ['nous/hermes-5', 'nous/hermes-5:free'] }, openrouter: { models: ['x/y'] } }));
+  a = await accountCheck(w, { force: true });
+  ok(JSON.stringify(a.availableModels) === '["nous/hermes-5","nous/hermes-5:free"]', 'hermes: the models are the active provider’s from Hermes’s own cache', JSON.stringify(a.availableModels));
+  fs.writeFileSync(path.join(dir, 'auth.json'), JSON.stringify({ version: 1, active_provider: 'nous', providers: { nous: { access_token: 'tok', account_tier: 'free' } } }));
+  a = await accountCheck(w, { force: true });
+  ok(a.plan === 'Nous Portal · Free' && JSON.stringify(a.availableModels) === '["nous/hermes-5:free"]', 'hermes: a free tier only offers the free models', JSON.stringify(a));
+  const hint = loginHint(w);
+  ok(hint.includes('HERMES_HOME') && /portal$/.test(hint), 'hermes: login hint pins HERMES_HOME and runs `hermes portal` (OAuth)', hint);
+  config.workspaces.splice(config.workspaces.indexOf(w), 1);
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 4, retryDelay: 100 });
 }
 
 // ── models: engines whose tiers are all "default" ──

@@ -25,14 +25,55 @@ export const ANTIGRAVITY = 'antigravity';
 const WIN = process.platform === 'win32';
 
 let binCache = null;
+let testBinOverride = false;
 function resolveBin() {
   const explicit = env('AGY_CLI_PATH');
   if (explicit) return fs.existsSync(expandPath(explicit)) ? expandPath(explicit) : null;
-  return findBinary('agy', [path.join(os.homedir(), '.gemini', 'bin'), path.join(os.homedir(), '.local', 'bin')]);
+  const extra = [path.join(os.homedir(), '.gemini', 'bin'), path.join(os.homedir(), '.local', 'bin')];
+  if (WIN && process.env.LOCALAPPDATA) {
+    extra.push(
+      path.join(process.env.LOCALAPPDATA, 'Programs', 'Antigravity', 'bin'),
+      path.join(process.env.LOCALAPPDATA, 'Programs', 'antigravity-cli'),
+    );
+  }
+  return findBinary('agy', extra);
 }
 export const agyBin = () => { if (!binCache || !fs.existsSync(binCache)) binCache = resolveBin(); return binCache; };
 /** Tests point the adapter at a fake agy. */
-export function setAgyBinForTests(p) { binCache = p; }
+export function setAgyBinForTests(p) { binCache = p; testBinOverride = !!p; }
+
+function isTempTestBin(binPath) {
+  if (testBinOverride) return true;
+  if (!binPath) return false;
+  try {
+    const realTmp = fs.realpathSync(os.tmpdir()).toLowerCase();
+    const realBin = fs.realpathSync(binPath).toLowerCase();
+    return realBin.startsWith(realTmp);
+  } catch {
+    return String(binPath).toLowerCase().startsWith(os.tmpdir().toLowerCase());
+  }
+}
+
+/** Read Google OAuth sign-in state from ~/.gemini/google_accounts.json + ~/.gemini/oauth_creds.json (instant, no Electron spawn). */
+export function readGeminiOAuthAccount(geminiRoot = path.join(os.homedir(), '.gemini')) {
+  try {
+    const acctPath = path.join(geminiRoot, 'google_accounts.json');
+    const credsPath = path.join(geminiRoot, 'oauth_creds.json');
+    if (!fs.existsSync(acctPath)) return null;
+    const acct = JSON.parse(fs.readFileSync(acctPath, 'utf8'));
+    const active = typeof acct?.active === 'string' && acct.active.includes('@') ? acct.active.trim() : null;
+    if (!active) return { loggedIn: false, email: null, error: 'Antigravity isn’t signed in. Click Log in to sign in with Google OAuth.' };
+    if (fs.existsSync(credsPath)) {
+      const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+      if (creds && (creds.refresh_token || creds.access_token)) {
+        return { loggedIn: true, email: active, subscription: 'Google OAuth', plan: 'Google OAuth' };
+      }
+    }
+    return null; // an account named but no token stored: ask agy itself
+  } catch {
+    return null;
+  }
+}
 
 /** Where a workspace keeps its agents' agy folders (`antigravityHome`, else ~/.antigravity-orchy/<id>). */
 export const agyRoot = ws => (ws?.antigravityHome ? expandPath(ws.antigravityHome) : path.join(os.homedir(), '.antigravity-orchy', String(ws?.id || 'workspace')));
@@ -50,12 +91,19 @@ function start(bin, args, opts) {
 // the PC's provider keys stay out (scrubbedEnv), and so do the other harnesses' profile variables
 const runEnv = (extra = {}) => scrubbedEnv({}, extra, { dropNames: ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'ANTIGRAVITY_GEMINI_DIR'] });
 
-// Who agy is signed in as: `agy models` signs in (it prints no tokens) and logs "authenticated successfully as <email>".
+// Who agy is signed in as: checks ~/.gemini Google OAuth credentials first, falling back to `agy models` for test shims.
 let acctCache = null;
 export async function agyAccount({ force = false, maxAge = 60_000 } = {}) {
   if (!force && acctCache && Date.now() - acctCache.at < maxAge) return acctCache.value;
   const bin = agyBin();
   if (!bin) return { loggedIn: false, email: null, error: 'Antigravity (agy) isn’t installed on this computer' };
+  if (!isTempTestBin(bin)) {
+    const fast = readGeminiOAuthAccount();
+    if (fast) {
+      acctCache = { at: Date.now(), value: fast };
+      return fast;
+    }
+  }
   const dir = path.join(DATA_DIR, 'agy-check');
   fs.mkdirSync(dir, { recursive: true });
   const log = path.join(dir, 'models.log');
@@ -67,13 +115,13 @@ export async function agyAccount({ force = false, maxAge = 60_000 } = {}) {
     let out = '';
     child.stdout.on('data', d => { out += d; });
     child.stderr.on('data', d => { out += d; });
-    const timer = setTimeout(() => killTree(child), 45_000);
+    const timer = setTimeout(() => killTree(child), 8_000);
     child.on('error', e => { clearTimeout(timer); resolve({ loggedIn: false, email: null, error: e.message }); });
     child.on('close', () => {
       clearTimeout(timer);
       let text = ''; try { text = fs.readFileSync(log, 'utf8'); } catch {}
       const email = (text + '\n' + out).match(/authenticated successfully as\s+([^\s"']+@[^\s"']+)/i)?.[1] || null;
-      resolve(email ? { loggedIn: true, email } : { loggedIn: false, email: null, error: /log ?in|auth|sign/i.test(out) ? out.trim().split('\n').pop().slice(0, 300) : 'agy isn’t signed in' });
+      resolve(email ? { loggedIn: true, email, subscription: 'Google OAuth', plan: 'Google OAuth' } : { loggedIn: false, email: null, error: /log ?in|auth|sign/i.test(out) ? out.trim().split('\n').pop().slice(0, 300) : 'Antigravity isn’t signed in. Click Log in to sign in with Google OAuth.' });
     });
   });
   acctCache = { at: Date.now(), value };

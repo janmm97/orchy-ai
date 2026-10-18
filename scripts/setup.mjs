@@ -133,6 +133,7 @@ export async function questions(env, setEnv, io = { yesNo, choose, askKey: (...a
   } else {
     set('VOICE_ENABLED', '1');
     const which = await choose('  Which voice service do you have?', ['ElevenLabs (natural voices, and live calls with your agents)', 'Deepgram (Orchy reads its replies aloud)', 'Both']);
+    set('VOICE_PROVIDER', ['elevenlabs', 'deepgram', ''][which]);
     let any = false;
     if (which !== 1) { const k = await askKey('ELEVENLABS_API_KEY', 'ElevenLabs', 'elevenlabs.io → Developers → API keys'); if (k) { set('ELEVENLABS_API_KEY', k); any = true; } }
     if (which !== 0) { const k = await askKey('DEEPGRAM_API_KEY', 'Deepgram', 'console.deepgram.com → API keys'); if (k) { set('DEEPGRAM_API_KEY', k); any = true; } }

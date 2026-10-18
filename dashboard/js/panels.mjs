@@ -90,8 +90,8 @@ export function openAgents(wsId, { from } = {}) {
     body.innerHTML = `${tabs}
       <div class="wshead">
         <div class="facts">
-          <span>Client <b>${esc(wsName(ws.id))}</b> · on <b>${esc(ws.runtimeLabel || 'Claude Code')}</b> · runs as ${acct.ok ? `<b>${esc(acct.actual)}</b>` : `<b>${esc(acct.expected || '')}</b> <span class="plate decide">${acct.loggedIn ? 'wrong account' : 'needs login'}</span>`}</span>
-          ${(ws.extraAccounts || []).map(x => `<span>${esc(x.agents.join(', '))} on <b>${esc(x.runtimeLabel)}</b> · runs as ${x.ok ? `<b>${esc(x.actual)}</b>` : `<b>${esc(x.expected || 'no account set')}</b> <span class="plate decide">${x.loggedIn ? 'wrong account' : 'needs login'}</span>`}</span>`).join('')}
+          <span>Client <b>${esc(wsName(ws.id))}</b> · on <b>${esc(ws.runtimeLabel || 'Claude Code')}</b> · runs as ${acct.ok ? `<b>${esc(acct.actual)}</b>${acct.plan ? ` <span class="chip" title="Detected account plan / tier">${esc(acct.plan)}</span>` : ''}` : `<b>${esc(acct.expected || '')}</b> <span class="plate decide">${acct.loggedIn ? 'wrong account' : 'needs login'}</span>`}</span>
+          ${(ws.extraAccounts || []).map(x => `<span>${esc(x.agents.join(', '))} on <b>${esc(x.runtimeLabel)}</b> · runs as ${x.ok ? `<b>${esc(x.actual)}</b>${x.plan ? ` <span class="chip" title="Detected account plan / tier">${esc(x.plan)}</span>` : ''}` : `<b>${esc(x.expected || 'no account set')}</b> <span class="plate decide">${x.loggedIn ? 'wrong account' : 'needs login'}</span>`}</span>`).join('')}
           <span class="hint">One: ${ws.oneScoped !== false ? 'its own account' : '<b>not signed in</b> (One is off here until it is)'} · folder ${esc(ws.folder)}</span>
         </div>
         <div class="ctl">
@@ -277,10 +277,10 @@ function setupHTML(ws) {
   if (acct.ok && ws.oneScoped !== false && !extra.length) return '';
   const one = ws.oneLogin || {};
   const row = (done, title, text, buttons) => `<div class="check ${done ? 'ok' : 'todo'}"><span class="box">${done ? icon('check') : ''}</span><span class="t"><b>${title}</b>${text}</span><span class="btnrow">${done ? '' : buttons}</span></div>`;
-  const loginRow = (a, whose) => row(a.ok, `${esc(a.runtimeLabel || 'Claude Code')} runs as ${esc(a.expected || '')}${whose}`,
-    a.ok ? `Logged in as ${esc(a.actual)}.`
-      : `${a.error && /install|account set/i.test(a.error) ? esc(a.error) : a.loggedIn ? `Its profile is logged in as ${esc(a.actual || 'another account')}, so Orchy won't run ${whose ? 'those agents' : 'anything here'}.` : 'Its profile isn’t logged in yet. Log in once, as that account, in the browser.'}${a.fix ? `<code>${esc(a.fix)}</code>` : ''}`,
-    `${a.expected ? `<button class="btn sm primary" data-setup="login" data-rt="${esc(a.runtime || '')}">Log in</button><button class="btn sm" data-setup="copy" data-fix="${esc(a.fix || '')}">Copy</button>` : ''}<button class="btn sm" data-setup="recheck">${icon('refresh')}Re-check</button>`);
+  const loginRow = (a, whose) => row(a.ok, `${esc(a.runtimeLabel || 'Claude Code')}${a.expected ? ` runs as ${esc(a.expected)}` : ' OAuth sign-in'}${whose}`,
+    a.ok ? `Logged in as ${esc(a.actual)}${a.plan ? ` (${esc(a.plan)})` : ''}.`
+      : `${a.error && /install|account set/i.test(a.error) ? esc(a.error) : a.loggedIn ? `Its profile is logged in as ${esc(a.actual || 'another account')}, so Orchy won't run ${whose ? 'those agents' : 'anything here'}.` : 'Its profile isn’t signed in yet. Sign in via OAuth once in the window Orchy opens.'}${a.fix ? `<code>${esc(a.fix)}</code>` : ''}`,
+    `<button class="btn sm primary" data-setup="login" data-rt="${esc(a.runtime || '')}">Log in</button>${a.fix ? `<button class="btn sm" data-setup="copy" data-fix="${esc(a.fix || '')}">Copy</button>` : ''}<button class="btn sm" data-setup="recheck">${icon('refresh')}Re-check</button>`);
   return `<div class="setup"><span class="h">Get ${esc(wsName(ws.id))} ready</span>
     ${loginRow(acct, '')}
     ${extra.map(x => loginRow(x, ` (for ${esc(x.agents.join(', '))})`)).join('')}
@@ -450,7 +450,10 @@ export async function openAddWorkspace({ edit = null, from } = {}) {
   const body = createEl(`<div style="display:grid;gap:var(--s4)"><div class="empty">Checking which engines this PC has…</div></div>`);
   const w = openWindow({ id, title: edit ? `Edit ${edit.name}` : 'A message from Orchy', size: 'wide', body, from, dockLabel: edit ? `Edit ${edit.name}` : 'New agent' });
   let rt;
-  try { rt = await api('/api/runtimes'); } catch (e) { body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return w; }
+  try { rt = await api('/api/runtimes'); } catch (e) {
+    if (ctx.state?.runtimes && Object.keys(ctx.state.runtimes).length) rt = ctx.state.runtimes;
+    else { body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return w; }
+  }
   let engine = edit?.runtime || 'claude';
   const ownNow = () => !!edit?.ownProfile;
   const currentEmail = () => edit?.accounts?.[engine]?.account || '';
@@ -461,6 +464,7 @@ export async function openAddWorkspace({ edit = null, from } = {}) {
     const def = profileOnly ? null : r.defaultAccount;
     const mine = currentEmail();
     const pickOwn = edit ? (ownNow() || (mine && mine !== def)) : !def;
+    const tierModels = [...new Set(r.availableModels || r.models || [])].filter(m => m !== 'default');
     body.innerHTML = `
       <div class="from"><div class="sprite">${orchySVG('happy', 1, { label: 'Orchy' })}</div><div class="t"><b>Orchy</b><span>${edit ? `Changing ${esc(edit.name)}` : 'New agent · I set up its folder like your other workspaces'}</span></div></div>
       ${edit ? '' : `<p class="ask" style="margin:0">What should I call it?</p>`}
@@ -471,15 +475,15 @@ export async function openAddWorkspace({ edit = null, from } = {}) {
         <div class="field"><label for="wa-aliases">Also called</label><input class="input" id="wa-aliases" placeholder="e.g. Acme, ACM" value="${esc((edit?.aliases || []).join(', '))}"><span class="hint">Other names you use for it, comma separated. Its own name already counts: “for ${esc(edit ? (edit.handles?.[0] || edit.name) : 'Acme')} …” sends work here.</span></div>
         <div class="field"><span class="label">Runs on</span>
           <div class="seg" role="group" aria-label="Engine">${Object.keys(rt).map(k => `<button type="button" data-engine="${esc(k)}" aria-pressed="${engine === k}" ${rt[k]?.available || k === engine ? '' : 'disabled'} title="${rt[k]?.available ? '' : 'Not installed on this PC yet'}">${esc(rt[k]?.label || k)}</button>`).join('')}</div>
-          <span class="hint">${esc(r.blurb || '')} ${[...new Set(r.models || [])].filter(m => m !== 'default').length ? `Models: ${esc([...new Set(r.models || [])].join(', '))}.` : 'Uses the model its own config picks.'}${r.sandbox && r.sandbox !== 'ready' ? ' This PC hasn’t set up Codex’s Windows sandbox, so Orchy checks every single command first.' : ''}${r.available ? '' : ` ${esc(r.label || engine)} isn’t installed on this PC yet.`}</span>
+          <span class="hint">${esc(r.blurb || '')} ${r.plan ? `Detected plan/tier: <b>${esc(r.plan)}</b>. ` : ''}${tierModels.length ? `Models: ${esc(tierModels.slice(0, 6).join(', '))}${tierModels.length > 6 ? ` and ${tierModels.length - 6} more` : ''}.` : 'Uses the model its own config picks.'}${r.sandbox && r.sandbox !== 'ready' ? ' This PC hasn’t set up Codex’s Windows sandbox, so Orchy checks every single command first.' : ''}${r.available ? '' : ` ${esc(r.label || engine)} isn’t installed on this PC yet.`}</span>
           ${ungated ? `<div class="fixbar"><b>${esc(r.label)} can’t be held behind your approvals.</b><span>It could change files and run commands without asking you. Orchy won’t start it unless you allow that here.</span>
             <label class="choice"><input type="checkbox" id="wa-ungated" ${edit?.allowUngated ? 'checked' : ''}><span>I understand: let it run without approvals</span></label></div>` : ''}</div>
         ${r.sharedLogin ? `<div class="field"><label class="label" for="wa-email">Runs as</label>
-          <span class="hint">${esc(r.label || '')} has one sign-in for this whole computer, shared by every ${esc(r.label || '')} workspace${def ? `: <b>${esc(def)}</b>` : ''}. Each run waits for your OK before it starts.</span>
-          <input class="input" id="wa-email" type="email" placeholder="the account’s email" value="${esc(mine || def || '')}"></div>` : profileOnly ? `<div class="field"><span class="label">Runs as</span>
-          <span class="hint">Its own ${esc(r.label || '')} profile folder, made for it so its provider logins never mix with another agent’s. You log it in once (a sign-in window opens after you set it up).</span>
-          <input class="input" id="wa-email" type="text" maxlength="80" placeholder="Provider it uses, e.g. anthropic (optional note)" value="${esc(mine)}"></div>` : `<div class="field"><span class="label">Runs as</span>
-          ${def ? `<label class="choice"><input type="radio" name="wa-acct" value="default" ${pickOwn ? '' : 'checked'}><span>Your default ${esc(r.label || '')} profile · <b>${esc(def)}</b></span><span class="hint">Same login as your other ${esc(r.label || '')} work.</span></label>` : ''}
+          <span class="hint">${esc(r.label || '')} signs in via Google OAuth once for this computer, shared by every ${esc(r.label || '')} workspace${def ? `: <b>${esc(def)}</b>${r.plan ? ` (${esc(r.plan)})` : ''}` : ''}. Each run waits for your OK before it starts.</span>
+          <input class="input" id="wa-email" type="email" placeholder="the Google account’s email" value="${esc(mine || def || '')}"></div>` : profileOnly ? `<div class="field"><span class="label">Runs as</span>
+          <span class="hint">Its own ${esc(r.label || '')} OAuth profile folder, made for it so its logins never mix with another agent’s${r.defaultAccount ? ` · default signed in as <b>${esc(r.defaultAccount)}</b>${r.plan ? ` (${esc(r.plan)})` : ''}` : ''}. You sign in via OAuth once (a sign-in window opens after you set it up) and Orchy detects your plan/tier automatically.</span>
+          <input class="input" id="wa-email" type="text" maxlength="80" placeholder="Account email or provider (optional, e.g. you@example.com)" value="${esc(mine)}"></div>` : `<div class="field"><span class="label">Runs as</span>
+          ${def ? `<label class="choice"><input type="radio" name="wa-acct" value="default" ${pickOwn ? '' : 'checked'}><span>Your default ${esc(r.label || '')} profile · <b>${esc(def)}</b>${r.plan ? ` <span class="chip">${esc(r.plan)}</span>` : ''}</span><span class="hint">Same login as your other ${esc(r.label || '')} work.</span></label>` : ''}
           <label class="choice"><input type="radio" name="wa-acct" value="own" ${pickOwn ? 'checked' : ''}><span>Its own account</span><span class="hint">Gets its own profile folder so it never mixes with your others. You log it in once.</span></label>
           <input class="input" id="wa-email" type="email" placeholder="the account’s email" value="${esc(mine && mine !== def ? mine : '')}" ${pickOwn ? '' : 'hidden'}></div>`}
         ${edit ? '' : `<label style="display:grid;grid-template-columns:auto 1fr;gap:var(--s3);align-items:center"><span class="switch"><input type="checkbox" role="switch" id="wa-signin" checked><span class="track"><span class="knob"></span></span></span><span>Open the sign-in windows it needs right away (One, and its own account if it has one)</span></label>`}
@@ -490,7 +494,7 @@ export async function openAddWorkspace({ edit = null, from } = {}) {
     name?.addEventListener('input', () => { folder.textContent = `Becomes the folder ${name.value.trim() || '…'}`; });
     body.querySelectorAll('[data-engine]').forEach(b => b.addEventListener('click', () => { keep(); engine = b.dataset.engine; render(); restore(); }));
     body.querySelectorAll('[name="wa-acct"]').forEach(r => r.addEventListener('change', () => { body.querySelector('#wa-email').hidden = body.querySelector('[name="wa-acct"]:checked').value !== 'own'; }));
-    body.querySelector('[data-a="cancel"]').addEventListener('click', () => w.close());
+    body.querySelector('[data-a="cancel"]').addEventListener('click', () => w.back());
     body.querySelector('[data-a="go"]').addEventListener('click', submit);
   };
   let kept = {};
@@ -510,7 +514,7 @@ export async function openAddWorkspace({ edit = null, from } = {}) {
       if (edit) {
         await api(`/api/workspaces/${encodeURIComponent(edit.id)}`, { method: 'PATCH', body: payload });
         ctx.toast(`${edit.name} saved.`);
-        w.close();
+        w.back();
         return;
       }
       const signin = body.querySelector('#wa-signin').checked;
@@ -553,7 +557,7 @@ function openRetire(ws, { purge = false, from } = {}) {
   const input = body.querySelector('input');
   const go = body.querySelector('[data-a="go"]');
   input.addEventListener('input', () => { go.disabled = input.value.trim().toLowerCase() !== ws.name.toLowerCase() || (!!live && !purge); });
-  body.querySelector('[data-a="cancel"]').addEventListener('click', () => w.close());
+  body.querySelector('[data-a="cancel"]').addEventListener('click', () => w.back());
   go.addEventListener('click', async () => {
     go.disabled = true;
     try {
@@ -675,48 +679,6 @@ export async function openLogs({ from, tab: initialTab } = {}) {
       const lb = b.nextElementSibling; lb.hidden = !lb.hidden; b.setAttribute('aria-expanded', String(!lb.hidden));
     }));
     body.querySelectorAll('[data-run]').forEach(b => b.addEventListener('click', () => ctx.openRun(b.dataset.run)));
-  };
-  w.refresh();
-  return w;
-}
-
-// ── Impact ── (what the agents did, against what people would have cost: estimates, assumptions shown)
-export async function openImpact({ from } = {}) {
-  const existing = getWindow('impact');
-  if (existing) { existing.restore(); existing.refresh?.(); return existing; }
-  const body = createEl(`<div style="display:grid;gap:var(--s3)"></div>`);
-  const w = openWindow({ id: 'impact', title: 'Impact · agents vs a team of people', size: 'wide', body, from });
-  let period = 'month', rate = 45, speedup = 6;
-  const money = n => `$${Math.round(n).toLocaleString('en-US')}`;
-  w.refresh = async () => {
-    let d;
-    try { d = await api(`/api/impact?period=${period}&rate=${rate}&speedup=${speedup}`); } catch (e) { body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
-    const t = d.totals;
-    // Per role: what a VA would cost against what the agent cost (the AI Agent Builder isn't counted, workspaces show as Business A, B, C)
-    const top = Math.max(1, ...d.agents.map(a => a.humanCost), ...d.agents.map(a => a.apiCost));
-    const bar = (label, v, cls) => `<div style="display:grid;grid-template-columns:8.5em 1fr 5em;gap:8px;align-items:center"><span class="hint">${label}</span><span class="${cls}" style="display:block;height:12px;width:${v ? Math.max(v / top * 100, 1) : 0}%;background:${cls === 'dith' ? 'repeating-linear-gradient(45deg,var(--ink) 0 2px,transparent 2px 4px)' : 'var(--ink)'};border:2px solid var(--ink)"></span><b class="data">${money(v)}</b></div>`;
-    const vsVa = list => list.map(a => `<div style="display:grid;gap:4px"><div><b>${esc(a.name)}</b> <span class="hint">${esc(wsName(a.ws))} · ${a.done}/${a.tasks} done · ${a.humanHours} h of work</span></div>${bar('A VA would cost', a.humanCost, 'dith')}${bar('The agent cost', a.apiCost, 'solid')}</div>`).join('');
-    body.innerHTML = `
-      <div class="btnrow" style="justify-content:space-between">
-        <div class="seg" role="group" aria-label="Period">${[['week', 'Last 7 days'], ['month', 'Last 30 days'], ['all', 'Everything']].map(([v, l]) => `<button type="button" data-p="${v}" aria-pressed="${period === v}">${l}</button>`).join('')}</div>
-        <span class="hint">${t.tasks} finished task${t.tasks === 1 ? '' : 's'}: ${t.done} done, ${t.partial} partly, ${t.notDone} not done</span>
-      </div>
-      ${t.tasks ? `<div class="ctx"><b>${money(t.saved)} saved</b>: the agents did about ${t.humanHours} hours of work (${t.fteWeeks} full-time weeks) that would cost ${money(t.humanCost)} in people, for ${money(t.apiCost)} in Claude use${t.times ? ` (${t.times}x cheaper)` : ''}. They worked ${t.agentHours} hours by the clock.</div>` : '<div class="empty"><strong>Nothing finished in this period</strong>Pick a longer one.</div>'}
-      ${t.tasks ? `<div class="field"><span class="label">Each agent vs hiring a VA</span><div class="list" style="gap:var(--s3)">${vsVa(d.agents)}</div></div>` : ''}
-      <div class="btnrow">
-        <button type="button" class="btn sm" data-month title="Opens a page you can keep or print. Orchy writes last month's on the 1st.">Monthly report</button>
-        <label class="hint">A person costs $/hour <input type="number" min="1" max="1000" value="${rate}" data-rate style="width:5em"></label>
-        <label class="hint">People take x as long as the agent <input type="number" min="1" max="100" value="${speedup}" data-speed style="width:4em"></label>
-      </div>
-      <ul class="hint">${d.assumptions.map(a => `<li>${esc(a)}</li>`).join('')}</ul>`;
-    body.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { period = b.dataset.p; w.refresh(); }));
-    body.querySelector('[data-month]').addEventListener('click', async e => {
-      e.target.disabled = true;
-      try { const r = await api('/api/reports', { method: 'POST', body: { month: new Date().toLocaleDateString('en-CA', { timeZone: ctx.state.timezone || undefined }).slice(0, 7), rate, speedup } }); window.open(r.url, '_blank'); } catch (err) { ctx.toast(err.message, 'warn'); }
-      e.target.disabled = false;
-    });
-    body.querySelector('[data-rate]').addEventListener('change', e => { rate = Number(e.target.value) || 45; w.refresh(); });
-    body.querySelector('[data-speed]').addEventListener('change', e => { speedup = Number(e.target.value) || 6; w.refresh(); });
   };
   w.refresh();
   return w;
@@ -994,6 +956,58 @@ export async function openSettings({ from } = {}) {
       <div class="btnrow"><input class="input data" id="k-${k}" type="password" autocomplete="off" placeholder="${set ? 'Paste a new key to replace it' : 'Paste key'}" style="flex:1;min-width:200px"><button class="btn" data-save="${k}">Save</button></div>
       <span class="hint">${hint}</span></div>`;
   };
+  const toggle = (attr, on, title, hint) => `<label style="display:grid;grid-template-columns:auto 1fr;gap:var(--s3);align-items:center"><span class="switch"><input type="checkbox" role="switch" ${attr} ${on ? 'checked' : ''}><span class="track"><span class="knob"></span></span></span><span><b>${title}</b><br><span class="hint">${hint}</span></span></label>`;
+  const JEV_OPTS = [
+    ['typesafe', 'TypeSafe', 'TYPESAFE_API_KEY', 'Stored in .env, never shown again.'],
+    ['openrouter', 'OpenRouter', 'OPENROUTER_API_KEY', 'openrouter.ai → Keys. Jev runs as ~typesafe/jev-latest.'],
+    ['vercel', 'Vercel AI Gateway', 'AI_GATEWAY_API_KEY', 'vercel.com → AI Gateway → API keys. Jev runs as typesafe-ai/jev.'],
+    ['opencode', 'OpenCode Zen', 'OPENCODE_API_KEY', 'opencode.ai → Zen → API keys. Jev runs as jev-1.13. (OpenCode’s free tier only works inside the OpenCode app.)'],
+  ];
+  const VOICE_OPTS = [
+    ['elevenlabs', 'ElevenLabs', 'Natural voices, and live calls with your agents.'],
+    ['deepgram', 'Deepgram', 'Orchy reads its replies aloud (Aura). Calls with your agents need ElevenLabs.'],
+  ];
+  let jevOpen = false; // "Use Jev?" switched on, no provider picked yet
+  const jevSection = () => {
+    const env = ctx.state.envStatus || {};
+    const pick = String(env.JEV_PROVIDER || '').toLowerCase();
+    const mode = ctx.state.jev?.mode;
+    // the provider in use: the one picked, else the one whose key Jev found first
+    const provider = JEV_OPTS.find(o => o[0] === pick)?.[0] || (pick !== 'off' && JEV_OPTS.find(o => o[0] === mode)?.[0]) || '';
+    const on = pick !== 'off' && (!!provider || !!ctx.state.jev?.label || jevOpen);
+    const opt = JEV_OPTS.find(o => o[0] === provider);
+    return `<section style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">Routing · TypeSafe Jev</h3>
+        ${toggle('data-usejev', on, 'Use Jev?', 'Jev reads each message and picks the workspace, the agent and the model. Off: Orchy matches each message by its words, and the agent picks its own tools.')}
+        ${on ? `<div class="btnrow"><span class="label">Provider</span><select class="select" data-jevprovider aria-label="Jev provider" style="width:auto">${provider ? '' : '<option value="" selected disabled>Pick a provider…</option>'}${JEV_OPTS.map(([v, l]) => `<option value="${v}" ${provider === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+        <p class="hint" style="margin:0">${ctx.state.jev?.label ? `Jev is reached through ${esc(ctx.state.jev.label)}.${['openrouter', 'opencode'].includes(mode) ? ' This is a chat model answering Jev’s questions, an approximation of the native Jev.' : ''}` : opt ? `Paste your ${opt[1]} key to switch Jev on. Until then, routing uses keyword matching.` : 'Pick the provider you have a key for.'}</p>
+        ${opt ? keyRow(opt[2], `${opt[1]} API key`, opt[3]) : ''}
+        ${ctx.state.jev?.label ? `${[['liveJev', 'Jev reads as you type', 'Its pick shows under the chat box before you send. Drafts reach Jev too, even ones you delete; they’re never saved.'],
+           ['liveStart', 'Start right away when Jev’s sure', 'You saw the pick, so Enter starts the task with no countdown (Stop is on the run). Off: the card counts down as usual.']].map(([k, l, h]) => toggle(`data-set="${k}"`, ctx.state.settings?.[k] !== false, l, h)).join('')}
+        <div class="btnrow"><span class="label">Jev reads</span>
+          <label class="hint">per message <input class="input data" type="number" min="0" max="200" step="1" data-livecap="liveReadsPerMessage" value="${esc(ctx.state.liveJev?.perMessage ?? 12)}" style="width:80px;margin-left:4px"></label>
+          <label class="hint">per day <input class="input data" type="number" min="0" max="100000" step="50" data-livecap="liveReadsPerDay" value="${esc(ctx.state.liveJev?.perDay ?? 1000)}" style="width:96px;margin-left:4px"></label></div>
+        <p class="hint" style="margin:0">0 means no limit. Each read is about 5k Jev tokens; ${esc(ctx.state.liveJev?.today ?? 0)} so far today.</p>` : ''}` : ''}
+      </section>`;
+  };
+  const voiceSection = v => {
+    const env = ctx.state.envStatus || {};
+    const both = !v.provider && env.ELEVENLABS_API_KEY && env.DEEPGRAM_API_KEY;
+    // no service picked yet: the one whose key is set, else ask
+    const provider = v.provider || (both ? '' : env.ELEVENLABS_API_KEY ? 'elevenlabs' : env.DEEPGRAM_API_KEY ? 'deepgram' : '');
+    const eleven = provider === 'elevenlabs' || both, deepgram = provider === 'deepgram' || both;
+    return `<section style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">Voice</h3>
+        ${toggle('data-voiceenabled', v.enabled !== false, 'Voice', 'Orchy speaks, and you can call Orchy and your agents. Off: chat only, and nothing is sent to ElevenLabs or Deepgram.')}
+        ${v.enabled === false ? '' : `<div data-voice style="display:grid;gap:var(--s3)">
+        <div class="btnrow"><span class="label">Service</span><select class="select" data-voiceprovider aria-label="Voice service" style="width:auto">${provider || both ? '' : '<option value="" selected disabled>Pick a service…</option>'}${both ? '<option value="" selected>ElevenLabs, Deepgram as backup</option>' : ''}${VOICE_OPTS.map(([k, l]) => `<option value="${k}" ${provider === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+        <p class="hint" style="margin:0">${provider || both ? `Speaking: <b>${{ elevenlabs: 'ElevenLabs', deepgram: 'Deepgram Aura' }[v.tts] || 'your browser’s voice, until the key is saved'}</b>. ${esc(VOICE_OPTS.find(o => o[0] === provider)?.[2] || '')}` : 'Pick the service you have a key for. Until then Orchy uses your browser’s voice.'}</p>
+        ${v.ttsIssue ? `<div class="ctx"><b>Voice:</b> ${esc(v.ttsIssue)}</div>` : ''}
+        ${eleven ? keyRow('ELEVENLABS_API_KEY', 'ElevenLabs API key', 'Orchy’s voice, and calls. elevenlabs.io → Settings → API keys.') : ''}
+        ${deepgram ? keyRow('DEEPGRAM_API_KEY', 'Deepgram API key', `${both ? 'Orchy’s backup voice (Aura). ' : ''}console.deepgram.com → API keys.`) : ''}
+        ${eleven ? `<div class="field"><label for="voice-sel">ElevenLabs voice</label><div class="btnrow"><select class="select" id="voice-sel" style="flex:1;min-width:200px"><option value="${esc(v.voiceId)}">Current: ${esc(v.voiceId)}</option></select><button class="btn" data-act="test-voice">${icon('speaker')}Test</button></div></div>`
+          : provider ? `<div class="btnrow"><button class="btn" data-act="test-voice">${icon('speaker')}Test</button></div>` : ''}
+        </div>`}
+      </section>`;
+  };
   const draw = () => {
     const s = ctx.state.settings || {};
     const v = voiceConfig();
@@ -1037,31 +1051,8 @@ export async function openSettings({ from } = {}) {
           ${e.ok || !e.fix ? '' : `<span class="btnrow"><button class="btn sm" data-loginws="${esc(x.id)}" data-rt="${esc(e.runtime)}">Log in</button><button class="btn sm" data-copycmd="${esc(e.fix)}">Copy command</button></span>`}`).join('')}</div>`).join('')}</div>
         <div class="btnrow"><button class="btn sm" data-act="accounts">${icon('refresh')}Re-check accounts</button></div>
       </section>
-      <section style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">Routing · TypeSafe Jev</h3>
-        <p class="hint" style="margin:0">${ctx.state.jev?.label ? `Jev is reached through ${esc(ctx.state.jev.label)}.${['openrouter', 'opencode'].includes(ctx.state.jev.mode) ? ' This is a chat model answering Jev’s questions, an approximation of the native Jev.' : ''}` : 'Jev is off. Until a provider is set, routing uses keyword matching.'}</p>
-        <div class="btnrow"><span class="label">Provider</span><select class="select" data-jevprovider aria-label="Jev provider" style="width:auto">${[['', 'Automatic (the first key set)'], ['typesafe', 'TypeSafe'], ['openrouter', 'OpenRouter'], ['vercel', 'Vercel AI Gateway'], ['opencode', 'OpenCode Zen'], ['off', 'Off (keyword routing)']].map(([v, l]) => `<option value="${v}" ${String(ctx.state.envStatus?.JEV_PROVIDER || '').toLowerCase() === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
-        ${keyRow('TYPESAFE_API_KEY', 'TypeSafe API key', 'Stored in .env, never shown again.')}
-        ${keyRow('OPENROUTER_API_KEY', 'OpenRouter API key', 'openrouter.ai → Keys. Jev runs as ~typesafe/jev-latest.')}
-        ${keyRow('AI_GATEWAY_API_KEY', 'Vercel AI Gateway API key', 'vercel.com → AI Gateway → API keys. Jev runs as typesafe-ai/jev.')}
-        ${keyRow('OPENCODE_API_KEY', 'OpenCode Zen API key', 'opencode.ai → Zen → API keys. Jev runs as jev-1.13. (OpenCode’s free tier only works inside the OpenCode app.)')}
-        ${[['liveJev', 'Jev reads as you type', 'Its pick shows under the chat box before you send. Drafts reach Jev too, even ones you delete; they’re never saved.'],
-           ['liveStart', 'Start right away when Jev’s sure', 'You saw the pick, so Enter starts the task with no countdown (Stop is on the run). Off: the card counts down as usual.']].map(([k, l, h]) => `
-          <label style="display:grid;grid-template-columns:auto 1fr;gap:var(--s3);align-items:center"><span class="switch"><input type="checkbox" role="switch" data-set="${k}" ${s[k] !== false ? 'checked' : ''}><span class="track"><span class="knob"></span></span></span><span><b>${l}</b><br><span class="hint">${h}</span></span></label>`).join('')}
-        <div class="btnrow"><span class="label">Jev reads</span>
-          <label class="hint">per message <input class="input data" type="number" min="0" max="200" step="1" data-livecap="liveReadsPerMessage" value="${esc(ctx.state.liveJev?.perMessage ?? 12)}" style="width:80px;margin-left:4px"></label>
-          <label class="hint">per day <input class="input data" type="number" min="0" max="100000" step="50" data-livecap="liveReadsPerDay" value="${esc(ctx.state.liveJev?.perDay ?? 1000)}" style="width:96px;margin-left:4px"></label></div>
-        <p class="hint" style="margin:0">0 means no limit. Each read is about 5k Jev tokens; ${esc(ctx.state.liveJev?.today ?? 0)} so far today.</p>
-      </section>
-      <section style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">Voice</h3>
-        <label style="display:grid;grid-template-columns:auto 1fr;gap:var(--s3);align-items:center"><span class="switch"><input type="checkbox" role="switch" data-voiceenabled ${v.enabled !== false ? 'checked' : ''}><span class="track"><span class="knob"></span></span></span><span><b>Voice</b><br><span class="hint">Orchy speaks, and you can call Orchy and your agents. Off: chat only, and nothing is sent to ElevenLabs or Deepgram.</span></span></label>
-        <div data-voice style="display:grid;gap:var(--s3)">
-        <p class="hint" style="margin:0">Speaking: <b>${{ elevenlabs: 'ElevenLabs', deepgram: 'Deepgram Aura (backup voice)' }[v.tts] || 'browser (fallback)'}</b></p>
-        ${v.ttsIssue ? `<div class="ctx"><b>Voice:</b> ${esc(v.ttsIssue)}</div>` : ''}
-        ${keyRow('DEEPGRAM_API_KEY', 'Deepgram API key', 'Orchy’s backup voice (Aura). console.deepgram.com → API keys.')}
-        ${keyRow('ELEVENLABS_API_KEY', 'ElevenLabs API key', 'Orchy’s voice, and calls. elevenlabs.io → Settings → API keys.')}
-        <div class="field"><label for="voice-sel">ElevenLabs voice</label><div class="btnrow"><select class="select" id="voice-sel" style="flex:1;min-width:200px"><option value="${esc(v.voiceId)}">Current: ${esc(v.voiceId)}</option></select><button class="btn" data-act="test-voice">${icon('speaker')}Test</button></div></div>
-        </div>
-      </section>
+      ${jevSection()}
+      ${voiceSection(v)}
       <section style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">Approvals</h3>
         <div class="seg" role="group" aria-label="When agents ask you">${[['decisions', 'Only decisions'], ['all', 'Every change']].map(([v, l]) => `<button type="button" data-approvals="${v}" aria-pressed="${(s.approvals || 'decisions') === v}">${l}</button>`).join('')}</div>
         <p class="hint" style="margin:0">${(s.approvals || 'decisions') === 'all'
@@ -1154,6 +1145,24 @@ export async function openSettings({ from } = {}) {
         w.render();
       } catch (err) { e.target.checked = !e.target.checked; ctx.toast(err.message, 'warn'); }
     });
+    body.querySelector('[data-voiceprovider]')?.addEventListener('change', async e => {
+      try {
+        await api('/api/settings/env', { method: 'POST', body: { key: 'VOICE_PROVIDER', value: e.target.value } });
+        setVoiceConfig(await api('/api/voice/config'));
+        await ctx.reload();
+        w.render();
+      } catch (err) { ctx.toast(err.message, 'warn'); }
+    });
+    // on: show the providers (an earlier "off" is cleared, so a key already saved takes over); off: keyword routing
+    body.querySelector('[data-usejev]')?.addEventListener('change', async e => {
+      jevOpen = e.target.checked;
+      try {
+        await api('/api/settings/env', { method: 'POST', body: { key: 'JEV_PROVIDER', value: e.target.checked ? '' : 'off' } });
+        await ctx.reload();
+        ctx.toast(e.target.checked ? 'Pick Jev’s provider below.' : 'Jev is off: routing uses keyword matching.');
+        w.render();
+      } catch (err) { e.target.checked = !e.target.checked; jevOpen = e.target.checked; ctx.toast(err.message, 'warn'); }
+    });
     body.querySelector('[data-jevprovider]')?.addEventListener('change', async e => {
       try {
         await api('/api/settings/env', { method: 'POST', body: { key: 'JEV_PROVIDER', value: e.target.value } });
@@ -1163,18 +1172,18 @@ export async function openSettings({ from } = {}) {
       } catch (err) { ctx.toast(err.message, 'warn'); }
     });
     const sel = body.querySelector('#voice-sel');
-    api('/api/voice/voices').then(vs => {
+    if (sel) api('/api/voice/voices').then(vs => {
       if (!vs.length) return;
       // the voice in use may be a premade one that isn't in the account's library (Rachel, the default)
       const current = vs.some(x => x.id === v.voiceId) ? '' : `<option value="${esc(v.voiceId)}" selected>${v.voiceId === '21m00Tcm4TlvDq8ikWAM' ? 'Rachel (default)' : `Current: ${esc(v.voiceId)}`}</option>`;
       sel.innerHTML = current + vs.map(x => `<option value="${esc(x.id)}" ${x.id === v.voiceId ? 'selected' : ''}>${esc(x.name)} · ${esc(x.category || '')}</option>`).join('');
     }).catch(() => {});
-    sel.addEventListener('change', async () => {
+    sel?.addEventListener('change', async () => {
       const was = voiceConfig().voiceId;
       try { await api('/api/settings/env', { method: 'POST', body: { key: 'ELEVENLABS_VOICE_ID', value: sel.value } }); setVoiceConfig({ voiceId: sel.value }); }
       catch (e) { sel.value = was; ctx.toast(e.message, 'warn'); }
     });
-    body.querySelector('[data-act="test-voice"]').addEventListener('click', () => speak(`Hi ${ownerName()}, Orchy here. Ready when you are.`));
+    body.querySelector('[data-act="test-voice"]')?.addEventListener('click', () => speak(`Hi ${ownerName()}, Orchy here. Ready when you are.`));
     // the server forgets a rule by its place in the list: find where the one shown is now (the list may have changed), then redraw from a fresh list
     const ruleId = r => [r.workspace, r.agent, r.ruleKey, r.at].join('|');
     api('/api/rules').then(rules => {

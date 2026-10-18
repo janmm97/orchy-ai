@@ -136,7 +136,13 @@ export function tierModel(ws, i, runtime = ws.runtime) { const m = modelsFor(ws,
 export function modelFor(ws, model, runtime = ws.runtime) {
   const mine = modelsFor(ws, runtime);
   if (model && mine.includes(model)) return model;
-  if (mine.every(m => m === 'default')) return /^[^/\s]+\/\S+$/.test(String(model || '')) ? model : 'default'; // OpenCode: provider/model or nothing
+  if (mine.every(m => m === 'default')) {
+    const s = String(model || '').trim();
+    if (/^[^/\s]+\/\S+$/.test(s)) return s; // OpenCode / Hermes provider/model
+    const isOtherTier = Object.values(runtimes()).some(rt => rt.models.includes(s));
+    if (!isOtherTier && engine(runtime)?.openModels && /^[\w][\w.:-]{1,79}$/.test(s)) return s;
+    return 'default';
+  }
   for (const rt of Object.values(runtimes())) {
     const i = rt.models.indexOf(model);
     if (i >= 0) return tierModel(ws, i, runtime);
@@ -171,9 +177,9 @@ export function profileClash(ws, runtime = ws.runtime) {
 
 /**
  * Hard guard: never run a workspace under the wrong account (checked for the engine the run uses).
- * 'email' engines (Claude Code, Codex): the profile must be logged in as the workspace's email.
- * 'profile' engines (API-key / provider logins, no email): the workspace needs a profile folder of its own that no
- * other workspace on that engine shares, and that profile must be logged in to a provider (reported as `actual`).
+ * 'email' engines (Claude Code, Codex, Antigravity): the profile must be logged in as the workspace's email.
+ * 'profile' engines (Hermes, OpenCode): the workspace has its own profile folder (and OAuth login), reporting
+ * its provider(s), detected plan/tier, and tier-scoped `availableModels`.
  */
 export async function accountCheck(ws, { force = false, runtime = ws.runtime } = {}) {
   const e = engine(runtime);
@@ -193,8 +199,16 @@ export async function accountCheck(ws, { force = false, runtime = ws.runtime } =
     const status = problem ? { loggedIn: false } : await e.account(a.profileDir, { force });
     const ok = !problem && !!status.loggedIn;
     return {
-      ...base, ok, expected: a.email || (a.profileDir ? configDir : null), actual: status.label || null, loggedIn: !!status.loggedIn, configDir,
-      subscription: status.subscription || null, sandbox: status.sandbox ?? null,
+      ...base, ok, expected: a.email || (a.profileDir ? configDir : null), actual: status.label || null,
+      email: status.email || a.email || null,
+      loggedIn: !!status.loggedIn, configDir,
+      subscription: status.subscription || status.plan || null,
+      plan: status.plan || status.subscription || null,
+      tier: status.tier || null,
+      providers: status.providers || [],
+      availableModels: Array.isArray(status.models) && status.models.length ? status.models : null,
+      configuredModel: status.configuredModel || null,
+      sandbox: status.sandbox ?? null,
       error: problem || status.error || null, profileProblem: problem,
       fix: ok ? null : loginHint(ws, e.id), fixAlt: ok ? null : loginAlt(ws, e.id),
     };
@@ -210,6 +224,9 @@ export async function accountCheck(ws, { force = false, runtime = ws.runtime } =
     loggedIn: !!status.loggedIn,
     configDir,
     subscription: status.subscriptionType || status.subscription || status.plan || null,
+    plan: status.plan || status.subscriptionType || status.subscription || null,
+    tier: status.tier || null,
+    availableModels: Array.isArray(status.models) && status.models.length ? status.models : null,
     sandbox: status.sandbox ?? null,
     error: status.error || (a.email ? null : ws.builtin ? 'Orchy has no Claude Code account set for fixing himself (orchy.claudeAccount in config.json)' : `${ws.name} has no ${runtimeLabel(e.id)} account set (${e.fields.account} in config.json)`),
     fix: ok ? null : loginHint(ws, e.id),

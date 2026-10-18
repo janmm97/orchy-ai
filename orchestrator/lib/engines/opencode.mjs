@@ -8,17 +8,22 @@ import { findBinary, probeVersion } from '../claude.mjs';
 import { profilePath, psq, sq } from './shared.mjs';
 import { buildOpenCodeConfig } from './opencode-config.mjs';
 import { launchOpenCodeRun } from './opencode-run.mjs';
+import { inspectOpenCodeAccount } from './tier-catalog.mjs';
 
 let binCache = null;
 function resolveBin() {
   const explicit = env('OPENCODE_CLI_PATH');
   if (explicit && fs.existsSync(explicit)) return explicit;
-  // the install script puts it in ~/.opencode/bin
-  return findBinary('opencode', [path.join(os.homedir(), '.opencode', 'bin')]);
+  const extra = [path.join(os.homedir(), '.opencode', 'bin')];
+  if (process.platform === 'win32' && process.env.APPDATA) {
+    extra.push(path.join(process.env.APPDATA, 'npm'));
+  }
+  return findBinary('opencode', extra);
 }
 const bin = () => { if (!binCache || !fs.existsSync(binCache)) binCache = resolveBin(); return binCache; };
 
 let probe = null;
+const acctCache = new Map();
 
 /** Where a profile keeps its pieces: credentials in data/opencode/auth.json (XDG_DATA_HOME), config in config/. */
 export function profileLayout(dir) {
@@ -29,12 +34,12 @@ export function profileLayout(dir) {
 export default {
   id: 'opencode',
   label: 'OpenCode',
-  // "default" = no model passed: OpenCode uses the provider/model its own config picks (or "provider/model" if the owner types one)
+  // "default" = no model passed: OpenCode uses the provider/model its own config picks (or "provider/model" if the owner selects one)
   models: ['default', 'default', 'default'],
-  blurb: 'Open-source coding agent that works with many model providers. Needs its own provider login; every ask goes through your approvals.',
+  blurb: 'Open-source coding agent (`opencode.ai`). Sign in with OAuth (`opencode auth login`); Orchy detects your plan/tier and shows only the models in your tier.',
   fields: { account: 'opencodeAccount', profile: 'opencodeProfile' },
-  // API-key / provider logins, no email: a workspace needs its own profile folder (never shared), `account().label` names the providers
   accountModel: 'profile',
+  openModels: true,
   instructionFile: 'AGENTS.md',
   defaultProfileLabel: '(its own profile folder)',
   install: { cmd: 'curl -fsSL https://opencode.ai/v2/install | bash', shellNote: true, optional: true, note: 'Optional: an open-source agent harness.' },
@@ -53,15 +58,19 @@ export default {
     return probe.v;
   },
   available: () => !!bin(),
-  /** Which providers this profile is logged in to (reads its auth.json; `opencode auth list` shows the same). */
-  async account(profileDir) {
-    if (!profileDir) return { loggedIn: false, email: null, label: null, providers: [] };
-    let providers = [];
-    try {
-      const j = JSON.parse(fs.readFileSync(profileLayout(profileDir).auth, 'utf8'));
-      providers = Object.keys(j || {}).filter(k => j[k]);
-    } catch {}
-    return { loggedIn: providers.length > 0, email: null, label: providers.join(', ') || null, providers, subscription: null };
+  /** Which OAuth provider(s) and plan/tier this profile is logged in to, plus its tier-filtered model list. */
+  async account(profileDir, { force = false, maxAge = 30_000 } = {}) {
+    const key = profileDir ? profilePath(profileDir) : '__default__';
+    const hit = acctCache.get(key);
+    if (!force && hit && Date.now() - hit.at < maxAge) return hit.v;
+    const authPath = profileDir ? profileLayout(profileDir).auth : null;
+    const v = await inspectOpenCodeAccount(profileDir ? key : null, {
+      authPath,
+      binPath: bin(),
+      profileEnv: profileDir ? this.profileEnv(profileDir) : {},
+    });
+    acctCache.set(key, { at: Date.now(), v });
+    return v;
   },
   profileEnv(profileDir) {
     if (!profileDir) return {};
@@ -69,7 +78,7 @@ export default {
     return { XDG_DATA_HOME: l.data, XDG_STATE_HOME: l.state, XDG_CONFIG_HOME: l.xdgConfig, OPENCODE_CONFIG_DIR: l.config };
   },
   loginCommand: (a, { win }) => (win ? `& ${psq(bin() || 'opencode')} auth login` : `${sq(bin() || 'opencode')} auth login`),
-  loginAlt: () => 'Pick the provider in the terminal prompt, sign in, then check it with `opencode auth list` (run with the same profile).',
+  loginAlt: () => 'Select your provider (OpenCode Zen/Go, Anthropic Claude Pro/Max, OpenAI ChatGPT Plus/Pro, or GitHub Copilot) in the terminal prompt to sign in via OAuth, then check it with `opencode auth list`.',
   mcpConfig: ({ servers, allowed, bridge }) => buildOpenCodeConfig({ servers, allowed, bridge }),
   protocolNotes: ({ ownerName }) => `
 ## Working on OpenCode

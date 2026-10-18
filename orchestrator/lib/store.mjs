@@ -45,9 +45,19 @@ export function save() {
 }
 export function flush() {
   clearTimeout(timer);
+  const payload = JSON.stringify(state, null, 2);
   const tmp = STATE_PATH + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
-  fs.renameSync(tmp, STATE_PATH);
+  try {
+    fs.writeFileSync(tmp, payload);
+    fs.renameSync(tmp, STATE_PATH);
+  } catch (e) {
+    if (e && (e.code === 'EPERM' || e.code === 'EBUSY' || e.code === 'EACCES')) {
+      try { fs.writeFileSync(STATE_PATH, payload); } catch {}
+      try { fs.unlinkSync(tmp); } catch {}
+    } else {
+      throw e;
+    }
+  }
 }
 
 export function db() { return state; }
