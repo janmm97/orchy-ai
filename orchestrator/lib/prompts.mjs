@@ -7,7 +7,8 @@ import { engine } from './engines/index.mjs';
 import { db } from './store.mjs';
 import { DECISIONS } from './policy.mjs';
 import { nameOf, teamNames } from './voiceagents.mjs';
-import { teamFor, huddlePartners, huddleInvitees, MAX_RUN_HUDDLES, MAX_HUDDLE_AGENTS } from './delegation.mjs';
+import { teamFor, huddlePartners, huddleInvitees, MAX_RUN_HUDDLES } from './delegation.mjs';
+import { rulesText } from './rules.mjs';
 import { clientById } from './clients.mjs';
 
 /** The rules every agent run gets, whatever runs it. */
@@ -68,7 +69,7 @@ ${ownerName()} runs Orchy, their AI agent orchestrator, from its dashboard. Some
 
 ## Fix it
 - The smallest change that fixes the cause, not the symptom, written like the code around it (its naming, comment style, plain-English copy). No new dependencies unless ${ownerName()} agrees.
-- Check it: \`node --check <file>\` for every file you change, the test scripts that cover the area (\`node orchestrator/scripts/test-*.mjs\`: policy, routing, jev-routing, livejev, actionplan, huddle) and \`npm run check\`. These run without asking. Never pass \`--live\` (it calls real Jev and One).
+- Check it: \`node --check <file>\` for every file you change, the test scripts that cover the area (\`node orchestrator/scripts/test-*.mjs\`: policy, routing, jev-routing, livejev, actionplan, huddle, coach) and \`npm run check\`. These run without asking. Never pass \`--live\` (it calls real Jev and One).
 - Update CLAUDE.md or README.md when you change how something works.
 - Files you make that aren't part of the fix (screenshots, scratch scripts) go in your temp folder, not the Orchy folder.
 
@@ -104,16 +105,34 @@ function huddleSection(ws, run) {
     : builder ? ` ${builder.name} is the AI Agent Builder: changes to agents (your own file included) are theirs to make, so tell them what you need changed.` : '';
   const invitees = h ? huddleInvitees(h) : [];
   const invite = invitees.length ? `
-- **Bring someone in** when the talk needs another of ${ws.name}'s agents (what they know, or a part only they can do): add \`invite\` (\`agent\` slug + \`why\`) to your huddle_reply. They join at once, read everything said so far and speak next. Only when it's really needed, up to ${MAX_HUDDLE_AGENTS} in a huddle. Who can join:
+- **Bring someone in** when the talk needs another of ${ws.name}'s agents (what they know, a part only they can do, or a view nobody here holds): add \`invite\` (\`agent\` slug + \`why\`) to your huddle_reply. They join at once, read everything said so far and speak next. Who can join:
 ${invitees.map(a => `  - ${nameOf(ws.id, a.slug) || a.callName || a.displayName} · ${a.displayName} (\`${a.slug}\`): ${a.isBuilder ? `Creates and updates ${ws.name}'s agents.` : String(a.description || '').replace(/\s+/g, ' ').slice(0, 160)}`).join('\n')}` : '';
+  const me = h?.agents.find(a => a.slug === run.agentSlug);
+  let rules = '';
+  try { rules = rulesText(ws.id).trim(); } catch {}
+  const who = ownerName();
+  const roster = os.length ? `
+Who's in the room, and what each covers (challenge each of them where your role sees further):
+${os.map(o => `- ${o.name} · ${o.role}${o.does ? `: ${o.does}` : ''}`).join('\n')}
+` : '';
   return `
 ## You're in a huddle: talk only
-Orchy put you together with ${others} to work out a task for ${ownerName()}, turn by turn. Orchy passes what each of you says to the ${many ? 'others' : 'other'}; ${ownerName()} reads along and may jump in (shown as **${ownerName()}:**), and Orchy says when someone joins (shown as **Orchy:**).
-- **Talk, don't do.** Reading and looking things up is fine when it helps you answer (files here, \`one\` reads and lookups, the web). Anything that changes something (files, apps, agents, messages) is refused until ${ownerName()} approves your agreement: put it in the plan instead.
-- **End every turn with huddle_reply** (\`mcp__jos__huddle_reply\`). \`message\` is what you say to ${them}: short and concrete (aim for under 150 words). Set \`ready: true\` once you ${many ? 'all' : 'two'} agree on what to do and who does it. Anything only ${ownerName()} can answer (a preference, a decision, a fact you can't look up) goes in \`questions_for_owner\`: don't guess it and don't hold the talk up for it. ${ownerName()} answers when approving.
-- Ask for what you need from ${them}, answer what they ask you, and don't repeat yourselves: if you agree, say so.${invite}
+Orchy put you together with ${others} to work out a task for ${who}, turn by turn. Orchy passes what each of you says to the ${many ? 'others' : 'other'}; ${who} reads along and may jump in (shown as **${who}:**). Orchy says when someone joins, and now and then steps in himself with a challenge or a suggestion (shown as **Orchy:**).
+${roster}
+- **Talk, don't do.** Reading and looking things up is fine when it helps you answer (files here, \`one\` reads and lookups, the web). Anything that changes something (files, apps, agents, messages) is refused until ${who} approves your agreement: put it in the plan instead.
+- **End every turn with huddle_reply** (\`mcp__jos__huddle_reply\`). \`message\` is what you say to ${them}: short and concrete (aim for under 150 words). Anything only ${who} can answer (a preference, a decision, a fact you can't look up) goes in \`questions_for_owner\`: don't guess it and don't hold the talk up for it. ${who} answers when approving. Ask each thing once, only if nobody has asked it yet, and never what the rules below already settle.${rules ? `\n\n${rules}` : ''}
+
+### Challenge each other: ${who} wants a tested plan, not a polite one
+You're here for what you see from your seat${me ? ` as ${me.role}` : ''}, so test every proposal against it. Don't agree just to be agreeable, and don't defer to rank: a Chief's plan gets the same scrutiny as anyone's.
+- **Push back from your role.** In \`challenge\`, name whose idea you're testing and the weakest point you see in it: what's wrong, missing, risky, too costly or too slow, what it would demand from your area that nobody has accounted for, or a better option, with your reason (data you looked up beats opinion). One sharp point beats a list.
+- **Answer challenges aimed at you.** Concede when they're right and say what changes, defend with reasons when they're not, or offer a revised version. Don't just restate your plan.
+- **\`ready: true\` has to be earned.** It only counts once you've challenged something, and a new challenge from anyone reopens the talk: everyone says ready again after it. Set it once the plan has survived your pushback and you all agree on what to do and who does it.
+- **If you really have no objection**, say why from your role, and still add a condition, a risk to watch, or an improvement in \`challenge\`.
+- When you can't settle a point, don't fake agreement: it goes in the agreement as \`dissent\` (who holds what view, and why) and ${who} decides.
+- **Orchy's points are a teammate's.** When Orchy challenges something, answer it before you say ready (a challenge from him reopens the talk too): agree and change course, or push back with your reasons and name Orchy in \`challenge\`. His suggestions you may take or leave. Orchy can't approve anything or hand out work: ${who} still does both.
+- Don't repeat yourselves, and keep it civil: argue the plan, not the agent.${invite}
 - When Orchy asks, write the agreement: what you decided and each agent's part as a complete task.${builderNote}
-- Nothing is built until ${ownerName()} approves. Then each of you does your part in this same conversation.
+- Nothing is built until ${who} approves. Then each of you does your part.
 - **note** (\`mcp__jos__note\`) is there for a long lookup; you have no other jos tools in a huddle.
 `;
 }
@@ -151,7 +170,7 @@ function huddleStartSection(ws, run) {
   if (!partners.length) return '';
   return `
 ## Huddles: think it through with a colleague first
-As one of ${ws.name}'s C-suite, you can start a **huddle** (\`mcp__jos__huddle\`): you and one other agent talk something through, turn by turn, and you write up what you agree. Who you can huddle with:
+As one of ${ws.name}'s C-suite, you can start a **huddle** (\`mcp__jos__huddle\`): you and one or more other agents (\`agents\`, as many as the decision needs) talk something through, turn by turn, challenging each other's proposals from your roles, and you write up what you agree. Who you can huddle with:
 ${partners.map(a => `- ${nameOf(ws.id, a.slug) || a.callName ? `${nameOf(ws.id, a.slug) || a.callName} · ` : ''}${a.displayName} (\`${a.slug}\`)${a.isBuilder ? ': creates and updates agents' : ''}`).join('\n')}
 - Huddle when you need their thinking before you decide (a plan, a trade-off, what they need from you); hand off work with delegate instead.
 - Give a complete topic: the goal, the facts from your task (names, links, IDs) and the decision to reach. They can't see your conversation.
