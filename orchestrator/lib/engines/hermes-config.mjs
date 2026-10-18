@@ -27,13 +27,18 @@ export const orchyHookEntry = command => ({ command, timeout: HERMES_HOOK_TIMEOU
 
 /**
  * The profile's existing config.yaml text (or '') → the text Orchy writes: its keys kept, the approvals forced and,
- * given `hookCommand`, Orchy's hook as the only pre_tool_call hook.
+ * given `hookCommand`, Orchy's hook as the only pre_tool_call hook. `fallbackModel` ({ model, provider? }, the
+ * computer's choice) fills in a profile that has no model of its own; one it has is never replaced.
  */
-export function buildHermesConfigYaml(existingText = '', { hookCommand = null } = {}) {
+export function buildHermesConfigYaml(existingText = '', { hookCommand = null, fallbackModel = null } = {}) {
   let cur = {};
   try { const j = YAML.parse(existingText || ''); if (j && typeof j === 'object' && !Array.isArray(j)) cur = j; } catch { cur = {}; }
   const prevDeny = Array.isArray(cur.approvals?.deny) ? cur.approvals.deny.filter(x => typeof x === 'string') : [];
   const out = { ...cur, approvals: { ...HERMES_APPROVALS, ...(prevDeny.length ? { deny: prevDeny } : {}) }, command_allowlist: [] };
+  if (cur.model == null && fallbackModel?.model != null) {
+    out.model = fallbackModel.model;
+    if (fallbackModel.provider != null && cur.provider == null) out.provider = fallbackModel.provider;
+  }
   delete out.yolo;
   if (hookCommand) {
     const hooks = cur.hooks && typeof cur.hooks === 'object' && !Array.isArray(cur.hooks) ? { ...cur.hooks } : {};

@@ -142,7 +142,7 @@ export function renderPane(wsId, since, session) {
     </div>
     <div class="pane-body">
       ${acct.ok ? '' : `<div class="fixbar"><b>${esc(wsName(wsId))} only runs as ${esc(acct.expected || ws.accounts?.[ws.runtime]?.account || '')}.</b>
-        <span>${acct.loggedIn ? `Its ${esc(acct.runtimeLabel || '')} profile is logged in as ${esc(acct.actual || 'another account')}, so Orchy won't start anything here.` : `Its ${esc(acct.runtimeLabel || 'Claude Code')} profile isn’t logged in yet. Log in once as that account in the browser, then re-check:`}</span>
+        <span>${acct.loggedIn ? `Its ${esc(acct.runtimeLabel || '')} profile is logged in as ${esc(acct.actual || 'another account')}, so Orchy won't start anything here.` : acct.hint ? `${esc(acct.hint)} Then re-check:` : `Its ${esc(acct.runtimeLabel || 'Claude Code')} profile isn’t logged in yet. Log in once as that account in the browser, then re-check:`}</span>
         <code>${esc(acct.fix || '')}</code>
         <div class="btnrow"><button class="btn sm" data-login="${esc(wsId)}">Log in</button><button class="btn sm" data-copy="${esc(acct.fix || '')}">Copy command</button><button class="btn sm" data-recheck>${icon('refresh')}Re-check</button></div></div>`}
       <div class="section">

@@ -180,6 +180,7 @@ export function profileClash(ws, runtime = ws.runtime) {
  * 'email' engines (Claude Code, Codex, Antigravity): the profile must be logged in as the workspace's email.
  * 'profile' engines (Hermes, OpenCode): the workspace has its own profile folder (and OAuth login), reporting
  * its provider(s), detected plan/tier, and tier-scoped `availableModels`.
+ * A workspace profile that isn't signed in on a computer that is gets `hint`, saying so: only its own sign-in counts.
  */
 export async function accountCheck(ws, { force = false, runtime = ws.runtime } = {}) {
   const e = engine(runtime);
@@ -200,6 +201,7 @@ export async function accountCheck(ws, { force = false, runtime = ws.runtime } =
     const ok = !problem && !!status.loggedIn;
     return {
       ...base, ok, expected: a.email || (a.profileDir ? configDir : null), actual: status.label || null,
+      hint: problem ? null : await computerHint(ws, e, a, status, { force }),
       email: status.email || a.email || null,
       loggedIn: !!status.loggedIn, configDir,
       subscription: status.subscription || status.plan || null,
@@ -222,6 +224,7 @@ export async function accountCheck(ws, { force = false, runtime = ws.runtime } =
     expected: a.email,
     actual: email,
     loggedIn: !!status.loggedIn,
+    hint: await computerHint(ws, e, a, status, { force }),
     configDir,
     subscription: status.subscriptionType || status.subscription || status.plan || null,
     plan: status.plan || status.subscriptionType || status.subscription || null,
@@ -232,6 +235,17 @@ export async function accountCheck(ws, { force = false, runtime = ws.runtime } =
     fix: ok ? null : loginHint(ws, e.id),
     fixAlt: ok ? null : loginAlt(ws, e.id),
   };
+}
+
+/** The harness is signed in on this computer, but this workspace keeps its own profile, which isn't: the owner signed
+ * in with a plain terminal. Read-only; the computer's sign-in never counts for the workspace (Hermes's already did). */
+async function computerHint(ws, e, a, status, { force }) {
+  if (status.loggedIn || !a.profileDir || e.sharedLogin || ws.builtin) return null;
+  let pc = null;
+  try { pc = await e.account(null, { force }); } catch {}
+  if (!pc?.loggedIn) return null;
+  const who = pc.email || pc.label || null;
+  return `${e.label} is signed in on this computer${who ? ` (${who})` : ''}, but ${ws.name} keeps its own ${e.label} profile, so it needs its own sign-in once: press Log in, or paste the command below.${e.computerLoginNote ? ` ${e.computerLoginNote}` : ''}`;
 }
 
 /** A shell command (PowerShell on Windows) that logs this workspace's profile for an engine in. Pasteable as-is. */

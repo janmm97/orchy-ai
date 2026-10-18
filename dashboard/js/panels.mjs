@@ -279,7 +279,7 @@ function setupHTML(ws) {
   const row = (done, title, text, buttons) => `<div class="check ${done ? 'ok' : 'todo'}"><span class="box">${done ? icon('check') : ''}</span><span class="t"><b>${title}</b>${text}</span><span class="btnrow">${done ? '' : buttons}</span></div>`;
   const loginRow = (a, whose) => row(a.ok, `${esc(a.runtimeLabel || 'Claude Code')}${a.expected ? ` runs as ${esc(a.expected)}` : ' OAuth sign-in'}${whose}`,
     a.ok ? `Logged in as ${esc(a.actual)}${a.plan ? ` (${esc(a.plan)})` : ''}.`
-      : `${a.error && /install|account set/i.test(a.error) ? esc(a.error) : a.loggedIn ? `Its profile is logged in as ${esc(a.actual || 'another account')}, so Orchy won't run ${whose ? 'those agents' : 'anything here'}.` : 'Its profile isn’t signed in yet. Sign in via OAuth once in the window Orchy opens.'}${a.fix ? `<code>${esc(a.fix)}</code>` : ''}`,
+      : `${a.error && /install|account set/i.test(a.error) ? esc(a.error) : a.loggedIn ? `Its profile is logged in as ${esc(a.actual || 'another account')}, so Orchy won't run ${whose ? 'those agents' : 'anything here'}.` : a.hint ? esc(a.hint) : 'Its profile isn’t signed in yet. Sign in via OAuth once in the window Orchy opens.'}${a.fix ? `<code>${esc(a.fix)}</code>` : ''}`,
     `<button class="btn sm primary" data-setup="login" data-rt="${esc(a.runtime || '')}">Log in</button>${a.fix ? `<button class="btn sm" data-setup="copy" data-fix="${esc(a.fix || '')}">Copy</button>` : ''}<button class="btn sm" data-setup="recheck">${icon('refresh')}Re-check</button>`);
   return `<div class="setup"><span class="h">Get ${esc(wsName(ws.id))} ready</span>
     ${loginRow(acct, '')}

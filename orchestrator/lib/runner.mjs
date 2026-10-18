@@ -260,7 +260,7 @@ export async function startRun(opts) {
     throw Object.assign(new Error(
       acct.loggedIn
         ? `${who} must run as ${acct.expected} on ${acct.runtimeLabel}, but its profile is logged in as ${acct.actual || 'another account'}. Not running it. ${fix}`
-        : `${ws.name}'s ${acct.runtimeLabel} profile isn't logged in yet (needs ${acct.expected || 'an account'}). ${fix}`), { status: 409, code: 'ACCOUNT_MISMATCH' });
+        : `${ws.name}'s ${acct.runtimeLabel} profile isn't logged in yet (needs ${acct.expected || 'an account'}). ${acct.hint ? `${acct.hint} ` : ''}${fix}`), { status: 409, code: 'ACCOUNT_MISMATCH' });
   }
 
   // An agent that pins its engine runs on its own model unless the owner picked another of that engine's models.

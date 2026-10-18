@@ -36,14 +36,15 @@ export function hermesEnv(profileDir, base = process.env) {
 /** The hook's command line as Hermes splits it (quotes stripped per token, so paths with spaces are fine). */
 export const hermesHookCommand = ({ script, credsFile }, node = process.execPath) => [node, script, 'hermes', credsFile].map(a => `"${a}"`).join(' ');
 
-/** Write the forced approvals and Orchy's hook into the profile's config.yaml (keeping the owner's other keys). */
+/** Write the forced approvals and Orchy's hook into the profile's config.yaml (keeping the owner's other keys). A profile
+ * with no model yet gets the one picked for Hermes on this computer, when the profile can sign in to its provider. */
 export function writeHermesConfig(profileDir, { hookCommand = null } = {}) {
   const dir = profilePath(profileDir);
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'config.yaml');
   let cur = '';
   try { cur = fs.readFileSync(file, 'utf8'); } catch {}
-  const next = buildHermesConfigYaml(cur, { hookCommand });
+  const next = buildHermesConfigYaml(cur, { hookCommand, fallbackModel: inspectHermesAccount(dir).computerModel });
   if (!hermesConfigLooksSafe(next, { hookCommand })) throw new Error('Orchy could not build a safe Hermes config.');
   if (next !== cur) fs.writeFileSync(file, next, { mode: 0o600 });
   return file;
@@ -59,6 +60,7 @@ export default {
   openModels: true,
   instructionFile: 'AGENTS.md',
   defaultProfileLabel: '(its own profile folder)',
+  computerLoginNote: 'Hermes lends a workspace the sign-ins in its auth.json, but not API keys kept in its .env.',
   // Hermes installs natively on Windows from PowerShell (into %LOCALAPPDATA%\hermes\bin, where resolveBin looks)
   install: { cmd: 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash', winCmd: 'iex (irm https://hermes-agent.nousresearch.com/install.ps1)', signIn: 'hermes portal', bin: 'hermes', optional: true, note: 'Optional: Nous Research’s agent harness.' },
   capabilities: {
