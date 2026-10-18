@@ -14,7 +14,10 @@
 //   sharedLogin?: true                one sign-in per computer: every workspace on it must name the same account
 //       gated: false = Orchy can't put every risky action behind its approval gate; startRun refuses it unless the
 //       workspace has `allowUngated: true` in config.json
-//   install: { cmd, optional, note, shellNote? }   how the setup guide / `npm run setup` / `npm run check` offer to install it
+//   install: { cmd, winCmd?, signIn?, bin?, optional, note, shellNote? }   how the setup guide / `npm run setup` /
+//                                    `npm run check` / the Add window install it (installer.mjs runs it for the owner):
+//                                    cmd for macOS/Linux, winCmd for Windows PowerShell, then signIn (the default
+//                                    profile's sign-in) once `bin` is on the PATH
 //   bin() → path|null, version() → string|null, available() → boolean
 //   account(profileDir, { force, maxAge }) → Promise<{ loggedIn, email?, label, error?, subscription?, sandbox? }>
 //   profileEnv(profileDir) → { ENV_VAR: value }   the variables that pick the per-workspace profile
@@ -92,13 +95,20 @@ export const engineInfo = e => ({
   offered: engineOffered(e), optIn: e.optIn || null, sharedLogin: !!e.sharedLogin,
 });
 
+/** The command that installs this engine on this OS ('' when it has none). */
+export function engineInstallCmd(e, { win = process.platform === 'win32' } = {}) {
+  const i = e?.install || {};
+  if (win && i.winCmd) return i.winCmd;
+  return (i.cmd || '') + (i.shellNote && win ? '   (run in WSL or Git Bash)' : '');
+}
+
 /** Every registered engine as a setup-guide row: found / version / install command / gated (setup, the dashboard's Tools step and `npm run check` all read this). */
 export function engineTools({ win = process.platform === 'win32' } = {}) {
   return engines().filter(engineOffered).map(e => {
     const i = e.install || {};
     return {
       id: e.id, label: e.label, kind: 'harness', optional: i.optional !== false && e.id !== 'claude',
-      install: (i.cmd || '') + (i.shellNote && win ? '   (run in WSL or Git Bash)' : ''),
+      install: engineInstallCmd(e, { win }),
       note: [i.note, e.capabilities.gated ? '' : 'Not gated: runs only in a workspace you allow to work without Orchy approvals.'].filter(Boolean).join(' '),
       gated: e.capabilities.gated,
     };

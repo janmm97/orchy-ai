@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config, ORCH_DIR, ownerName } from './env.mjs';
 import { ask } from './jev.mjs';
+import { askViaHarness } from './brain.mjs';
 import { workspaces, tierModel, modelsFor, modelFor, handles, BACKEND_ID } from './workspaces.mjs';
 import { listAgents, BUILDER_SLUG } from './agents.mjs';
 import { db } from './store.mjs';
@@ -129,23 +130,37 @@ function keywordsOf(w) {
   const blurb = (String(w.blurb || '').toLowerCase().match(/[a-z0-9]{5,}/g) || []).filter(s => !STOP.has(s) && !BLURB_SKIP.has(s));
   return [...new Set([...names, ...blurb])].filter(s => !isCommon(s));
 }
-function heuristic(text, wss) {
+function heuristic(text, wss, agents = []) {
   const t = text.toLowerCase();
   if (FIX_ORCHY(t)) return fixGuess(); // the card still waits for the owner
   const build = /\b(build|create|make|design|set ?up|spin up|hire)\b.*\bagent\b|\bagent builder\b|\bnew agent\b/.test(t);
   const status = /\b(status|progress|what('s| is) (running|happening)|logs?|how did|did .* finish)\b/.test(t);
   const question = /^(what|who|why|how|when|where|is|are|can|do|does|should)\b.*\?$/.test(t.trim());
   const named = wss.filter(w => keywordsOf(w).some(s => new RegExp(`\\b${esc(s)}\\b`).test(t)));
-  const ws = explicitTarget(text, wss) || (named.length === 1 ? named[0].id : null);
+  const said = explicitTarget(text, wss) || (named.length === 1 ? named[0].id : null);
+  // an agent called by its name ("ask Ada to…"), in the workspace named or, with none named, in any
+  const agent = agentByName(t, agents.filter(a => !said || a.workspace === said));
+  // a question with no workspace named is for Orchy; work with none named goes to the only workspace there is
+  const chat = question && !said && !agent;
+  const ws = said || agent?.workspace || (!chat && wss.length === 1 ? wss[0].id : null);
   const pick = ws && wss.find(w => w.id === ws);
   return {
-    intent: build ? 'build_agent' : status ? 'status' : question && !ws ? 'chat' : 'task',
+    intent: build ? 'build_agent' : status ? 'status' : chat ? 'chat' : 'task',
     workspace: ws,
-    agent: null,
+    agent: agent && agent.workspace === ws ? agent.slug : null,
     model: pick ? tierModel(pick, text.length > 400 ? 2 : 1) : null,
-    confidence: ws ? 0.6 : 0.3,
+    confidence: said || agent ? 0.6 : ws ? 0.45 : 0.3,
     source: 'heuristic',
   };
+}
+
+/** The one agent whose name (its first word, at least 3 letters) the text says as a word; none or two: null. */
+function agentByName(t, agents) {
+  const hits = agents.filter(a => {
+    const first = String(a.displayName || '').trim().split(/\s+/)[0].toLowerCase();
+    return first.length >= 3 && !isCommon(first) && new RegExp(`\\b${esc(first)}\\b`).test(t);
+  });
+  return hits.length === 1 ? hits[0] : null;
 }
 
 // ── huddles: two or more agents of one workspace talk something through (huddle.mjs) ──
@@ -246,7 +261,7 @@ const statusQuestion = () => ({
  * `ask`, `workspaces`, `agents`, `names` (voice names) and `primer` (jev-primer.md) let tests fake Jev and the setup. `purpose` labels the Jev call in the log
  * ('live' when Jev reads as the owner types, livejev.mjs). `files`: names of files the owner attached to the message.
  */
-export async function route(text, { recent = [], runs = [], files = [], purpose = 'routing', ask: askJev = ask,workspaces: all = workspaces(), agents: allAgents = listAgents(), names = nameOf, primer = jevPrimer(), budget = currentBudget() } = {}) {
+export async function route(text, { recent = [], runs = [], files = [], purpose = 'routing', ask: askJev = ask, harness, workspaces: all = workspaces(), agents: allAgents = listAgents(), names = nameOf, primer = jevPrimer(), budget = currentBudget() } = {}) {
   const wss = all.filter(w => w.enabled);
   const live = new Set(wss.map(w => w.id));
   const agents = allAgents.filter(a => !a.isBuilder && live.has(a.workspace));
@@ -352,8 +367,17 @@ export async function route(text, { recent = [], runs = [], files = [], purpose 
     // The owner is waiting on the card: a hung Jev falls back to the heuristic quickly, without the slower One route
     res = await askJev(state, questions, { purpose, timeoutMs: ROUTE_TIMEOUT_MS, fallback: false });
   } catch (e) {
-    console.warn('[router] Jev unavailable, using heuristic:', e.message);
-    return finalize(heuristic(text, wss), { error: e.message });
+    // Jev is off: the owner's own harness answers Jev's questions instead (brain.mjs), except for the reads made
+    // while the owner types (too slow and too many). Keywords only when there is no harness, or it fails.
+    const substitute = harness === undefined ? (askJev === ask ? askViaHarness : null) : harness;
+    if (e.code === 'NO_JEV' && purpose !== 'live' && substitute) {
+      try { res = await substitute(state, questions, { purpose, timeoutMs: HARNESS_ROUTE_TIMEOUT_MS }); }
+      catch (err) { if (err.code !== 'NO_BRAIN') console.warn('[router] harness routing failed, using keywords:', err.message); }
+    }
+    if (!res) {
+      if (e.code !== 'NO_JEV') console.warn('[router] Jev unavailable, using heuristic:', e.message);
+      return finalize(heuristic(text, wss, agents), { error: e.message });
+    }
   }
 
   const A = res.answers || {};
@@ -533,6 +557,7 @@ export function remodel(fromWs, toWs, model) {
 const CHAT_TASK_MARGIN = 0.4;   // task + build probability that makes a chat/status reading a close call
 const EARLIER_RUN_MIN = 0.7;    // Jev's probability for that run before Orchy offers to continue it
 const ROUTE_TIMEOUT_MS = 15_000; // how long the owner's card waits for Jev before the heuristic picks
+const HARNESS_ROUTE_TIMEOUT_MS = 90_000; // a harness standing in for Jev starts a whole agent turn: slower
 
 function finalize(r, extra = {}) {
   const work = r.intent === 'task' || r.intent === 'build_agent' || r.intent === 'huddle' || r.intent === 'mission';

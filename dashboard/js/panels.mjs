@@ -454,7 +454,8 @@ export async function openAddWorkspace({ edit = null, from } = {}) {
     if (ctx.state?.runtimes && Object.keys(ctx.state.runtimes).length) rt = ctx.state.runtimes;
     else { body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return w; }
   }
-  let engine = edit?.runtime || 'claude';
+  // a new workspace starts on Claude Code, or on the first engine this PC has when Claude Code isn't here
+  let engine = edit?.runtime || (rt.claude?.available ? 'claude' : Object.keys(rt).find(k => rt[k]?.available) || 'claude');
   const ownNow = () => !!edit?.ownProfile;
   const currentEmail = () => edit?.accounts?.[engine]?.account || '';
   const render = () => {
@@ -474,8 +475,12 @@ export async function openAddWorkspace({ edit = null, from } = {}) {
         <div class="field"><label for="wa-blurb">What it’s for</label><textarea class="textarea" id="wa-blurb" style="min-height:64px" placeholder="The work it does and the apps it uses. Jev reads this to route tasks here.">${esc(edit?.blurb || '')}</textarea></div>
         <div class="field"><label for="wa-aliases">Also called</label><input class="input" id="wa-aliases" placeholder="e.g. Acme, ACM" value="${esc((edit?.aliases || []).join(', '))}"><span class="hint">Other names you use for it, comma separated. Its own name already counts: “for ${esc(edit ? (edit.handles?.[0] || edit.name) : 'Acme')} …” sends work here.</span></div>
         <div class="field"><span class="label">Runs on</span>
-          <div class="seg" role="group" aria-label="Engine">${Object.keys(rt).map(k => `<button type="button" data-engine="${esc(k)}" aria-pressed="${engine === k}" ${rt[k]?.available || k === engine ? '' : 'disabled'} title="${rt[k]?.available ? '' : 'Not installed on this PC yet'}">${esc(rt[k]?.label || k)}</button>`).join('')}</div>
-          <span class="hint">${esc(r.blurb || '')} ${r.plan ? `Detected plan/tier: <b>${esc(r.plan)}</b>. ` : ''}${tierModels.length ? `Models: ${esc(tierModels.slice(0, 6).join(', '))}${tierModels.length > 6 ? ` and ${tierModels.length - 6} more` : ''}.` : 'Uses the model its own config picks.'}${r.sandbox && r.sandbox !== 'ready' ? ' This PC hasn’t set up Codex’s Windows sandbox, so Orchy checks every single command first.' : ''}${r.available ? '' : ` ${esc(r.label || engine)} isn’t installed on this PC yet.`}</span>
+          <div class="seg wrap" role="group" aria-label="Engine">${Object.keys(rt).map(k => `<button type="button" data-engine="${esc(k)}" aria-pressed="${engine === k}" title="${rt[k]?.available ? '' : 'Not installed on this PC yet: pick it to see how to install it'}">${esc(rt[k]?.label || k)}${rt[k]?.available ? '' : ' <span class="off">· not installed</span>'}</button>`).join('')}</div>
+          <span class="hint">${esc(r.blurb || '')} ${r.plan ? `Detected plan/tier: <b>${esc(r.plan)}</b>. ` : ''}${tierModels.length ? `Models: ${esc(tierModels.slice(0, 6).join(', '))}${tierModels.length > 6 ? ` and ${tierModels.length - 6} more` : ''}.` : 'Uses the model its own config picks.'}${r.sandbox && r.sandbox !== 'ready' ? ' This PC hasn’t set up Codex’s Windows sandbox, so Orchy checks every single command first.' : ''}</span>
+          ${r.available ? '' : `<div class="fixbar"><b>${esc(r.label || engine)} isn’t installed on this PC yet.</b>
+            <span>${r.installing || watching === engine ? `Installing in the terminal window Orchy opened. Answer its prompts and sign in there; this updates by itself when ${esc(r.label || engine)} is ready.` : r.install ? `Orchy can install it for you: a terminal window opens, runs ${esc(r.label || engine)}’s official installer for this computer, then its sign-in.` : 'Install it, then press Re-check.'}</span>
+            <span class="btnrow">${r.install ? `<button class="btn sm primary" type="button" data-a="install" ${watching === engine ? 'disabled' : ''}>${icon(watching === engine ? 'refresh' : 'plus')}${watching === engine ? 'Installing…' : r.installing ? 'Open the installer again' : `Install ${esc(r.label || engine)}`}</button>` : ''}<button class="btn sm" type="button" data-a="recheck">${icon('refresh')}Re-check</button></span>
+            ${r.install ? `<details><summary class="hint">Or run it yourself</summary>${cmdHTML(r.install)}</details>` : ''}</div>`}
           ${ungated ? `<div class="fixbar"><b>${esc(r.label)} can’t be held behind your approvals.</b><span>It could change files and run commands without asking you. Orchy won’t start it unless you allow that here.</span>
             <label class="choice"><input type="checkbox" id="wa-ungated" ${edit?.allowUngated ? 'checked' : ''}><span>I understand: let it run without approvals</span></label></div>` : ''}</div>
         ${r.sharedLogin ? `<div class="field"><label class="label" for="wa-email">Runs as</label>
@@ -488,7 +493,7 @@ export async function openAddWorkspace({ edit = null, from } = {}) {
           <input class="input" id="wa-email" type="email" placeholder="the account’s email" value="${esc(mine && mine !== def ? mine : '')}" ${pickOwn ? '' : 'hidden'}></div>`}
         ${edit ? '' : `<label style="display:grid;grid-template-columns:auto 1fr;gap:var(--s3);align-items:center"><span class="switch"><input type="checkbox" role="switch" id="wa-signin" checked><span class="track"><span class="knob"></span></span></span><span>Open the sign-in windows it needs right away (One, and its own account if it has one)</span></label>`}
       </div>
-      <div class="btnrow end"><button class="btn" data-a="cancel">Cancel</button><button class="btn primary" data-a="go">${icon(edit ? 'check' : 'spark')}${edit ? 'Save' : 'Set it up'}</button></div>`;
+      <div class="btnrow end"><button class="btn" data-a="cancel">Cancel</button><button class="btn primary" data-a="go" ${blocked() ? `disabled title="Install ${esc(r.label || engine)} first"` : ''}>${icon(edit ? 'check' : 'spark')}${edit ? 'Save' : 'Set it up'}</button></div>`;
     const name = body.querySelector('#wa-name');
     const folder = body.querySelector('[data-folder]');
     name?.addEventListener('input', () => { folder.textContent = `Becomes the folder ${name.value.trim() || '…'}`; });
@@ -496,12 +501,50 @@ export async function openAddWorkspace({ edit = null, from } = {}) {
     body.querySelectorAll('[name="wa-acct"]').forEach(r => r.addEventListener('change', () => { body.querySelector('#wa-email').hidden = body.querySelector('[name="wa-acct"]:checked').value !== 'own'; }));
     body.querySelector('[data-a="cancel"]').addEventListener('click', () => w.back());
     body.querySelector('[data-a="go"]').addEventListener('click', submit);
+    wireCopy(body);
+    body.querySelector('[data-a="recheck"]')?.addEventListener('click', async e => {
+      e.currentTarget.disabled = true;
+      keep();
+      try { rt = await api('/api/runtimes'); } catch (err) { ctx.toast(err.message, 'warn'); }
+      render(); restore();
+      if (!rt[engine]?.available) ctx.toast(`${rt[engine]?.label || engine} still isn’t found. If you just installed it, check that its command works in a new terminal.`, 'warn');
+    });
   };
+  // a workspace can't be set up on (or moved to) an engine that isn't installed yet; one already on it can still be saved
+  const blocked = () => !rt[engine]?.available && engine !== edit?.runtime;
+  // Install: Orchy opens the installer window, then looks every few seconds until the harness is found (15 min at most)
+  let watching = null, watchTimer = null;
+  const watch = id => {
+    clearInterval(watchTimer);
+    watching = id;
+    const until = Date.now() + 15 * 60_000;
+    watchTimer = setInterval(async () => {
+      if (!body.isConnected || Date.now() > until) { clearInterval(watchTimer); watching = null; if (body.isConnected) { keep(); render(); restore(); } return; }
+      let next;
+      try { next = await api('/api/runtimes'); } catch { return; }
+      if (!next[id]?.available) return;
+      clearInterval(watchTimer); watching = null;
+      keep(); rt = next; render(); restore();
+      ctx.toast(`${rt[id]?.label || id} is installed${rt[id]?.loggedIn ? ` and signed in${rt[id].defaultAccount ? ` as ${rt[id].defaultAccount}` : ''}` : ''}.`);
+    }, 4000);
+  };
+  body.addEventListener('click', async e => {
+    const b = e.target.closest('[data-a="install"]');
+    if (!b) return;
+    b.disabled = true;
+    try {
+      const r = await api(`/api/runtimes/${encodeURIComponent(engine)}/install`, { method: 'POST' });
+      if (r.already) { keep(); rt = await api('/api/runtimes'); render(); restore(); return; }
+      ctx.toast(`A terminal window opened to install ${rt[engine]?.label || engine}. Answer its prompts there, then sign in.`);
+      keep(); watch(engine); render(); restore();
+    } catch (err) { ctx.toast(err.message, 'warn'); b.disabled = false; }
+  });
   let kept = {};
   const keep = () => { kept = { name: body.querySelector('#wa-name')?.value, client: body.querySelector('#wa-client')?.value, blurb: body.querySelector('#wa-blurb')?.value, aliases: body.querySelector('#wa-aliases')?.value }; };
   const restore = () => { for (const [k, v] of Object.entries(kept)) { const el = body.querySelector(`#wa-${k}`); if (el && v != null) el.value = v; } body.querySelector('#wa-name')?.dispatchEvent(new Event('input')); };
   const submit = async e => {
     const btn = e.currentTarget;
+    if (blocked()) return ctx.toast(`Install ${rt[engine]?.label || engine} first, then press Re-check.`, 'warn');
     const profileOnly = rt[engine]?.accountModel === 'profile';
     const shared = !!rt[engine]?.sharedLogin; // one sign-in per computer: the email typed, never a profile of its own
     const own = !shared && (profileOnly || body.querySelector('[name="wa-acct"]:checked')?.value === 'own');
@@ -977,7 +1020,7 @@ export async function openSettings({ from } = {}) {
     const on = pick !== 'off' && (!!provider || !!ctx.state.jev?.label || jevOpen);
     const opt = JEV_OPTS.find(o => o[0] === provider);
     return `<section style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">Routing · TypeSafe Jev</h3>
-        ${toggle('data-usejev', on, 'Use Jev?', 'Jev reads each message and picks the workspace, the agent and the model. Off: Orchy matches each message by its words, and the agent picks its own tools.')}
+        ${toggle('data-usejev', on, 'Use Jev?', 'Jev reads each message and picks the workspace, the agent and the model. Off: your agent harness reads each message instead (slower, 10 to 30 seconds, on its own plan), and keyword matching only when there is no harness.')}
         ${on ? `<div class="btnrow"><span class="label">Provider</span><select class="select" data-jevprovider aria-label="Jev provider" style="width:auto">${provider ? '' : '<option value="" selected disabled>Pick a provider…</option>'}${JEV_OPTS.map(([v, l]) => `<option value="${v}" ${provider === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
         <p class="hint" style="margin:0">${ctx.state.jev?.label ? `Jev is reached through ${esc(ctx.state.jev.label)}.${['openrouter', 'opencode'].includes(mode) ? ' This is a chat model answering Jev’s questions, an approximation of the native Jev.' : ''}` : opt ? `Paste your ${opt[1]} key to switch Jev on. Until then, routing uses keyword matching.` : 'Pick the provider you have a key for.'}</p>
         ${opt ? keyRow(opt[2], `${opt[1]} API key`, opt[3]) : ''}

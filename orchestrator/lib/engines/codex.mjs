@@ -27,7 +27,8 @@ export default {
   accountModel: 'email',
   instructionFile: 'AGENTS.md',
   defaultProfileLabel: '(default ~/.codex)',
-  install: { cmd: 'npm install -g @openai/codex', optional: true, note: 'Optional: OpenAI’s agent harness.' },
+  // the standalone installers from learn.chatgpt.com/docs/codex/cli (~/.local/bin; on Windows %LOCALAPPDATA%\Programs\OpenAI\Codexin)
+  install: { cmd: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh', winCmd: 'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"', signIn: 'codex login', bin: 'codex', optional: true, note: 'Optional: OpenAI’s agent harness.' },
   capabilities: {
     gated: true, mcp: true, resume: true, headless: true,
     clientSafe: false,

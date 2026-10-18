@@ -8,7 +8,7 @@
 import { config, ownerName } from './env.mjs';
 import { db, save } from './store.mjs';
 import { enabledWorkspaces } from './workspaces.mjs';
-import { quickClaude } from './claude.mjs';
+import { brainQuick } from './brain.mjs'; // Claude Code when installed, else the harness this PC has
 
 const DAY = 86400_000;
 const WEEK = 7 * DAY;
@@ -173,7 +173,7 @@ function parseJson(text) {
 }
 
 /** Run the review now and say it in chat. `say(text, meta)` is orchy.say. Returns what was said. */
-export async function weeklyReview({ say, now = Date.now(), think = quickClaude } = {}) {
+export async function weeklyReview({ say, now = Date.now(), think = brainQuick } = {}) {
   const nums = weekNumbers(now);
   if (!nums.runs) {
     const text = 'Weekly usage review: no agent runs in the last 7 days, so nothing to trim.';

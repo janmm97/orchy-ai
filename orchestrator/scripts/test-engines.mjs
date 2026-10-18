@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { config } from '../lib/env.mjs';
-import { engine, engines, engineIds, registerEngine, ungatedRefusal } from '../lib/engines/index.mjs';
+import { engine, engines, engineIds, registerEngine, ungatedRefusal, engineInstallCmd } from '../lib/engines/index.mjs';
 import { accountCheck, accountFor, runtimes, modelFor, modelsFor, loginHint, runtimeAvailability, profileClash } from '../lib/workspaces.mjs';
 import { startRun } from '../lib/runner.mjs';
 import { buildPromptBody } from '../lib/engines/opencode-run.mjs';
@@ -70,6 +70,17 @@ const fake = (id, over = {}) => ({
 {
   const err = await rejects(startRun({ workspace: '__nobody__', instruction: 'x' }));
   ok(err?.status === 404, 'unknown workspace still 404s');
+}
+// ── an engine that isn't installed: Windows gets a command that installs it where Orchy looks, a run says what to do ──
+{
+  ok(engineInstallCmd(engine('opencode'), { win: true }) === 'npm install -g opencode-ai' && /install\.ps1/.test(engineInstallCmd(engine('hermes'), { win: true })), 'opencode / hermes: native Windows install commands (not bash in WSL)');
+  ok(/^curl .*\| bash$/.test(engineInstallCmd(engine('opencode'), { win: false })) && /^curl .*\| bash$/.test(engineInstallCmd(engine('hermes'), { win: false })), 'opencode / hermes: the bash installers elsewhere');
+  const undo = registerEngine(fake('absent', { capabilities: { ...fake('x').capabilities, gated: true }, available: () => false, install: { cmd: 'get-absent' } }));
+  config.workspaces.push({ id: 'w2', name: 'Absent One', folder: 'workspaces/__engines-test', runtime: 'absent', enabled: true, absentProfile: '/tmp/orchy-absent-1', color: 'jade' });
+  const err = await rejects(startRun({ workspace: 'w2', instruction: 'Do it' }));
+  ok(err?.code === 'ENGINE_MISSING' && err.status === 409 && /get-absent/.test(err.message) && !/never launch/.test(err.message), 'startRun on an engine that isn’t installed: refused with the install command, nothing launched', err && `${err.code} ${err.message}`);
+  config.workspaces.pop();
+  undo();
 }
 
 // ── accountCheck: email engines keep their exact semantics ──

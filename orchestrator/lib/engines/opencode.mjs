@@ -42,7 +42,9 @@ export default {
   openModels: true,
   instructionFile: 'AGENTS.md',
   defaultProfileLabel: '(its own profile folder)',
-  install: { cmd: 'curl -fsSL https://opencode.ai/v2/install | bash', shellNote: true, optional: true, note: 'Optional: an open-source agent harness.' },
+  // opencode.ai/docs: the install script (~/.opencode/bin); on Windows the npm package (the script run in WSL lands
+  // inside Linux, where Orchy can't find it)
+  install: { cmd: 'curl -fsSL https://opencode.ai/install | bash', winCmd: 'npm install -g opencode-ai', signIn: 'opencode auth login', bin: 'opencode', optional: true, note: 'Optional: an open-source agent harness.' },
   capabilities: {
     gated: true, mcp: true, resume: true, headless: true,
     clientSafe: false,

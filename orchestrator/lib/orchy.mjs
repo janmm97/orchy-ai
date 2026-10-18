@@ -2,11 +2,15 @@
 // Runs Claude under the default profile. Each session has its own Orchy memory, so two conversations
 // never bleed into each other. In a session Orchy works from the Uploads folder with the Read tool, so he
 // can open the files the owner gives him (and nothing outside that folder); everything else is tool-less.
+// Without Claude Code on this PC, the harness it has answers instead (brain.mjs): text-only, no files, no memory
+// beyond the thread lines each prompt carries.
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import { ROOT, config, ownerName } from './env.mjs';
 import { db, save } from './store.mjs';
 import { emit } from './bus.mjs';
-import { quickClaude } from './claude.mjs';
+import { quickClaude, claudeAvailable } from './claude.mjs';
+import { brainEngine, brainLabel, brainThink } from './brain.mjs';
 import { orchyPersonaFile } from './prompts.mjs';
 import { listRuns } from './runner.mjs';
 import { listAgents } from './agents.mjs';
@@ -42,6 +46,14 @@ ${logs}`;
  * (its working folder, the only one Read reaches); without one it starts fresh, tool-less.
  */
 async function think(prompt, { model, session = null, timeoutMs, purpose = 'chat', workspace = null } = {}) {
+  // no Claude Code here: the harness this PC has answers, text-only, from the snapshot and thread in the prompt
+  if (!claudeAvailable()) {
+    const via = brainEngine();
+    let persona = '';
+    try { persona = fs.readFileSync(orchyPersonaFile(), 'utf8'); } catch {}
+    const note = `You are answering through ${brainLabel(via) || 'an agent harness'}, without tools: you can't open files (Uploads included) or look anything up. Answer from the STATE and the conversation in this message.`;
+    return (await brainThink({ prompt, system: `${persona}\n\n${note}`, model: model || config.orchy.chatModel, timeoutMs, purpose, workspace, via })).text;
+  }
   const useResume = session?.orchySessionId;
   try {
     const r = await quickClaude({
@@ -86,14 +98,30 @@ export async function reply(text, { model, viaVoice, session, messageId, direct 
     const answer = await think(`${snapshot(session.id)}\n\n${threadText(session.id, messageId)}${own}${ownerName()} says: ${text}`, { model, session, purpose: 'chat' });
     return say(answer || 'Hmm, I drew a blank there. Try me again?', { speak: viaVoice, session: session.id });
   } catch (e) {
+    // nothing to think with: what Orchy knows without a model (the agents), else what to install
+    if (e.code === 'NO_BRAIN') return say(offlineAnswer(text, e.message), { speak: viaVoice, session: session.id });
     return say(`I couldn't think that through: ${e.message}`, { error: true, session: session.id });
   } finally {
     emit('orchy.state', { state: 'idle', session: session.id });
   }
 }
 
+/** An answer with no model behind it: a question about the agents gets the list Orchy has; anything else, `why`. */
+export function offlineAnswer(text, why, { agents = listAgents(), wss = workspaces().filter(w => w.enabled) } = {}) {
+  if (!/\bagents?\b|\bteam\b|\bwho (do|can|is)\b|\bwhat can\b/i.test(String(text || ''))) return why;
+  const lines = wss.map(w => {
+    const mine = agents.filter(a => a.workspace === w.id);
+    return mine.length ? `${w.name}: ${mine.map(a => `${a.displayName}${a.isBuilder ? ' (builds and updates agents)' : a.description ? ` (${a.description.replace(/\s+/g, ' ').slice(0, 160)})` : ''}`).join('; ')}.` : `${w.name} has no agents yet.`;
+  });
+  return `${lines.join(' ') || 'No workspace is switched on yet.'} I can't say more than that until an agent harness is installed (Settings → Set up Orchy → Tools).`;
+}
+
 /** The owner gave Orchy files (already in Uploads): open them and answer in the session. */
 export async function review(text, files, { viaVoice, session, messageId } = {}) {
+  // opening files is Claude Code's Read tool, kept to Uploads; another harness brain answers without files
+  if (!claudeAvailable()) {
+    return say(`I can only open files with Claude Code, and it isn't installed on this PC${brainLabel() ? ` (I'm answering through ${brainLabel()}, without files)` : ''}. Paste the part you want me to look at into the chat. Installing Claude Code: Settings → Set up Orchy → Tools.`, { speak: viaVoice, session: session.id, kind: 'review' });
+  }
   emit('orchy.state', { state: 'thinking', session: session.id });
   try {
     const many = files.length > 1;

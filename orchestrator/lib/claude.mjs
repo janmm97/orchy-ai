@@ -57,12 +57,16 @@ function resolveClaude() {
   if (fs.existsSync(local)) return local;
   return 'claude'; // not found: spawn may still work through PATH; claudeAvailable() tells the truth
 }
-export const CLAUDE_BIN = resolveClaude();
+// `let`: re-found when a probe fails, so Claude Code installed while Orchy runs is picked up without a restart
+export let CLAUDE_BIN = resolveClaude();
 
 let claudeProbe = null;
-/** Does Claude Code really run here? `--version`, cached (a failure is retried after a minute). */
+/** Does Claude Code really run here? `--version`, cached (a failure looks again, for a new install, after 5s). */
 export function claudeVersion() {
-  if (!claudeProbe || (!claudeProbe.version && Date.now() - claudeProbe.at > 60_000)) claudeProbe = { at: Date.now(), version: probeVersion(CLAUDE_BIN) };
+  if (!claudeProbe || (!claudeProbe.version && Date.now() - claudeProbe.at > 5_000)) {
+    if (claudeProbe && !claudeProbe.version) CLAUDE_BIN = resolveClaude();
+    claudeProbe = { at: Date.now(), version: probeVersion(CLAUDE_BIN) };
+  }
   return claudeProbe.version;
 }
 export const claudeAvailable = () => !!claudeVersion();

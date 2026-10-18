@@ -92,7 +92,7 @@ Each key is checked once with its service and saved in `.env` on your PC. Keys a
 
 | Key | What it unlocks | Without it |
 |---|---|---|
-| `TYPESAFE_API_KEY` | Jev from TypeSafe, the native model | Another Jev provider if one is set, else keyword matching |
+| `TYPESAFE_API_KEY` | Jev from TypeSafe, the native model | Another Jev provider if one is set, else your agent harness reads each message (slower), else keyword matching |
 | `OPENROUTER_API_KEY` | Jev through OpenRouter, as `~typesafe/jev-latest` (a chat model answering Jev's questions) | As above |
 | `AI_GATEWAY_API_KEY` | Jev through Vercel AI Gateway, as `typesafe-ai/jev` (native) | As above |
 | `OPENCODE_API_KEY` | Jev through OpenCode Zen, as `jev-1.13` (a chat model). OpenCode's free tier only works inside the OpenCode app | As above |
@@ -100,7 +100,7 @@ Each key is checked once with its service and saved in `.env` on your PC. Keys a
 | `DEEPGRAM_API_KEY` | Orchy's spoken replies with Deepgram (or the backup voice when both keys are set) | The browser's voice |
 | `VOICE_PROVIDER` | Which service speaks: `elevenlabs` or `deepgram` | ElevenLabs first, Deepgram as backup |
 
-`JEV_PROVIDER` picks one provider when several keys are set (`typesafe`, `openrouter`, `vercel`, `opencode`, or `off`). `VOICE_ENABLED=0` switches voice off: nothing speaks, nothing rings, and nothing goes to ElevenLabs or Deepgram.
+`JEV_PROVIDER` picks one provider when several keys are set (`typesafe`, `openrouter`, `vercel`, `opencode`, or `off`). With Jev off, the harness you installed stands in: it answers Jev's routing questions (10 to 30 seconds a message, on that harness's own sign-in), and keyword matching is the last resort. The same harness answers when you talk to Orchy if Claude Code isn't installed: Codex, OpenCode or Hermes, without tools (it can't open files you attach; Claude Code can). `ORCHY_BRAIN` picks one (`claude`, `codex`, `opencode`, `hermes`) or `off`. `VOICE_ENABLED=0` switches voice off: nothing speaks, nothing rings, and nothing goes to ElevenLabs or Deepgram.
 
 ## If you are an AI agent setting this up or working in this repo: read this first
 
@@ -274,13 +274,13 @@ Putting them online (Cloudflare Tunnel, Access, and R2 for video) is in [docs/CO
 
 | Harness | Install | Gated? |
 |---|---|---|
-| **Claude Code** (recommended) | `npm install -g @anthropic-ai/claude-code` | ✅ yes |
-| **Codex** | `npm install -g @openai/codex` | ✅ yes |
-| **OpenCode** | `curl -fsSL https://opencode.ai/v2/install \| bash` | ✅ yes |
-| **Hermes** | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash` | ✅ yes |
+| **Claude Code** (recommended) | `curl -fsSL https://claude.ai/install.sh \| bash`; Windows (PowerShell): `irm https://claude.ai/install.ps1 \| iex` | ✅ yes |
+| **Codex** | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh`; Windows: `powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 \| iex"` | ✅ yes |
+| **OpenCode** | `curl -fsSL https://opencode.ai/install \| bash`; on Windows `npm install -g opencode-ai` | ✅ yes |
+| **Hermes** | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash`; on Windows (PowerShell) `iex (irm https://hermes-agent.nousresearch.com/install.ps1)` | ✅ yes |
 | **Antigravity** (off by default) | Google's `agy` CLI (see antigravity.google), then `ORCHY_ANTIGRAVITY=1` in `.env` | ✅ yes |
 
-"Gated" means every risky action asks Orchy first.
+"Gated" means every risky action asks Orchy first. You don't have to type these: **Install** in the dashboard (Add workspace, or Set up Orchy → Tools) runs the right one for your computer in a terminal window, then the sign-in.
 
 Details, headless commands, config locations, the evidence behind each "gated" answer, [which instructions an agent run reads](docs/HARNESSES.md#which-instructions-an-agent-run-reads) and manual verification checklists are in [docs/HARNESSES.md](docs/HARNESSES.md).
 

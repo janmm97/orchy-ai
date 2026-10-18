@@ -31,7 +31,7 @@ Ori Harness (`ori`) is a launcher, not a separate harness. See the end of this f
 
 | | |
 |---|---|
-| Install | `npm install -g @anthropic-ai/claude-code` |
+| Install | macOS/Linux: `curl -fsSL https://claude.ai/install.sh \| bash`; Windows (PowerShell): `irm https://claude.ai/install.ps1 \| iex` (both put `claude` in `~/.local/bin`; code.claude.com/docs/en/quickstart). Sign in: `claude auth login`. In Orchy, **Install** (the Add window, or Set up Orchy → Tools) runs this in a terminal window, then the sign-in. |
 | Headless command Orchy uses | `claude -p --output-format stream-json --verbose --model <model> --mcp-config <file> --strict-mcp-config --permission-prompt-tool mcp__jos__approval --append-system-prompt-file <file> --session-id <id>` (plus `--resume`, `--agent <slug>`, `--settings`) |
 | Approvals | Every permission request goes to the MCP tool `mcp__jos__approval`, which calls the Orchy gate |
 | MCP | Orchy writes a per-run MCP config with the `jos` bridge and the workspace's allowed servers (`<workspace>/.jos/mcp.json`) |
@@ -41,7 +41,7 @@ Ori Harness (`ori`) is a launcher, not a separate harness. See the end of this f
 
 | | |
 |---|---|
-| Install | `npm install -g @openai/codex` |
+| Install | macOS/Linux: `curl -fsSL https://chatgpt.com/codex/install.sh \| sh` (into `~/.local/bin`); Windows: `powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 \| iex"` (into `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin`; learn.chatgpt.com/docs/codex/cli). Sign in: `codex login`. In Orchy, **Install** (the Add window, or Set up Orchy → Tools) runs this in a terminal window, then the sign-in. |
 | Headless command Orchy uses | `codex app-server` (JSON-RPC over stdio), approval policy `untrusted`, sandbox `workspace-write` |
 | Approvals | Every approval request is answered by the Orchy gate |
 | MCP | Through the Codex config in the run's `CODEX_HOME` |
@@ -53,7 +53,7 @@ Ori Harness (`ori`) is a launcher, not a separate harness. See the end of this f
 
 | | |
 |---|---|
-| Install | `curl -fsSL https://opencode.ai/v2/install \| bash` (also available through npm `opencode-ai` and brew). Set `OPENCODE_CLI_PATH` in `.env` if the binary is somewhere unusual. Orchy never installs it for you. |
+| Install | macOS/Linux: `curl -fsSL https://opencode.ai/install \| bash` (into `~/.opencode/bin`); Windows: `npm install -g opencode-ai` (the bash installer run in WSL puts it inside Linux, where Orchy can't find it; opencode.ai/docs). Sign in: `opencode auth login`. Set `OPENCODE_CLI_PATH` in `.env` if the binary is somewhere unusual. In Orchy, **Install** (the Add window, or Set up Orchy → Tools) runs this in a terminal window, then the sign-in. |
 | How Orchy runs it | Per run: `opencode serve --port <free port> --hostname 127.0.0.1` in the workspace folder, a random `OPENCODE_SERVER_PASSWORD` (HTTP basic auth, user `opencode`), the `/event` SSE stream, one session, the prompt sent with `prompt_async`. Never `--auto`; nothing secret is on the command line |
 | Approvals | The per-run `opencode.json` sets `"permission": { "*": "ask", ... }` (reads, edits, shell, web, MCP tools and `external_directory` all ask; `task`, `question` and `doom_loop` are denied; `.env` reads are denied). Each ask goes to the Orchy gate and is answered through the permission endpoint with `once` (allowed) or `reject` (denied, or the gate failed). Orchy never sends `always` or `remember`. The same permission block is also passed in `OPENCODE_CONFIG_CONTENT` so a `opencode.json` in the workspace cannot loosen it |
 | Fails closed | The run fails (and the server is stopped) if: `/doc` is JSON but lists no permission-response route, `/config` shows an `allow`, the server dies, the event stream drops, or Orchy cannot answer an ask |
@@ -116,7 +116,7 @@ Neither harness asks a client before every action on its own, but both run a hoo
 
 | | |
 |---|---|
-| Install | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash` (run in WSL or Git Bash on Windows). Set `HERMES_CLI_PATH` in `.env` if the binary is somewhere unusual. Orchy never installs it |
+| Install | macOS/Linux/WSL2: `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash`; Windows (PowerShell): `iex (irm https://hermes-agent.nousresearch.com/install.ps1)` (native, into `%LOCALAPPDATA%\hermes\bin`). Sign in: `hermes portal`. Set `HERMES_CLI_PATH` in `.env` if the binary is somewhere unusual. In Orchy, **Install** (the Add window, or Set up Orchy → Tools) runs this in a terminal window, then the sign-in. |
 | How Orchy runs it | `hermes acp` through the ACP client (strict), `cwd` = the workspace folder, `HERMES_HOME` = the workspace's profile, `HERMES_ACP_SKIP_CONFIGURED_MCP=1` (so servers in the profile's `config.yaml` do not start beside Orchy's bridge). Never `--yolo`; `HERMES_YOLO_MODE`, `HERMES_ACCEPT_HOOKS` and `HERMES_SAFE_MODE` (which skips every hook) are removed from the child's environment |
 | Forced config | Before every run Orchy rewrites the profile's `config.yaml` keeping the owner's keys (model, provider, other hooks) and forcing `approvals.mode: manual`, `unattended_mode: deny`, `single_query_mode: deny`, `cron_mode: deny`, `command_allowlist: []`, any `yolo` key removed, and Orchy's hook as the only `pre_tool_call` hook (`fail_closed: true`, 300 s, auto-accepted). Another `pre_tool_call` hook is removed: one could rewrite a call's arguments after Orchy approved it. Existing `approvals.deny` globs are kept |
 | Profile | New Hermes workspaces get one of Hermes's own profiles: `%LOCALAPPDATA%\hermes\profiles\orchy-<id>` on Windows, `~/.hermes/profiles/orchy-<id>` elsewhere. Hermes 0.21 tries to rebuild its runtime for a `HERMES_HOME` outside its own data folder (and on Windows that failed), so an older workspace on `~/.hermes-<id>` should move its profile there |

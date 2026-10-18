@@ -278,15 +278,15 @@ function openPosixLogin(ws, runtime, a, name, label) {
 }
 
 /** Run a shell script in a terminal window on macOS (Terminal) or Linux (the desktop's terminal); none: paste `hint`. */
-export function openShellWindow(file, hint) {
+export function openShellWindow(file, hint, { env: childEnv } = {}) {
   if (process.platform === 'darwin') {
     const as = s => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`; // an AppleScript string
-    spawn('osascript', ['-e', `tell application "Terminal" to do script "sh " & quoted form of ${as(file)}`, '-e', 'tell application "Terminal" to activate'], { detached: true, stdio: 'ignore' }).unref();
+    spawn('osascript', ['-e', `tell application "Terminal" to do script "sh " & quoted form of ${as(file)}`, '-e', 'tell application "Terminal" to activate'], { detached: true, stdio: 'ignore', ...(childEnv ? { env: childEnv } : {}) }).unref();
     return;
   }
   const term = LINUX_TERMINALS.map(([bin, pre]) => [findBinary(bin), pre]).find(([bin]) => bin);
   if (!term) throw Object.assign(new Error(`No terminal window to open here. Run this in a terminal: ${hint}`), { status: 400 });
-  spawn(term[0], [...term[1], 'sh', file], { detached: true, stdio: 'ignore' }).unref();
+  spawn(term[0], [...term[1], 'sh', file], { detached: true, stdio: 'ignore', ...(childEnv ? { env: childEnv } : {}) }).unref();
 }
 
 // ── One: each workspace needs its OWN One scope, or the One CLI falls back to the orchestrator's ──
