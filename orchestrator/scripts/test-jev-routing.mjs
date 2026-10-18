@@ -70,8 +70,8 @@ const runs = [
 // ── the builder in the agent list, and Jev's primer ──
 {
   const withBuilder = [{ workspace: 'alpha', slug: 'agent-builder', displayName: 'AI Agent Builder', isBuilder: true }, ...AGENTS];
-  const r = await route('give the support agent access to Zendesk', { recent: [], agents: withBuilder, names: (w, s) => (s === 'agent-builder' ? 'Max' : null), primer: 'primer text', ask: jev({ pick: 'alpha/agent-builder' }) });
-  ok(asked.questions.agent.criteria['alpha/agent-builder']?.startsWith('Max, AI Agent Builder'), 'the builder is an agent Jev can pick, by name');
+  const r = await route('give the support agent access to Zendesk', { recent: [], agents: withBuilder, names: (w, s) => (s === 'agent-builder' ? 'Quinn' : null), primer: 'primer text', ask: jev({ pick: 'alpha/agent-builder' }) });
+  ok(asked.questions.agent.criteria['alpha/agent-builder']?.startsWith('Quinn, AI Agent Builder'), 'the builder is an agent Jev can pick, by name');
   ok(r.intent === 'build_agent' && r.agent === 'agent-builder' && r.workspace === 'alpha', 'picking the builder for a task makes it agent work', JSON.stringify({ i: r.intent, a: r.agent, w: r.workspace }));
   ok(asked.state.how_orchy_works === 'primer text' && asked.state.agents_named_in_instruction === 'Support Agent in Alpha Studio (alpha/support)', 'the primer rides along, with the agent Sam named by role', asked.state.agents_named_in_instruction);
   await route('check the inbox for Alpha', { recent: [], ask: jev() });
@@ -90,7 +90,7 @@ const runs = [
   const none = await route('find leads in Austin', { recent: [], runs: e, ask: jev({ earlier: ['none', 0.95] }) });
   ok(none.earlierRun === null, 'none means a new task');
   // continuing a Beta run while Jev's own pick was Alpha: Beta's workspace, no Alpha agent, a Beta model
-  const rBeta = [{ id: 'r_226', session: 's3', startedAt: '2026-10-09T10:00:00Z', agentName: 'Editor', workspace: 'beta', instruction: 'edit chapter 3', status: 'done' }];
+  const rBeta = [{ id: 'r_beta', session: 's3', startedAt: '2026-10-09T10:00:00Z', agentName: 'Editor', workspace: 'beta', instruction: 'edit chapter 3', status: 'done' }];
   const mixed = await route('now do chapter 4', { recent: [], runs: rBeta, ask: jev({ earlier: ['r0', 0.9] }) });
   ok(mixed.workspace === 'beta' && mixed.agent === null && mixed.model === tierModel(W.beta, 1), 'a follow-up keeps its own workspace, without another workspace\'s agent or model', JSON.stringify({ w: mixed.workspace, a: mixed.agent, m: mixed.model }));
   const same = await route('now do chapter 4', { recent: [], runs: rBeta, ask: jev({ earlier: ['r0', 0.9], pick: 'beta/editor' }) });
@@ -169,6 +169,43 @@ const runs = [
   ok(normal.tier === 2 && !normal.budget.leaned && !/cheaper fit/.test(asked.questions.agent.instructions), 'usual week: no lean', JSON.stringify({ t: normal.tier }));
   const none = await route('draft the support reply for Alpha', { ask: jev({ effort: 1.55 }), budget: null });
   ok(none.tier === 2 && !('usage_this_week' in asked.state) && !('budget' in none), 'no history: no budget line, no lean');
+}
+
+// ── missions (missions.mjs): several agents of one workspace in a row; most messages stay tasks ──
+{
+  const team = [...AGENTS, { workspace: 'alpha', slug: 'designer', displayName: 'Designer', description: 'Makes PDFs and one-pagers' }, { workspace: 'alpha', slug: 'ops-head', displayName: 'Head of Ops', description: 'Runs ops', team: ['support'] }];
+  const mj = (p, extra = {}) => jev({ intent: 'mission', intentP: { mission: p, task: 1 - p }, pick: 'alpha/general', ...extra });
+  const two = 'Research the latest on AI agents for Alpha and make a short PDF report from it';
+  const sure = await route(two, { recent: [], agents: team, ask: mj(0.82) });
+  ok('mission' in asked.questions.intent.criteria && /not a mission when one agent/i.test(asked.questions.intent.criteria.mission), 'Jev is offered "mission", with "one agent can do it → not a mission"');
+  ok(sure.intent === 'mission' && sure.workspace === 'alpha' && sure.agent === null && sure.missionSure && sure.missionP === 0.82 && !sure.needsChoice, 'a sure mission: its workspace, no agent, sure', JSON.stringify({ i: sure.intent, w: sure.workspace, s: sure.missionSure, n: sure.needsChoice }));
+  const unsure = await route(two, { recent: [], agents: team, ask: mj(0.6) });
+  ok(unsure.intent === 'mission' && !unsure.missionSure && unsure.holdReason === 'unsure', 'a mission Jev is less sure of: the card waits for Go', JSON.stringify({ i: unsure.intent, h: unsure.holdReason }));
+  const weak = await route(two, { recent: [], agents: team, ask: mj(0.45) });
+  ok(weak.intent === 'task', 'under 50%: a task');
+  const single = await route('check the support inbox for Alpha', { recent: [], agents: team, ask: mj(0.8) });
+  ok(single.intent === 'task', 'one piece of work stays a task even when Jev says mission (no "work in a row" in the words)');
+  const named = await route('research AI agents for Alpha, then have the Designer make a PDF from it', { recent: [], agents: team, ask: mj(0.8) });
+  ok(named.intent === 'mission', 'the owner names the agent for one part: still a mission (the planner gives it that step)');
+  const namedTask = await route('have the Support Agent research AI agents for Alpha and make a PDF from it', { recent: [], agents: team, ask: jev({ pick: 'alpha/support' }) });
+  ok(namedTask.intent === 'task' && namedTask.agent === 'support', 'the owner names one agent for all of it and Jev reads a task: a task for that agent');
+  const head = await route(two, { recent: [], agents: team, ask: mj(0.8, { pick: 'alpha/ops-head' }) });
+  ok(head.intent === 'task' && head.agent === 'ops-head', 'Jev’s pick is a head with a team: a task (it hands work on itself)', JSON.stringify({ i: head.intent, a: head.agent }));
+  const headLater = await route('For Alpha: research the latest on AI agents this week, then have the Head of Ops turn it into a short PDF report.', { recent: [], agents: team, ask: mj(0.99, { pick: 'alpha/ops-head' }) });
+  ok(headLater.intent === 'mission', 'the owner names the head only for a later step ("…then have the Head of Ops make the PDF"): still a mission', JSON.stringify({ i: headLater.intent, a: headLater.agent }));
+  const headAll = await route('Have the Head of Ops research the latest on AI agents for Alpha, then turn it into a short PDF report.', { recent: [], agents: team, ask: mj(0.9, { pick: 'alpha/ops-head' }) });
+  ok(headAll.intent === 'task' && headAll.agent === 'ops-head', 'the owner gives the head the whole ask: a task for the head (its team takes parts)', JSON.stringify({ i: headAll.intent, a: headAll.agent }));
+  const e = earlierRuns(runs, 's1');
+  const cont = await route('now research AI agents and make a PDF from it', { recent: [], runs: e, agents: team, ask: mj(0.8, { earlier: ['r0', 0.9] }) });
+  ok(cont.intent === 'task' && cont.earlierRun?.runId === 'r_new', 'a follow-up to an earlier run stays a follow-up task');
+  const jevTask = await route(two, { recent: [], agents: team, ask: jev({ pick: 'alpha/designer' }) });
+  ok(jevTask.intent === 'task' && jevTask.agent === 'designer', 'Jev says task for a two-step ask: a task (Jev decides, the words only veto)');
+  for (const t of ['draft a reply to the supplier and send it', 'write a blog post about agents for Alpha', 'summarise yesterday\'s payouts', 'what’s running?']) {
+    const r = await route(t, { recent: [], agents: team, ask: mj(0.9) });
+    ok(r.intent === 'task', `stays a task: "${t}"`, r.intent);
+  }
+  const noWs = await route('Research the latest on AI agents and make a short PDF report from it', { recent: [], agents: team, ask: mj(0.85, { ws: 'none' }) });
+  ok(noWs.intent === 'mission' && noWs.workspace === 'alpha' && noWs.needsChoice, 'Jev reads no client: its agent’s workspace is offered, and the card waits', JSON.stringify({ w: noWs.workspace, n: noWs.needsChoice, h: noWs.holdReason }));
 }
 
 // ── models: an agent's own model is exact; tiers only for the generalist and agents without one ──

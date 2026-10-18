@@ -80,6 +80,12 @@ for (const [group, rows] of [['Claude', claude], ['Codex', codex], ['ACP/OpenCod
   for (const [e, want] of rows) assert.equal(st(e), want, `${group}: ${e.tool || e.kind} ${e.summary || ''} → ${want}`);
   ok(`${group}: ${rows.length} event shapes → states`);
 }
+// a huddle call names one agent (`agent`) or several (`agents`)
+assert.equal(activityFor(T('mcp__jos__huddle', { agents: ['analyst', 'designer', 'agent-builder'], topic: 'x' }, 'Huddling'))?.label, 'Huddling with analyst, designer and agent-builder');
+assert.equal(activityFor(T('mcp__jos__huddle', { agent: 'analyst' }, 'Huddling'))?.label, 'Huddling with analyst');
+assert.equal(activityFor(T('mcp__jos__huddle', {}, 'Huddling'))?.label, 'Huddling with a colleague');
+assert.ok(activityFor(T('mcp__jos__huddle', { agents: ['a-very-long-agent-slug', 'another-very-long-agent-slug'] }, 'Huddling')).label.length <= 'Huddling with '.length + 40);
+ok('huddle label: one, several or nobody named, kept short');
 
 // image/video never inferred; only when the name says so
 assert.equal(st(T('mcp__openrouter__generate_image', {})), 'generating-image');

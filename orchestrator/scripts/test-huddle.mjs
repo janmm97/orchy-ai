@@ -16,6 +16,7 @@ import { isExecutive } from '../lib/agents.mjs';
 import { huddlePartners, huddleInvitees } from '../lib/delegation.mjs';
 import { protocolText } from '../lib/prompts.mjs';
 import { teamFacts, rulesText, preAnswer } from '../lib/rules.mjs';
+import { huddleLogEntry } from '../lib/logs.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, config } from '../lib/env.mjs';
@@ -174,6 +175,8 @@ try {
     ok(!analyst.includes('Parallel, header first.') && analyst.includes('strong model at medium'), 'an answer only reaches the agents it covers', analyst);
     ok(rulesAdded.length === 1 && rulesAdded[0].ws === 'beta' && rulesAdded[0].text.includes('→ Parallel, header first.'), '“Remember this” saves the answer as a standing rule', JSON.stringify(rulesAdded));
     ok(H.getHuddle(p.id).agreement.questions[1].answer === 'Parallel, header first.', 'Sam’s answer is kept on the agreement');
+    const pLog = huddleLogEntry(H.getHuddle(p.id), workspace('beta'));
+    ok(/Answered by Orchy from Sam's standing rules[\s\S]*Which model should Iris run on\? → The strong model at medium effort/.test(pLog) && !/Still contested/.test(pLog), 'the LOGS.md entry lists what Orchy answered from the rules', pLog);
 
     // sent back: the owner's answers become their line and they rework the plan
     let r = await H.startHuddle({ workspace: 'beta', agents: ['analyst', 'agent-builder'], topic: 'Again.', session: 's_test', maxTurns: 2 });
@@ -271,6 +274,8 @@ try {
     g = H.getHuddle(g.id);
     ok(g.status === 'agreed' && g.agents.length === 3 && g.agreement.work.length === 2, 'the newcomer gets work in the agreement; no one joins while it is written', JSON.stringify(g.agreement.work));
     ok(g.agreement.dissent.length === 1 && !g.turns.at(-1).challenge, 'what they still contest is kept for Sam; no pushback while wrapping');
+    const gLog = huddleLogEntry({ ...g, agreement: { ...g.agreement, orchyTake: { take: 'Go KPI page first.', why: 'It fits Nov 4.' } } }, workspace('beta'));
+    ok(/\*\*Still contested\*\*\n- Nora wants the full pack/.test(gLog) && /Orchy's take\*\* \(advice; Sam decides\): Go KPI page first\. It fits Nov 4\./.test(gLog), 'the LOGS.md entry keeps the dissent and Orchy’s take', gLog);
     ok(/mostly agreed\./.test(said.at(-1).text) && /still contested/.test(said.at(-1).text) && /, .+ and /.test(said.at(-1).text), 'Orchy names all three and flags the contested point', said.at(-1).text);
     const b4 = started.length;
     await H.approve(g.id);
@@ -398,6 +403,11 @@ try {
   ok(tb.workspace === 'beta' && tb.agents.join() === 'agent-builder,analyst', '"the builder" goes where the other named agent lives', JSON.stringify(tb));
   const p = huddlePair('have them meet', agents, { first: agents[1], second: agents[0], nameFor: names });
   ok(p.workspace === 'beta' && p.agents.join() === 'analyst,agent-builder', 'no names: Jev’s two picks');
+  const three = [...agents, { workspace: 'beta', slug: 'chief-of-staff', displayName: 'Chief of Staff', callName: 'Vera' }];
+  const t3 = huddlePair('get Vera, Nora and Iris to talk through the pack', three, { first: three[1], second: three[0], nameFor: names });
+  ok(t3.agents.join() === 'chief-of-staff,analyst,agent-builder', 'everyone the owner names joins, not just two', t3.agents.join());
+  const t1 = huddlePair('get Vera to meet someone about the pack', three, { first: three[1], second: three[3], nameFor: names });
+  ok(t1.agents.join() === 'chief-of-staff,analyst', 'one named: topped up to two with Jev’s pick', t1.agents.join());
 
   const W = [{ id: 'beta', name: 'Beta Labs', client: 'Beta Labs Inc', blurb: '', aliases: [], runtime: 'claude', enabled: true }, { id: 'alpha', name: 'Alpha Studio', client: 'Alpha Studio Ltd', blurb: '', aliases: [], runtime: 'claude', enabled: true }];
   let asked = null;
@@ -409,6 +419,8 @@ try {
   ok(!('huddle_with' in asked), 'an ordinary message doesn’t');
   const one = await realRoute('get Nora to meet someone about the deck', { ask: async () => ({ model: 'fake', ms: 1, answers: { intent: { choice: 'huddle', confidence: 0.9 }, workspace: { choice: 'beta', confidence: 0.9 }, agent: { choice: 'beta/general', confidence: 0.5 } } }), workspaces: W, agents, names });
   ok(one.intent === 'huddle' && one.needsChoice && one.holdReason === 'huddle', 'only one agent known: the card waits for Sam to pick the second', JSON.stringify({ h: one.huddle, r: one.holdReason }));
+  const threeR = await realRoute('Huddle Vera, Nora and Iris about the pack', { ask: ask('huddle'), workspaces: W, agents: three, names });
+  ok(threeR.huddle.join() === 'chief-of-staff,analyst,agent-builder' && !threeR.needsChoice, 'three named: all three huddle, and the card can count down', JSON.stringify({ h: threeR.huddle, n: threeR.needsChoice }));
 
   // A message with no huddle word, but two agents of one workspace by first name (Juno is Gamma's builder)
   const gamma = [{ id: 'gamma', name: 'Gamma Works', client: 'Gamma Works Ltd', blurb: '', aliases: [], runtime: 'claude', enabled: true }, ...W];

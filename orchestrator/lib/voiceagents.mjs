@@ -209,7 +209,7 @@ ${team}
 Each workspace also has a generalist: send_task with the workspace and no agent.
 
 ${TOOL_RULES}
-- When ${ownerName()} names an agent ("give this to Paige", "ask Leo"), send_task with that agent's workspace and slug.
+- When ${ownerName()} names an agent ("give this to Paige", "ask Rex"), send_task with that agent's workspace and slug.
 - When ${ownerName()} wants to talk to an agent ("put me through to Sophie", "let me talk to Dex"), transfer the call to them.
 - When it's unclear who should do it, leave workspace and agent out and Orchy routes it.`;
 }

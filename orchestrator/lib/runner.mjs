@@ -22,7 +22,7 @@ import { protocolFile, builderBrief, codexInstructions } from './prompts.mjs';
 import { namingBrief, nameOf } from './voiceagents.mjs';
 import { expireForRun, itemsForRun, createItem } from './inbox.mjs';
 import { appendRunLog, appendCostLine } from './logs.mjs';
-import { hasTaskDir, openTaskDir, saveTask } from './tasks.mjs';
+import { hasTaskDir, openTaskDir, saveTask, tasksDir } from './tasks.mjs';
 import { ensureHome, clientSettingsFile, clientReadDirs, adoptUploads, copyIntoTask, filesNote, taskRoot } from './clientspace.mjs';
 import { gateAndWait, waitAnswered } from './gate.mjs';
 import { askFields, clientDenyRules } from './clients.mjs';
@@ -31,7 +31,7 @@ import { planFor, planLine } from './actionplan.mjs';
 import { splitShell } from './policy.mjs';
 import { snapshot, changes, backendSettingsFile } from './backend.mjs';
 import { unroutedModel } from './router.mjs';
-import { redactEvent, nextActivity, briefFor } from './activity.mjs';
+import { redactEvent, nextActivity, briefFor, huddleWith } from './activity.mjs';
 import { moving } from './recover.mjs';
 
 export const BRIDGE_TOKEN = crypto.randomBytes(16).toString('hex');
@@ -201,7 +201,7 @@ function describeTool(name, input, run = null) {
   if (name === 'mcp__jos__report_done') return 'Reporting back to Orchy';
   if (name === 'mcp__jos__call_owner') return `Ringing ${ownerName()}`;
   if (name === 'mcp__jos__delegate') return `Handing work to ${String(input.agent || 'a teammate').slice(0, 40)}`;
-  if (name === 'mcp__jos__huddle') return `Huddling with ${String(input.agent || 'a colleague').slice(0, 40)}`;
+  if (name === 'mcp__jos__huddle') return `Huddling with ${huddleWith(input)}`;
   if (name === 'mcp__jos__note') return String(input.text || 'Progress note').slice(0, 90);
   if (name.startsWith('mcp__')) return `Using ${name.split('__').slice(1).join(' › ')}`;
   return `Using ${name}`;
@@ -333,6 +333,9 @@ export async function startRun(opts) {
     // Orchy starting a failed run again (recover.mjs): the run it repeats, and how many automatic tries so far
     retryOf: opts.retryOf || null,
     retries: Number(opts.retries) || 0,
+    // a step of a mission (missions.mjs): it reports to the mission, which checks it and decides what comes next
+    missionId: opts.missionId || null,
+    stepId: opts.stepId || null,
     files: [],
     sessionId: resume || crypto.randomUUID(),
     status: 'starting',
@@ -346,7 +349,13 @@ export async function startRun(opts) {
   // a generalist's task, and every client's, gets its own folder in Tasks/ (a follow-up keeps its parent's);
   // a client's lives in the client's own corner of the workspace (clientspace.mjs)
   if (run.client) ensureHome(ws, run.client);
-  if (hasTaskDir(run)) run.taskDir = openTaskDir(ws, run, parent);
+  // a mission's steps all share the mission's folder (a plain name in the workspace's Tasks/, never a client's)
+  const shared = run.missionId && !run.client && !backend && !run.huddleTalk && typeof opts.taskDir === 'string'
+    && /^[\w][\w .-]{0,80}$/.test(opts.taskDir) && !opts.taskDir.includes('..') && !/[. ]$/.test(opts.taskDir) ? opts.taskDir : null;
+  if (shared) {
+    fs.mkdirSync(path.join(tasksDir(ws), shared), { recursive: true });
+    run.taskDir = shared;
+  } else if (hasTaskDir(run)) run.taskDir = openTaskDir(ws, run, parent);
   // files the client uploaded (staged on their page) or the owner attached to a reply on the client's task
   if (run.client) {
     const paths = [...adoptUploads(ws, run, opts.uploads || []), ...copyIntoTask(ws, run, opts.ownerFiles || [])];
@@ -686,6 +695,8 @@ async function finish(run, ws, code, stderr) {
   run.endedAt = new Date().toISOString();
   run.durationMs = Date.parse(run.endedAt) - Date.parse(run.startedAt);
   if (run.status === 'stopping') run.outcome = 'stopped';
+  // a huddle turn that already said its piece (huddle_reply) and was ended early (endHuddleTurn) completed
+  else if (run.huddleTalk && run.huddleReply) run.outcome = 'completed';
   else if (run.report?.status) run.outcome = run.report.status;
   else if (code === 0 && !run.apiError) run.outcome = 'completed';
   else run.outcome = 'failed';
@@ -738,6 +749,15 @@ export function stopRun(runId, { by = null } = {}) {
   entry.stop();
   stopSubRuns(runId);
   return publicRun(run);
+}
+
+/** End a huddle turn once its huddle_reply has landed (server.mjs, the bridge), so it doesn't take extra trailing turns. */
+export function endHuddleTurn(runId) {
+  const entry = live.get(runId);
+  const run = db().runs[runId];
+  if (!entry || entry.queued || !run?.huddleTalk || !run.huddleReply) return;
+  entry.huddleDone = true;
+  entry.stop();
 }
 
 /** Start a queued or limit-paused run at once (the owner's "Run now"). A limit pause on its account is lifted for it. */

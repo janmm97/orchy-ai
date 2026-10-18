@@ -13,7 +13,8 @@ const empty = () => ({
   rules: [],         // remembered "always allow" approvals
   actionCache: {},   // One actionId -> {title, method, path, platform}
   jevDecisions: {},  // actionId or mcp:<tool> -> Jev's decision kind for it (jevdecide.mjs)
-  huddles: {},       // huddleId -> two agents talking a task through (huddle.mjs)
+  huddles: {},       // huddleId -> agents of one workspace talking a task through (huddle.mjs)
+  missions: {},      // missionId -> one ask run by several agents of one workspace in a row (missions.mjs)
   // approvals: 'decisions' = agents run on their own and only money, sending, calendar, deleting and
   // sharing ask the owner (askFor switches each kind); 'all' = every change asks.
   settings: { voiceReplies: false, sound: true, autoDispatch: true, actionPlan: true, liveJev: true, liveStart: true, maxLivePerAccount: 3, approvals: 'decisions', askFor: { money: true, send: true, calendar: true, delete: true, share: true } },

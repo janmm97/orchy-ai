@@ -155,12 +155,20 @@ function fileActivity(file) {
   return null;
 }
 
+/** Who a huddle call names: `agents` (one or more slugs) or the older single `agent`, as "a, b and c" (≤ 40 chars). */
+export function huddleWith(input) {
+  const list = (Array.isArray(input?.agents) ? input.agents : input?.agent ? [input.agent] : []).map(a => String(a || '').trim()).filter(Boolean);
+  if (!list.length) return 'a colleague';
+  const text = list.length === 1 ? list[0] : `${list.slice(0, -1).join(', ')} and ${list.at(-1)}`;
+  return text.length > 40 ? `${text.slice(0, 39).trimEnd()}…` : text;
+}
+
 function mcpActivity(server, tool, input, run) {
   if (server === 'jos') {
     if (tool === 'ask_user' || tool === 'request_connections') return act('waiting', { label: run?.client && tool === 'ask_user' && run.clientName ? `Waiting on ${run.clientName}` : LABELS.waiting });
     if (tool === 'report_done') return act('reporting');
     if (tool === 'delegate') return act('handing-off', { label: `Handing to ${String(input?.agent || 'a teammate').slice(0, 40)}` });
-    if (tool === 'huddle') return act('huddle', { label: `Huddling with ${String(input?.agent || 'a colleague').slice(0, 40)}` });
+    if (tool === 'huddle') return act('huddle', { label: `Huddling with ${huddleWith(input)}` });
     if (tool === 'jev_pick_tools') return act('looking-up-actions');
     return null; // note, call_owner, voice_agent: over in a moment, nothing to show
   }

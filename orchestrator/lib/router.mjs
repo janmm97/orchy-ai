@@ -24,7 +24,7 @@ export function jevPrimer() {
   return primerCache.text;
 }
 
-/** "Brooke, Chief Marketing Officer": the first name the owner calls an agent by, then its role. */
+/** "Ada, Chief Marketing Officer": the first name the owner calls an agent by, then its role. */
 function agentLabel(a, nameFor) {
   const n = nameFor(a.workspace, a.slug) || a.callName;
   return n && n.toLowerCase() !== String(a.displayName).toLowerCase() ? `${n}, ${a.displayName}` : a.displayName;
@@ -148,29 +148,33 @@ function heuristic(text, wss) {
   };
 }
 
-// ── huddles: two agents of one workspace talk something through (huddle.mjs) ──
+// ── huddles: two or more agents of one workspace talk something through (huddle.mjs) ──
 const HUDDLE_WORDS = /\b(huddle|meet(ing)?|talk (it )?(over|through)|discuss|together|sync up|sit down|brainstorm|align|put .{1,40} heads together|confer)\b/i;
 
 /** Agents the owner names in the text (call name, role or slug; the builder also as "builder"), in the order they appear. */
 export function namedAgents(text, agents, nameFor = () => null) {
-  const t = String(text || '');
   const hits = [];
   for (const a of agents) {
-    const names = [nameFor(a.workspace, a.slug), a.callName, a.displayName, a.slug, ...(a.isBuilder ? ['agent builder', 'builder'] : [])].filter(n => n && String(n).length >= 3);
-    let at = -1;
-    for (const n of names) {
-      const m = new RegExp(`(^|[^\\w])${esc(String(n)).replace(/[-\s]+/g, '[-\\s]+')}(?![\\w])`, 'i').exec(t);
-      if (m && (at < 0 || m.index < at)) at = m.index;
-    }
+    const at = nameAt(text, a, nameFor);
     if (at >= 0) hits.push({ a, at });
   }
   return hits.sort((x, y) => x.at - y.at).map(h => h.a);
 }
+/** Where the owner first names this agent in the text (call name, role or slug), or -1. */
+function nameAt(text, a, nameFor = () => null) {
+  const t = String(text || '');
+  const names = [nameFor(a.workspace, a.slug), a.callName, a.displayName, a.slug, ...(a.isBuilder ? ['agent builder', 'builder'] : [])].filter(n => n && String(n).length >= 3);
+  let at = -1;
+  for (const n of names) {
+    const m = new RegExp(`(^|[^\\w])${esc(String(n)).replace(/[-\s]+/g, '[-\\s]+')}(?![\\w])`, 'i').exec(t);
+    if (m && (at < 0 || m.index < at)) at = m.index;
+  }
+  return at;
+}
 
-/** The two agents of a huddle: the ones the owner named, else Jev's picks; both in one workspace, never the same twice. */
+/** The agents of a huddle: everyone the owner named, topped up to two with Jev's picks; all in one workspace, never the same twice. */
 export function huddlePair(text, agents, { first = null, second = null, workspace = null, nameFor } = {}) {
   const named = namedAgents(text, agents, nameFor);
-  const pool = [...named, first, second].filter(Boolean);
   // every workspace has a builder, so "the builder" alone doesn't place it: the workspace most of the named agents
   // (and Jev's picks, as a tiebreak) live in does, then whichever was named first
   const score = new Map();
@@ -178,10 +182,32 @@ export function huddlePair(text, agents, { first = null, second = null, workspac
   [first, second].filter(Boolean).forEach(a => score.set(a.workspace, (score.get(a.workspace) || 0) + 0.25));
   const best = [...score.entries()].sort((x, y) => y[1] - x[1])[0]?.[0];
   const ws = workspace || best || null;
-  const pair = [];
-  for (const a of pool) if (a.workspace === ws && !pair.some(p => p.slug === a.slug)) pair.push(a);
-  return { workspace: ws, agents: pair.slice(0, 2).map(a => a.slug) };
+  const pick = [];
+  for (const a of named) if (a.workspace === ws && !pick.some(p => p.slug === a.slug)) pick.push(a);
+  // Jev's picks only fill in when the owner named fewer than two
+  for (const a of [first, second].filter(Boolean)) if (pick.length < 2 && a.workspace === ws && !pick.some(p => p.slug === a.slug)) pick.push(a);
+  return { workspace: ws, agents: pick.map(a => a.slug) };
 }
+
+// ── missions: several agents of one workspace in a row (missions.mjs) ──
+// Jev's `mission` reading only stands when the words read as more than one piece of work in a row ("research X and
+// make a PDF", "find …, then draft …"). It's a necessary sign, not a sufficient one: most two-verb asks stay tasks.
+const WORK_VERB = /\b(research|find|look ?up|search|gather|collect|compile|analy[sz]e|audit|review|summari[sz]e|write|draft|make|create|design|build|turn|convert|render|produce|edit|record|prepare|plan|outline|scrape|pull|check|translate|format|compare|rank|score|generate|illustrate|animate|post|send|schedule|publish|email|storyboard|script)\b/gi;
+const SEQUENCE = /\b(then|after that|afterwards|followed by|once (?:that|it|you|they)['’]?s?\b|from (?:that|it|the (?:research|findings|results|notes))|based on (?:that|it|the (?:research|findings|results|notes))|use (?:that|it|the (?:research|findings|results|notes)) to|turn (?:it|that|them|the \w+) into)\b/i;
+const AND_MAKE = /(?:\band|,)\s+(?:have \w+\s+|get \w+ to\s+|let \w+\s+)?(?:make|create|write|draft|design|turn|build|produce|render|prepare|storyboard|script)\b/i;
+export function missionShape(text) {
+  const t = String(text || '');
+  const verbs = new Set((t.match(WORK_VERB) || []).map(v => v.toLowerCase().replace(/\s+/g, '')));
+  return verbs.size >= 2 && (SEQUENCE.test(t) || AND_MAKE.test(t));
+}
+/** The owner names this agent only after the work has started ("research X, then have Ada make the PDF"): it owns a later step, not the whole ask. */
+function laterStepOnly(text, a, nameFor) {
+  const at = nameAt(text, a, nameFor);
+  const first = String(text || '').search(new RegExp(WORK_VERB.source, 'i'));
+  return at >= 0 && first >= 0 && first < at;
+}
+const MISSION_MIN = 0.5;  // Jev's mission probability below this stays a task
+export const MISSION_SURE = 0.7; // and at or above this the mission card may start on its own (missions.mjs#SURE)
 
 // ── earlier runs in this session: is the owner continuing one, or asking how it went? ──
 const RUN_CHOICES = 5;
@@ -256,7 +282,7 @@ export async function route(text, { recent = [], runs = [], files = [], purpose 
   const conversation = recent.map(m => `${m.role}: ${m.text}`).join('\n');
   // every agent that can join a huddle, the AI Agent Builders included
   const huddlers = allAgents.filter(a => live.has(a.workspace) && (!forced || a.workspace === forced));
-  // agents the owner names ("Kai", "Brooke", "the builder"): Jev is told who they are, and two of one workspace may be a huddle
+  // agents the owner names ("Ada", "Iris", "the builder"): Jev is told who they are, and two of one workspace may be a huddle
   const namedHere = namedAgents(text, huddlers, names);
   const twoNamed = namedHere.some((a, i) => namedHere.some((b, j) => j !== i && b.workspace === a.workspace));
   const huddleish = huddlers.length >= 2 && (HUDDLE_WORDS.test(text) || twoNamed);
@@ -284,7 +310,8 @@ export async function route(text, { recent = [], runs = [], files = [], purpose 
         build_agent: 'Create, change, or retire an AI agent (a reusable specialist) in a workspace, including giving an agent access to an app or connection: the workspace\'s AI Agent Builder does it',
         chat: 'Small talk or a general question Orchy can answer directly without touching any client app',
         status: 'Asking about progress, running agents, results or logs of earlier work',
-        huddle: `Get two agents of one workspace to talk something through together first (a huddle or meeting between agents), then each does its part once ${ownerName()} approves what they agree. Also when ${ownerName()} has one named agent ask, brief, check with or get the view of another named agent, even if one of them must also change something`,
+        mission: `Work that needs two or more DIFFERENT agents of one workspace one after another, each using what the one before made (one researches, then another designs a PDF report from that research). Not a mission when one agent or the workspace generalist can do it end to end (most work), when ${ownerName()} names the one agent to do it, or when a department head would hand it to its own team`,
+        huddle: `Get two or more agents of one workspace to talk something through together first (a huddle or meeting between agents), then each does its part once ${ownerName()} approves what they agree. Also when ${ownerName()} has one named agent ask, brief, check with or get the view of another named agent, even if one of them must also change something`,
         fix_orchy: `Something is wrong with Orchy itself, this orchestrator app and its dashboard (a button, window or pane that misbehaves, an error Orchy shows, a crash, routing, voice or calls not working, a run failing because of Orchy rather than a client app), or ${ownerName()} wants Orchy's own code, behaviour or look changed. Not work on a client's or ${ownerName()}'s own website, apps or code`,
       },
     },
@@ -364,20 +391,20 @@ export async function route(text, { recent = [], runs = [], files = [], purpose 
   }
 
   if (forced) { wsChoice = forced; wsConf = 1; }
-  if (wsChoice === 'none' && (intent === 'task' || intent === 'build_agent')) {
+  if (wsChoice === 'none' && (intent === 'task' || intent === 'build_agent' || intent === 'mission')) {
     // Jev thinks it belongs to no client: offer its best agent's workspace, but only as a guess the owner confirms
     wsChoice = agentWs || null;
     wsConf = A.workspace?.probabilities?.[agentWs] ?? 0;
   }
   if (!live.has(wsChoice)) wsChoice = null; // never route to a workspace that's switched off
 
-  // a huddle: the two agents the owner named, else Jev's agent pick and who joins it; the card waits when that isn't two
+  // a huddle: the agents the owner named, else Jev's agent pick and who joins it; the card waits when that's under two
   if (intent === 'huddle') {
     const byKey = k => { const [w, s] = String(k || '').split('/'); return huddlers.find(a => a.workspace === w && a.slug === s) || null; };
     const pair = huddlePair(text, huddlers, { first: byKey(A.agent?.choice), second: byKey(A.huddle_with?.choice), workspace: forced, nameFor: names });
     return finalize({
       intent, workspace: pair.workspace, agent: null, huddle: pair.agents, model: null, tier: 1,
-      confidence: pair.agents.length === 2 ? A.intent?.confidence ?? 1 : 0,
+      confidence: pair.agents.length >= 2 ? A.intent?.confidence ?? 1 : 0,
       source: forced ? 'jev+mention' : 'jev',
       probabilities: { intent: A.intent?.probabilities || {}, workspace: A.workspace?.probabilities || {}, agent: A.agent?.probabilities || {}, huddleWith: A.huddle_with?.probabilities || {} },
       agentConfidence: null, askChat: false, earlierRun: null, statusAbout: null, effortScore: 1,
@@ -390,6 +417,24 @@ export async function route(text, { recent = [], runs = [], files = [], purpose 
   const ri = er?.choice && er.choice !== 'none' ? Number(er.choice.slice(1)) : -1;
   const erP = ri >= 0 ? er.probabilities?.[er.choice] ?? er.confidence ?? 0 : 0;
   const earlierRun = runs[ri] && erP >= EARLIER_RUN_MIN ? { runId: runs[ri].id, confidence: erP } : null;
+  // a mission (missions.mjs) only when Jev is fairly sure AND the words read as work in a row; never when it continues an
+  // earlier run or when Jev's agent is a head (it hands work to its own team), unless the owner names that head only for
+  // a later step ("research X, then have Ada make the PDF"). An agent the owner names keeps its part: the planner gives
+  // it that step, and one agent for everything comes back as a plain task card.
+  if (intent === 'mission') {
+    const pm = pi.mission ?? A.intent?.confidence ?? 0;
+    const pickA = agentSlug && allAgents.find(a => a.workspace === agentWs && a.slug === agentSlug);
+    const head = pickA?.team?.length && !laterStepOnly(text, pickA, names);
+    if (pm < MISSION_MIN || !missionShape(text) || head || earlierRun) intent = 'task';
+    else return finalize({
+      intent, workspace: wsChoice || null, agent: null, model: null, tier: 1,
+      confidence: Math.min(wsConf || 0, pm), source: forced ? 'jev+mention' : 'jev',
+      probabilities: { intent: A.intent?.probabilities || {}, workspace: A.workspace?.probabilities || {}, agent: A.agent?.probabilities || {}, effort: A.effort?.probabilities || {} },
+      agentConfidence: null, askChat: false, earlierRun: null, statusAbout: null, effortScore: A.effort?.score ?? 1,
+      missionP: Math.round(pm * 100) / 100, missionSure: pm >= MISSION_SURE,
+      jev: { model: res.model, ms: res.ms, via: res.via, usage: res.usage },
+    });
+  }
   // continuing a run brings its client and agent along, so Jev's reading of the follow-up is what counts
   // (unless the owner named another client); Jev's agent and model only stay when they belong to that client
   const cont = earlierRun && (intent === 'task' || intent === 'build_agent') && live.has(runs[ri].workspace) && (!forced || forced === runs[ri].workspace) ? runs[ri] : null;
@@ -490,9 +535,9 @@ const EARLIER_RUN_MIN = 0.7;    // Jev's probability for that run before Orchy o
 const ROUTE_TIMEOUT_MS = 15_000; // how long the owner's card waits for Jev before the heuristic picks
 
 function finalize(r, extra = {}) {
-  const work = r.intent === 'task' || r.intent === 'build_agent' || r.intent === 'huddle';
+  const work = r.intent === 'task' || r.intent === 'build_agent' || r.intent === 'huddle' || r.intent === 'mission';
   const needsWorkspace = work && !r.workspace;
-  const needsPair = r.intent === 'huddle' && (r.huddle || []).length !== 2;
+  const needsPair = r.intent === 'huddle' && (r.huddle || []).length < 2;
   // past runs: the owner rarely changed an agent Jev was over a third sure of, so only a very unsure pick waits
   const lowAgent = r.intent === 'task' && r.agentConfidence != null && r.agentConfidence < (config.routing.minAgentConfidence ?? 0.35);
   const unsure = work && (r.confidence ?? 0) < config.routing.minConfidenceForAutoDispatch;

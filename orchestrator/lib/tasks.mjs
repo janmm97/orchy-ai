@@ -100,7 +100,8 @@ function pcScrub(ws, run) {
 
 /** Write Tasks/<folder>/TASK.md from every round of the task so far. */
 export function saveTask(run, ws) {
-  if (!run.taskDir) return null;
+  // a mission's steps share one folder: the mission writes its TASK.md (missions.mjs#writeTask), not each step
+  if (!run.taskDir || run.missionId) return null;
   const rounds = Object.values(db().runs).filter(r => r.workspace === ws.id && r.taskDir === run.taskDir && (r.client || null) === (run.client || null))
     .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
   const first = rounds[0] || run, last = rounds[rounds.length - 1] || run;

@@ -103,6 +103,8 @@ function launchClaude(rt, run, ws, { prompt, agentSlug, mcpFile, resume, fingerp
   child.on('error', e => { stderr += `\n${e.message}`; });
   child.on('close', code => {
     const entry = rt.live.get(run.id);
+    // a huddle turn ended on purpose once its huddle_reply landed (runner.endHuddleTurn): no retry, no limit pause
+    if (entry?.huddleDone) return rt.finish(run, ws, 0, '');
     const failed = code !== 0 || run.apiError;
     const errText = `${run.apiError || ''}\n${stderr}\n${run.resultText || ''}`;
     if (failed && run.status !== 'stopping' && !run.report && !entry?.acted

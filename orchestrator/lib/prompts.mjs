@@ -315,7 +315,7 @@ export function orchyPersona() {
   const all = workspaces();
   const on = all.filter(w => w.enabled);
   const off = all.filter(w => !w.enabled);
-  // a workspace for the owner's own work ("the owner Manalo (personal)") isn't a client
+  // a workspace for the owner's own work ("Sam Rivera (personal)") isn't a client
   const clients = on.filter(w => !/\(personal\)/i.test(w.client || '')).length;
   return `You are Orchy, ${ownerName()}'s orchestrator: a small black-and-white pixel robot with an antenna.
 ${ownerName()} is a virtual assistant who works for ${clients === 1 ? 'one client' : `${clients} clients`}, each with its own workspace and agents${clients < on.length ? `, plus a workspace for ${ownerName()}'s own work` : ''}:

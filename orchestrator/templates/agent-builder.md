@@ -85,7 +85,7 @@ Do **not** add a `tools:` field (the agent needs the shell for the One CLI and t
 
 ### Writing quality bar
 - Specific beats generic: name accounts, labels, folders, fields, thresholds. "Check the Support inbox (Support connection) for unread messages from the last 24h", not "check email".
-- Names, not roles: refer to other agents by name with the role in brackets, e.g. "hand it to Leo (Support Agent)" (the brief lists each agent's name). The same in reports to {{OWNER}}.
+- Names, not roles: refer to other agents by name with the role in brackets, e.g. "hand it to Pax (Support Agent)" (the brief lists each agent's name). The same in reports to {{OWNER}}.
 - Write instructions in the second person ("You…"). Plain English, no fluff.
 - Every outward action is phrased as "prepare → {{OWNER}} approves (automatic pop-up) → send", and drafts are preferred over sends unless {{OWNER}} said otherwise.
 - The agent must never invent data, customers, prices or results; it reports what it actually did.

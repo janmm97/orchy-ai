@@ -144,6 +144,38 @@ try {
   end(work2.id); await delay(10);
   ok('approved huddle work starts one after another on a free account; huddle talk skips the queue');
 
+  // ── a huddle turn that already replied ends at once and counts as completed (runner.endHuddleTurn) ──
+  const said = await R.startRun({ workspace: 'acme', instruction: 'Your turn', huddle: 'h_3', huddleTalk: true });
+  R.endHuddleTurn(said.id); await delay(10);
+  assert.ok(R.isLive(said.id), 'no huddle_reply yet: endHuddleTurn leaves the turn alone');
+  R.getRun(said.id).huddleReply = { message: 'My view', ready: false };
+  R.endHuddleTurn(said.id); await delay(10);
+  assert.ok(!R.isLive(said.id));
+  assert.equal(R.getRun(said.id).outcome, 'completed', 'stopped on purpose after its reply: completed, not failed');
+  const plain = await start('acme');
+  R.getRun(plain.id).huddleReply = { message: 'x' };
+  R.endHuddleTurn(plain.id); await delay(10);
+  assert.ok(R.isLive(plain.id), 'only huddle talk turns are ended this way');
+  end(plain.id); await delay(10);
+  ok('a huddle turn with its reply in ends as completed; nothing else is ended by it');
+
+  // ── a mission's steps share the mission's folder (missions.mjs); TASK.md is the mission's to write ──
+  const stepRun = await R.startRun({ workspace: 'acme', instruction: 'Step one', missionId: 'mis_1', stepId: 's1', taskDir: '2026-10-17-shared-brief' });
+  assert.equal(R.getRun(stepRun.id).taskDir, '2026-10-17-shared-brief');
+  assert.equal(R.getRun(stepRun.id).missionId, 'mis_1');
+  assert.ok(fs.existsSync(path.join(tmp, 'workspaces/acme/Tasks/2026-10-17-shared-brief')));
+  end(stepRun.id); await delay(10);
+  assert.ok(!fs.existsSync(path.join(tmp, 'workspaces/acme/Tasks/2026-10-17-shared-brief/TASK.md')), 'a step writes no TASK.md of its own');
+  for (const bad of ['../escape', 'a/b', 'trailing.', '.hidden']) {
+    const r = await R.startRun({ workspace: 'acme', instruction: 'Step two', missionId: 'mis_1', stepId: 's2', taskDir: bad });
+    assert.notEqual(R.getRun(r.id).taskDir, bad, `a folder name like ${bad} is never used`);
+    end(r.id); await delay(10);
+  }
+  const notMission = await R.startRun({ workspace: 'acme', instruction: 'Plain task', taskDir: '2026-10-17-shared-brief' });
+  assert.notEqual(R.getRun(notMission.id).taskDir, '2026-10-17-shared-brief', 'only a mission step takes a given folder');
+  end(notMission.id); await delay(10);
+  ok('mission steps share one plain folder in Tasks/; odd names and non-mission runs never take one');
+
   // ── session/usage limit: the run pauses, the account waits, Run now or the reset starts them again ──
   const a = await start('acme');
   launched.get(a.id).hooks.record({ kind: 'tool', tool: 'Bash', toolUseId: 't1', input: { command: 'ls' } }); // it acted

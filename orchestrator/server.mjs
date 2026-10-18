@@ -52,8 +52,10 @@ import * as standingRules from './lib/rules.mjs';
 import { COACH } from './lib/huddlecoach.mjs';
 import * as backend from './lib/backend.mjs';
 import { BACKEND_ID, backendWorkspace } from './lib/workspaces.mjs';
-import { fixRouting } from './lib/router.mjs';
+import { fixRouting, unroutedModel } from './lib/router.mjs';
 import * as owner from './lib/owner.mjs';
+import * as missions from './lib/missions.mjs';
+import { openTaskDir } from './lib/tasks.mjs';
 
 const PORT = Number(env('PORT', '8008'));
 // scripts/restart.mjs hands the Orchy it starts a one-time token, so only it can report how the restart went.
@@ -98,6 +100,8 @@ for (const item of inbox.pending()) if (!runner.isLive(item.runId)) inbox.expire
 runner.onRunFinished(async (run, ws) => {
   try {
     if (run.backend) await reportFix(run, ws);
+    // a mission's step reports to its mission (missions.mjs): it checks it, decides the next step, and Orchy speaks once at the end
+    else if (run.missionId) { try { await missions.onRunEnded(run); } catch (e) { console.error('[mission]', e.message); } }
     else {
       if (validate.shouldValidate(run)) await validate.applyValidation(run);
       let rec = null;
@@ -124,6 +128,16 @@ recover.start({
   say: (text, meta = {}) => orchy.say(text, { ...meta, session: ensureSession(meta.session, { text: 'Recovery', origin: 'run' }).id }),
 });
 recover.boot(interrupted);
+// missions (missions.mjs): every step through startRun (account check, ungated-engine refusal, gate), Orchy's lines in
+// the mission's session; after a restart a mission with live steps waits for the owner (Resume / Stop), nothing starts on its own
+missions.start({
+  startRun: opts => runner.startRun(opts), stopRun: rid => runner.stopRun(rid), isLive: rid => runner.isLive(rid),
+  say: (text, meta = {}) => orchy.say(text, { ...meta, session: ensureSession(meta.session, { text: 'Mission', origin: 'run' }).id }),
+  openTaskDir: (ws, r) => openTaskDir(ws, r, null), handFiles: (ws, names) => handToWorkspace(ws, names),
+  nameOf: (w, s) => { try { return voiceAgents.nameOf(w, s); } catch { return null; } },
+  fallback: m => missionFallback(m),
+});
+missions.boot();
 // a huddle's turns report to the huddle; Orchy speaks for it at the start, the agreement and a failure
 huddles.initHuddles({ say: (text, meta) => orchy.say(text, meta) });
 // each scheduled run opens its own session, so its report has somewhere to land.
@@ -160,6 +174,28 @@ if (!env('NO_SCHEDULER')) startMonthly({
 
 // ── routing proposals (Jev's pick, shown as a card before dispatch) ──
 const proposals = new Map();
+// Jev's routing of a message that became a mission (memory only): its card falls back to a task card with it
+const missionRoutes = new Map();
+
+/** Not a mission after all (missions.mjs: one agent can do it, the plan didn't hold up, no account, or the owner's
+ *  choice): a task card for the same words, held for the owner's Send, with the planner's one agent picked when it named one. */
+function missionFallback(m) {
+  const ws = workspace(m.workspace);
+  const slug = m.fallback?.agent && m.fallback.agent !== 'general' ? m.fallback.agent : null;
+  const a = slug ? listAgents(ws.id).find(x => x.slug === slug && !x.isBuilder && !x.error) : null;
+  const r = missionRoutes.get(m.id) || {};
+  missionRoutes.delete(m.id);
+  const routing = { ...r, intent: 'task', workspace: ws.id, agent: a?.slug || null, needsChoice: false, holdReason: null, askChat: false, autoDispatchSeconds: r.autoDispatchSeconds ?? config.routing.autoDispatchSeconds };
+  const model = a?.engine ? modelFor(ws, a.model, a.engine) : unroutedModel(ws, a, m.text);
+  const p = {
+    id: id('route'), session: m.session, text: m.text, routing, viaVoice: !!m.viaVoice, status: 'proposed', createdAt: new Date().toISOString(), held: true, fromMission: m.id,
+    ...(m.files?.length && { files: m.files }),
+    choice: { intent: 'task', workspace: ws.id, agent: a?.slug || null, model },
+  };
+  proposals.set(p.id, p);
+  orchy.say(`A plain task fits that better: ${m.fallback?.why || 'one agent can do it'}. Here it is as a task card; press Send when it looks right.`, { missionId: m.id, workspace: ws.id, kind: 'mission-ask', session: m.session });
+  emit('routing.proposed', { proposal: publicProposal(p) });
+}
 // cards that are done (sent, answered, cancelled, failed) leave the Map about an hour later
 setInterval(() => {
   for (const [pid, p] of proposals) {
@@ -224,7 +260,8 @@ setInterval(() => backend.maybeRestart(anyLive), 30_000).unref();
 
 /** Is anything still going on in this session? (Busy sessions never auto-close.) */
 const sessionBusy = sid => Object.values(db().runs).some(r => r.session === sid && runner.isLive(r.id))
-  || [...proposals.values()].some(p => p.session === sid && p.status === 'proposed');
+  || [...proposals.values()].some(p => p.session === sid && p.status === 'proposed')
+  || missions.listMissions(50).some(m => m.session === sid && ['planning', 'planned', 'running', 'waiting'].includes(m.status));
 sweepSessions(sessionBusy);
 
 /** A run started from a window (agent card, Build, follow-up) is said into a session like any other. */
@@ -270,7 +307,18 @@ async function dispatchProposal(pid, overrides = {}) {
   if (!choice.workspace) throw Object.assign(new Error('Pick a workspace first'), { status: 400 });
   p.status = 'dispatching';
   emit('routing.updated', { proposal: publicProposal(p) });
-  // a huddle: the two agents talk it through first (huddle.mjs); Orchy says so in the session
+  // the owner turned the card into a mission (Do → Mission): Orchy plans it, and the mission card waits for Go
+  if (choice.intent === 'mission') {
+    let m;
+    try { m = missions.propose({ text: p.text, workspace: choice.workspace, session: p.session, routing: { ...p.routing, missionSure: false }, files: p.files || [], viaVoice: p.viaVoice }); }
+    catch (e) { Object.assign(p, { status: 'proposed', held: true, dispatchAt: null }); emit('routing.updated', { proposal: publicProposal(p) }); throw e; }
+    missionRoutes.set(m.id, p.routing);
+    p.status = 'dispatched';
+    p.missionId = m.id;
+    emit('routing.updated', { proposal: publicProposal(p) });
+    return { mission: missions.publicMission(m) };
+  }
+  // a huddle: the agents talk it through first (huddle.mjs); Orchy says so in the session
   if (choice.intent === 'huddle') {
     const topic = p.files?.length ? withFiles(p.text, handToWorkspace(workspace(choice.workspace), p.files)) : p.text;
     const h = await huddles.startHuddle({ workspace: choice.workspace, agents: choice.huddle, topic, session: p.session }).catch(e => {
@@ -347,12 +395,15 @@ async function readBody(req) {
   if (!raw) return {};
   try { return JSON.parse(raw); } catch { throw Object.assign(new Error('Invalid JSON'), { status: 400 }); }
 }
-const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.ico': 'image/x-icon', '.mp3': 'audio/mpeg', '.wav': 'audio/wav' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.ico': 'image/x-icon', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.wasm': 'application/wasm' };
+// frames: the viewer's sandboxed HTML (same origin) and click-to-load players from these hosts only (viewer.mjs#embedOf)
+const FRAME_SRC = "frame-src 'self' https://www.youtube-nocookie.com https://player.vimeo.com https://www.loom.com https://drive.google.com";
 function serveFile(res, file) {
   if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return send(res, 404, 'Not found');
   const ext = path.extname(file).toLowerCase();
-  // scripts only from Orchy itself (the ElevenLabs worklets and the resampler's WebAssembly included), so injected markup can't run code
-  res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-cache', ...(ext === '.html' && { 'Content-Security-Policy': "script-src 'self' 'wasm-unsafe-eval'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'" }) });
+  // scripts only from Orchy itself (the ElevenLabs worklets, the resampler's and pdf.js's WebAssembly and pdf.js's worker
+  // included), so injected markup can't run code
+  res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-cache', ...(ext === '.html' && { 'Content-Security-Policy': `script-src 'self' 'wasm-unsafe-eval'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; ${FRAME_SRC}` }) });
   fs.createReadStream(file).pipe(res);
 }
 function safeJoin(base, rel) {
@@ -419,6 +470,7 @@ on('GET', '/api/state', async () => {
     chat: recentChat(),
     proposals: [...proposals.values()].filter(p => p.status === 'proposed').map(publicProposal),
     huddles: huddles.listHuddles(20),
+    missions: missions.listMissions(20).map(missions.publicMission),
     backend: { id: BACKEND_ID, name: backendWorkspace().name, client: backendWorkspace().client, models: modelsFor(backendWorkspace()), pendingRestart: backend.pendingRestart()?.runId || null },
     envStatus: Object.fromEntries(ENV_KEYS.map(k => [k, SECRET(k) ? !!env(k) : env(k)])),
     clients: clients(),
@@ -509,6 +561,16 @@ async function chat({ text, viaVoice, session: sid, files: names, live, pick: ra
     if (files.length) return { ...review(), routing };
     orchy.reply(clean, { viaVoice, model: routing.effortScore > 1.5 ? 'sonnet' : config.orchy.chatModel, session, messageId: msg.id });
     return { kind: 'reply', routing, session: session.id };
+  }
+  // several agents of one workspace in a row (missions.mjs): Orchy plans it and the mission card shows the steps;
+  // with no client picked it's an ordinary card that waits for the owner to pick one
+  if (routing.intent === 'mission') {
+    if (routing.workspace) {
+      const m = missions.propose({ text: clean, workspace: routing.workspace, session: session.id, routing, files: files.map(f => f.name), viaVoice: !!viaVoice });
+      missionRoutes.set(m.id, routing);
+      return { kind: 'mission', mission: missions.publicMission(m), routing, session: session.id };
+    }
+    routing = { ...routing, intent: 'task' };
   }
   const p = {
     id: id('route'), session: session.id, text: clean, routing, viaVoice: !!viaVoice, status: 'proposed', createdAt: new Date().toISOString(), messageId: msg.id,
@@ -648,6 +710,24 @@ on('PATCH', '/api/routing/:id', async (req, _res, { id: pid }) => {
   return publicProposal(p);
 });
 on('POST', '/api/routing/:id/dispatch', async (req, _res, { id: pid }) => runner.publicRun(await dispatchProposal(pid, await readBody(req))));
+
+// Missions (missions.mjs): the card's edits while it waits, and the owner's answers (go, hold, stop, as-task, and an
+// open ask's accept / followup / skip / retry / reassign / replan / use-replan / keep-plan / raise / continue / resume).
+// The changes are owner-only like every other mutating route (ownerOnly); every step still starts through startRun.
+on('GET', '/api/missions', async () => missions.listMissions(30).map(missions.publicMission));
+on('GET', '/api/missions/:id', async (_req, _res, { id: mid }) => {
+  const m = missions.getMission(mid);
+  if (!m) throw Object.assign(new Error('That mission is gone'), { status: 404 });
+  return missions.publicMission(m);
+});
+on('PATCH', '/api/missions/:id', async (req, _res, { id: mid }) => missions.publicMission(missions.patch(mid, await readBody(req))));
+on('POST', '/api/missions/:id/act', async (req, _res, { id: mid }) => {
+  const b = await readBody(req);
+  const action = String(b.action || '');
+  if (!missions.ACTIONS.includes(action)) throw Object.assign(new Error(`Unknown choice "${action.slice(0, 40)}"`), { status: 400 });
+  const m = await missions.act(mid, { action, agent: b.agent ? String(b.agent).slice(0, 80) : null, text: String(b.text || '').slice(0, 4000) });
+  return missions.publicMission(m);
+});
 // "Just answer": the owner meant a question after all (a card Jev held between chat and task)
 on('POST', '/api/routing/:id/answer', async (_req, _res, { id: pid }) => {
   const p = proposals.get(pid);
@@ -1370,6 +1450,12 @@ on('POST', '/api/settings', async (req) => {
   // Orchy in huddles (huddlecoach.mjs): on/off, and interventions per huddle, 0–6 (default 3)
   if ('huddleCoach' in b) db().settings.huddleCoach = !!b.huddleCoach;
   if ('huddleCoachMax' in b) db().settings.huddleCoachMax = Math.min(COACH.cap, Math.max(0, Math.round(Number(b.huddleCoachMax)) || 0));
+  // missions (missions.mjs): start a sure one on its own, Jev's read of each step, the cost ceiling per mission
+  // ($1–500, default 15), live steps at once (1–3, default 2), a time cap in minutes (0 = off)
+  for (const k of ['missionAutoStart', 'validateJevMissions']) if (k in b) db().settings[k] = !!b[k];
+  if ('missionCeiling' in b) db().settings.missionCeiling = Math.min(500, Math.max(1, Math.round(Number(b.missionCeiling)) || missions.LIMITS.ceiling));
+  if ('missionMaxLive' in b) db().settings.missionMaxLive = Math.min(missions.LIMITS.liveCap, Math.max(1, Math.round(Number(b.missionMaxLive)) || missions.LIMITS.maxLive));
+  if ('missionMaxMin' in b) db().settings.missionMaxMin = Math.min(1440, Math.max(0, Math.round(Number(b.missionMaxMin)) || 0));
   if ('callStuckMin' in b) db().settings.callStuckMin = Math.min(120, Math.max(1, Math.round(Number(b.callStuckMin)) || 10));
   if (b.approvals === 'decisions' || b.approvals === 'all') db().settings.approvals = b.approvals;
   if (b.askFor && typeof b.askFor === 'object') {
@@ -1507,6 +1593,7 @@ async function voiceTool(name, p) {
       const who = c.agent && c.agent !== 'general' ? voiceAgents.callName(c.workspace, c.agent, listAgents(c.workspace).find(a => a.slug === c.agent)?.displayName) : 'the generalist';
       return `Orchy routed it to ${who} in ${workspace(c.workspace).name}. ${r.proposal.dispatchAt ? `It starts in a few seconds unless ${ownerName()} changes it in the dashboard.` : `It waits for ${ownerName()} to send it from the dashboard.`}`;
     }
+    if (r.kind === 'mission') return `That needs several of ${workspace(r.mission.workspace).name}'s agents, so Orchy is planning it as a mission; ${ownerName()} sees the steps in the dashboard${missions.missionSettings().autoStart ? ', and a plan Jev is sure of starts after a short countdown' : ' and starts it there'}.`;
     if (r.kind === 'ignored') return `${r.routing.switchedOff.name} is switched off, so nothing was started.`;
     return 'Orchy took that as a question rather than a task; the answer is in the Orchy chat.';
   }

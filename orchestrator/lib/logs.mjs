@@ -79,7 +79,7 @@ export function appendRunLog(run, ws, items = []) {
 | **Task** | ${run.instruction.replace(/\|/g, '\\|').replace(/\n+/g, ' ').slice(0, 400)} |
 | **Duration** | ${fmtDuration(run.durationMs)}${run.numTurns ? ` · ${run.numTurns} turns` : ''} |
 | **Run** | \`${run.id}\` |
-${run.delegatedBy ? `| **Delegated by** | ${run.delegatedByName} · run \`${run.delegatedBy}\` |\n` : ''}${run.taskDir ? `| **Task folder** | \`${path.basename(ws.dir)}/${run.client ? `.clients/${run.client}/` : ''}Tasks/${run.taskDir}\` |\n` : ''}
+${run.delegatedBy ? `| **Delegated by** | ${run.delegatedByName} · run \`${run.delegatedBy}\` |\n` : ''}${run.missionId ? `| **Mission** | step ${run.stepId} of \`${run.missionId}\` |\n` : ''}${run.taskDir ? `| **Task folder** | \`${path.basename(ws.dir)}/${run.client ? `.clients/${run.client}/` : ''}Tasks/${run.taskDir}\` |\n` : ''}
 **Summary**
 
 ${(r.summary || run.resultText || 'The agent finished without writing a summary.').trim()}
@@ -134,9 +134,15 @@ const HUDDLE_STATUS = { get agreed() { return `🤝 Agreed, waiting for ${ownerN
 /** One entry for a huddle (huddle.mjs): who talked, about what, and what they agreed. Its turns aren't logged one by one. */
 export function appendHuddleLog(h, ws) {
   ensureFile();
+  const entry = huddleLogEntry(h, ws);
+  fs.appendFileSync(LOGS_PATH, entry);
+  return entry;
+}
+/** The huddle's LOGS.md entry: its agreement, what's still contested, Orchy's take and what Orchy answered from the rules. */
+export function huddleLogEntry(h, ws) {
   const names = h.agents.map(a => a.name).join(' + ');
   const a = h.agreement || {};
-  const entry = `
+  return `
 ---
 
 ### ${HUDDLE_STATUS[h.status] || h.status} · ${ws.name} · Huddle: ${names}
@@ -162,12 +168,53 @@ ${bullets((a.work || []).map(w => `${w.agent}: ${w.task}`))}
 
 **Questions for ${ownerName()}**
 ${bullets(a.questions_for_owner)}
-${h.workRunIds?.length ? `
+${(a.questions || []).some(q => q.orchy) ? `
+**Answered by Orchy from ${ownerName()}'s standing rules**
+${bullets(a.questions.filter(q => q.orchy).map(q => `${q.q} → ${q.orchy.answer}${q.orchy.source ? ` (${q.orchy.source})` : ''}`))}
+` : ''}${a.dissent?.length ? `
+**Still contested**
+${bullets(a.dissent)}
+` : ''}${a.orchyTake?.take ? `
+**Orchy's take** (advice; ${ownerName()} decides): ${a.orchyTake.take}${a.orchyTake.why ? ` ${a.orchyTake.why}` : ''}
+` : ''}${h.workRunIds?.length ? `
 **Started after ${ownerName()} approved**
 ${bullets(h.workRunIds.map(id => { const r = db().runs[id]; return r ? `${r.agentName} · run \`${id}\`` : `run \`${id}\``; }))}
 ` : ''}`;
+}
+
+const MISSION_STATUS = { done: '🧭 Mission done', partial: '🟡 Mission partly done', get stopped() { return `⏹️ Mission stopped by ${ownerName()}`; }, failed: '❌ Mission failed' };
+
+/** One entry for a mission (missions.mjs): its steps, who did each, and the runs (each step run has its own entry too). */
+export function appendMissionLog(m, ws) {
+  ensureFile();
+  const entry = missionLogEntry(m, ws);
   fs.appendFileSync(LOGS_PATH, entry);
   return entry;
+}
+export function missionLogEntry(m, ws) {
+  const num = id => m.steps.findIndex(x => x.id === id) + 1 || id;
+  const steps = m.steps.map((s, i) => `${i + 1}. ${s.agentName} · ${s.status}${s.needs?.length ? ` (after step ${s.needs.map(num).join(', ')})` : ''}: ${String(s.task).replace(/\s+/g, ' ').slice(0, 160)}${s.runIds?.length ? ` · run${s.runIds.length > 1 ? 's' : ''} ${s.runIds.map(r => `\`${r}\``).join(', ')}` : ''}`);
+  const files = [...new Set(m.steps.flatMap(s => s.files || []))];
+  return `
+---
+
+### ${MISSION_STATUS[m.status] || m.status} · ${ws.name} · Mission: ${String(m.objective || m.text).replace(/\s+/g, ' ').slice(0, 120)}
+**${fmtTime(m.endedAt || new Date().toISOString())}**
+
+| | |
+|---|---|
+| **Workspace** | ${ws.name}${ws.client ? ` — ${ws.client}` : ''} |
+| **${ownerName()} asked** | ${String(m.text).replace(/\|/g, '\\|').replace(/\n+/g, ' ').slice(0, 400)} |
+| **Steps** | ${m.steps.length} · ${m.steps.filter(s => s.status === 'done').length} done${m.autoFixes ? ` · ${m.autoFixes} automatic fix${m.autoFixes === 1 ? '' : 'es'}` : ''}${m.replanned ? ` · replanned ${m.replanned}×` : ''} |
+| **Cost** | $${(Number(m.cost) || 0).toFixed(2)} (plan $${(Number(m.costs?.plan) || 0).toFixed(2)}, ceiling $${(Number(m.ceiling) || 0).toFixed(2)}) |
+| **Mission** | \`${m.id}\` |
+${m.taskDir ? `| **Task folder** | \`${path.basename(ws.dir)}/Tasks/${m.taskDir}\` |\n` : ''}
+**Steps**
+${bullets(steps)}
+
+**Files**
+${bullets(files)}
+${m.result?.met != null ? `\n**Objective met (Jev):** ${Math.round(m.result.met * 100)}%\n` : ''}`;
 }
 
 /** Parse LOGS.md back into entries for the dashboard. */
@@ -180,7 +227,7 @@ export function readLogs() {
     const head = p.match(/^###\s+(.+)$/m)?.[1] || '';
     const [statusRaw, workspace, agent] = head.split(' · ').map(s => s.trim());
     const status = (statusRaw || '').replace(/^[^A-Za-z]+/, '').trim();
-    const kind = /complet/i.test(status) ? 'ok' : /fail|block/i.test(status) ? 'bad' : 'mid';
+    const kind = /complet|^mission done/i.test(status) ? 'ok' : /fail|block/i.test(status) ? 'bad' : 'mid';
     return {
       status, kind, workspace, agent,
       when: p.match(/^\*\*(.+?)\*\*\s*$/m)?.[1] || '',

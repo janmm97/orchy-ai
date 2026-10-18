@@ -1,5 +1,5 @@
 // One CLI wrapper. Runs `one --agent ...` with a specific cwd, because One scopes
-// connections by folder (root = orchestrator, "One Agent", "226 Agent").
+// connections by folder (the orchestrator root and each workspace folder with its own One login).
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
