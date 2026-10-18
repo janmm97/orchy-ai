@@ -70,9 +70,11 @@ export function enabledWorkspaces() {
 /** "Acme" / "Acme Agent" / "Acme Workspace" → "Acme Workspace": what the owner, Jev, Orchy and every agent call a workspace. */
 export const workspaceName = s => `${String(s || '').trim().replace(/\s+(agent|workspace)$/i, '')} Workspace`;
 
-/** What the owner calls a workspace: its id, its name without "Workspace" (or an older "Agent"), and the aliases saved for it ("acme", "the bakery"). */
+/** What the owner calls a workspace: its id, its name without "Workspace" (or an older "Agent"), and the aliases saved for it ("acme", "the bakery").
+ * A short name Orchy keeps for itself ("Orchy Workspace" → "Orchy") stays whole, so "Orchy, …" still talks to Orchy. */
 export function handles(ws) {
-  const all = [ws.name.replace(/\s+(agent|workspace)$/i, ''), ws.id, ...(ws.aliases || [])].map(s => String(s || '').trim()).filter(Boolean);
+  const short = ws.name.replace(/\s+(agent|workspace)$/i, '');
+  const all = [RESERVED_IDS.has(short.trim().toLowerCase()) ? ws.name : short, ws.id, ...(ws.aliases || [])].map(s => String(s || '').trim()).filter(Boolean);
   return all.filter((s, i) => all.findIndex(x => x.toLowerCase() === s.toLowerCase()) === i);
 }
 
