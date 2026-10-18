@@ -456,6 +456,9 @@ function insideDir(p, dir) {
   const rel = path.relative(dir, path.resolve(dir, p));
   return rel && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
+// A "~" in a path Orchy checks may only be in the folder it lands in (Windows names a temp folder C:\Users\RUNNER~1\…):
+// one below that folder could be a short name for a protected one (CLAUDE~1 is .claude), and one at the start is home
+const tildeBelow = (abs, root) => /~/.test(path.relative(path.resolve(root), path.resolve(abs)));
 
 // PowerShell file writes (how Codex on Windows saves files) are own-folder file work when every
 // path stays inside the workspace and nothing in the line can run another command.
@@ -584,7 +587,9 @@ function outsidePaths(text, roots, { code = false, climbsOk = false } = {}) {
  * more than a plain path (quoted text with spaces, a variable, a wildcard, code) or a folder Orchy can't name says no.
  */
 function climbsInside(seg, shell, dirs, roots) {
-  if (!dirs.length || dirs.some(d => !d || /[$`%~]/.test(d) || d === ELSEWHERE)) return false;
+  // a folder with a "~" counts only when it's inside a root and the "~" is in the root's own name (tildeBelow)
+  const unnamed = d => !d || d === ELSEWHERE || /[$`%]|^~/.test(d) || (/~/.test(d) && !roots.some(r => inRoots(d, [r]) && !tildeBelow(d, r)));
+  if (!dirs.length || dirs.some(unnamed)) return false;
   let any = false;
   for (const { word } of shellWords(seg, shell)) {
     if (!/(^|[^.])\.\.(?![^\\/])/.test(word)) continue;
@@ -773,9 +778,10 @@ function deleteInWork(seg, cwd, command, ws, ctx) {
   if (!targets.length) return false;
   const roots = [ctx.home || ws.dir, ...workRoots(ws).slice(1)];
   return targets.every(t => {
-    if (/[$%`~]/.test(t)) return false;
+    if (/[$%`]|^~/.test(t)) return false;
     const abs = realPath(t, cwd);
-    if (!roots.some(r => insideDir(abs, r))) return false;
+    const root = roots.find(r => insideDir(abs, r));
+    if (!root || tildeBelow(abs, root)) return false;
     if (/(^|[\\/])(\.clients|\.git|\.claude|\.jos|\.codex)([\\/]|$)/i.test(path.relative(ws.dir, abs)) || setupFile(abs, ws, ctx)) return false;
     return !/[*?[]/.test(t) || path.basename(t).replace(/[*?[\]]/g, '').replace(/[^A-Za-z0-9]/g, '').length >= 2;
   });
@@ -1278,10 +1284,10 @@ function freeDelete(seg, cwd, ws, ctx) {
   }
   if (!targets.length) return false;
   return targets.every(t => {
-    if (/[$%`~]|(^|[\\/])\.\.([\\/]|$)/.test(t)) return false;
+    if (/[$%`]|^~|(^|[\\/])\.\.([\\/]|$)/.test(t)) return false;
     const abs = path.resolve(cwd, t);
     const rel = path.relative(path.resolve(own), abs);
-    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return false;
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel) || /~/.test(rel)) return false;
     if (/(^|[\\/])(\.clients|\.git|\.claude|\.jos|\.codex)([\\/]|$)/i.test(rel) || setupFile(abs, ws, ctx)) return false;
     const wild = /[*?[]/.test(t);
     if (wild && path.basename(t).replace(/[*?[\]]/g, '').replace(/[^A-Za-z0-9]/g, '').length < 2) return false;
@@ -1814,6 +1820,9 @@ async function decideOnce(toolName, input, ctx) {
     // the network, or a script or program Orchy can't vet, could reach outside this PC
     const reaches = why => /network|script|program/.test(why || '');
     if (decisionsOnly) {
+      // the settings of the harness this run uses ask wherever its profile lives, also inside a folder that is otherwise
+      // the run's own (a profile kept in the temp folder): hooks there run in every later run, past the gate
+      if (harnessPlace(command, [cwd], ws) && (v = askPiece('This command changes the settings of the harness this run uses, which every later run loads', command, { outward: true }))) return v;
       for (const n of needs) {
         // Orchy's own dashboard (approvals, settings) never runs on its own: curl, Invoke-RestMethod, a script's fetch…
         if ((free || (ctx.scriptsFree && n.script)) && talksToDashboard({ ...n, piece: command }) && (v = askPiece(`This command ${DASHBOARD_WHY}`, n.piece, { outward: true }))) return v;

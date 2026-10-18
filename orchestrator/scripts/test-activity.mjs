@@ -310,7 +310,11 @@ process.stdin.resume(); process.stdin.on('data', () => {}).on('end', () => {
   const argv = JSON.parse(fs.readFileSync(path.join(tmp, 'argv.json'), 'utf8'));
   const settings = JSON.parse(fs.readFileSync(argv[argv.indexOf('--settings') + 1], 'utf8'));
   const fwd = p => p.replace(/\\/g, '/');
-  assert.ok(settings.claudeMdExcludes.includes(fwd(path.join(tmp, 'CLAUDE.md'))) && settings.claudeMdExcludes.includes(path.join(tmp, 'AGENTS.md')), JSON.stringify(settings.claudeMdExcludes));
+  // Orchy's root is where its code really is (Node resolves module paths: /var is /private/var on macOS), and runs work
+  // under that same real path, so that's the one excluded (fs.realpathSync is how Node resolves them; .native would
+  // also spell out Windows short names, which Node keeps)
+  const real = fs.realpathSync(tmp);
+  assert.ok(settings.claudeMdExcludes.includes(fwd(path.join(real, 'CLAUDE.md'))) && settings.claudeMdExcludes.includes(path.join(real, 'AGENTS.md')), JSON.stringify(settings.claudeMdExcludes));
   assert.ok(settings.permissions.ask.includes('Read(./**/*.png)') && settings.permissions.ask.includes('Edit(./CLAUDE.md)'));
   const hook = settings.hooks.PreToolUse[0];
   assert.equal(hook.matcher, 'Bash|PowerShell');

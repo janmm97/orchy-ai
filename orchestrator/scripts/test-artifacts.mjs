@@ -322,6 +322,7 @@ r = await get('chart.png&download=1');
 ok(/^attachment/.test(r.headers['content-disposition']), '?download=1 forces an attachment');
 srv.close();
 
-fs.rmSync(tmp, { recursive: true, force: true });
+// Windows may still hold a file the server streamed (out/): retry, and a leftover temp folder isn't a failed check
+try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch (e) { console.warn(`(couldn't remove ${tmp}: ${e.code})`); }
 console.log(fail ? `\n${fail} FAILED` : '\nall artifact checks passed');
 process.exit(fail ? 1 : 0);

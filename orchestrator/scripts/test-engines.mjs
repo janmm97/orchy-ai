@@ -143,7 +143,11 @@ ok(loginHint({ runtime: 'codex', codexAccount: 'owner@example.com', codexHome: '
   const oc = engine('opencode');
   const w = { id: 'oc1', name: 'OC One', folder: 'workspaces/__oc1', runtime: 'opencode', opencodeAccount: null, opencodeProfile: dir, color: 'teal' };
   config.workspaces.push(w);
-  // no real `opencode` here: the CLI probe answers what the profile's env would show
+  // no real `opencode` here: the CLI probe answers what the profile's env would show. The probe only runs when an
+  // opencode program is found, so a stand-in file is "it" on a PC (or CI runner) without OpenCode
+  const keepCli = process.env.OPENCODE_CLI_PATH;
+  if (!oc.bin()) { fs.writeFileSync(path.join(dir, 'opencode-stand-in'), ''); process.env.OPENCODE_CLI_PATH = path.join(dir, 'opencode-stand-in'); }
+  process.on('exit', () => { if (keepCli === undefined) delete process.env.OPENCODE_CLI_PATH; else process.env.OPENCODE_CLI_PATH = keepCli; });
   let cli = { providers: [], models: [] }, probedEnv = null;
   const undoProbe = setOpenCodeProbeForTests(async (_bin, env) => { probedEnv = env; return cli; });
   let a = await accountCheck(w, { force: true });
