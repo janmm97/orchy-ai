@@ -334,6 +334,7 @@ function clientAccessHTML(ws, agents, access) {
   return `<div class="section-h"><h3>Client access <span class="count">${list.length}</span></h3>${f && !editing ? '' : `<button class="btn sm" data-ca="add">${icon('plus')}Share agents</button>`}</div>
     <p class="hint" style="margin:0">A private link for a client to work with chosen agents from their own page, as ${esc(wsName(ws.id))}’s accounts. Their agents’ questions and decisions in ${esc(wsName(ws.id))}’s apps go to them; anything that touches this PC still comes to you.</p>
     ${pages.online ? '' : `<div class="offbar"><b>Only on this PC so far</b><span>Links open at ${esc(pages.base || 'http://localhost:8009')} until the client page is online. Put port ${esc(pages.port || 8009)} (never the dashboard’s own port) behind a Cloudflare Tunnel with Access, then enter its address below. README → Client pages has the steps.</span></div>`}
+    ${list.length && pages.video === false ? `<div class="offbar"><b>Client video is off</b><span>Clients see their files, but videos only show a poster: they play from Cloudflare R2, never through the tunnel. Add R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_BUCKET to .env to switch it on (README → Client pages).</span></div>` : ''}
     ${fresh ? `<div class="cfresh"><b>Link for ${esc(list.find(c => c.id === fresh.id).name)}</b><span>Shown only now. Copy it and send it to them. Lost it? Make a new one; the old one then stops working.</span>
       <div class="crow"><input class="input" readonly value="${esc(fresh.link)}" aria-label="The link" data-ca="link"><button class="btn sm primary" data-ca="copy">Copy</button></div></div>` : ''}
     ${form && !editing ? form : ''}
@@ -473,7 +474,9 @@ export async function openAddWorkspace({ edit = null, from } = {}) {
           <span class="hint">${esc(r.blurb || '')} ${[...new Set(r.models || [])].filter(m => m !== 'default').length ? `Models: ${esc([...new Set(r.models || [])].join(', '))}.` : 'Uses the model its own config picks.'}${r.sandbox && r.sandbox !== 'ready' ? ' This PC hasn’t set up Codex’s Windows sandbox, so Orchy checks every single command first.' : ''}${r.available ? '' : ` ${esc(r.label || engine)} isn’t installed on this PC yet.`}</span>
           ${ungated ? `<div class="fixbar"><b>${esc(r.label)} can’t be held behind your approvals.</b><span>It could change files and run commands without asking you. Orchy won’t start it unless you allow that here.</span>
             <label class="choice"><input type="checkbox" id="wa-ungated" ${edit?.allowUngated ? 'checked' : ''}><span>I understand: let it run without approvals</span></label></div>` : ''}</div>
-        ${profileOnly ? `<div class="field"><span class="label">Runs as</span>
+        ${r.sharedLogin ? `<div class="field"><label class="label" for="wa-email">Runs as</label>
+          <span class="hint">${esc(r.label || '')} has one sign-in for this whole computer, shared by every ${esc(r.label || '')} workspace${def ? `: <b>${esc(def)}</b>` : ''}. Each run waits for your OK before it starts.</span>
+          <input class="input" id="wa-email" type="email" placeholder="the account’s email" value="${esc(mine || def || '')}"></div>` : profileOnly ? `<div class="field"><span class="label">Runs as</span>
           <span class="hint">Its own ${esc(r.label || '')} profile folder, made for it so its provider logins never mix with another agent’s. You log it in once (a sign-in window opens after you set it up).</span>
           <input class="input" id="wa-email" type="text" maxlength="80" placeholder="Provider it uses, e.g. anthropic (optional note)" value="${esc(mine)}"></div>` : `<div class="field"><span class="label">Runs as</span>
           ${def ? `<label class="choice"><input type="radio" name="wa-acct" value="default" ${pickOwn ? '' : 'checked'}><span>Your default ${esc(r.label || '')} profile · <b>${esc(def)}</b></span><span class="hint">Same login as your other ${esc(r.label || '')} work.</span></label>` : ''}
@@ -496,11 +499,12 @@ export async function openAddWorkspace({ edit = null, from } = {}) {
   const submit = async e => {
     const btn = e.currentTarget;
     const profileOnly = rt[engine]?.accountModel === 'profile';
-    const own = profileOnly || body.querySelector('[name="wa-acct"]:checked')?.value === 'own';
-    const account = own ? body.querySelector('#wa-email').value.trim() : rt[engine]?.defaultAccount;
+    const shared = !!rt[engine]?.sharedLogin; // one sign-in per computer: the email typed, never a profile of its own
+    const own = !shared && (profileOnly || body.querySelector('[name="wa-acct"]:checked')?.value === 'own');
+    const account = own || shared ? body.querySelector('#wa-email').value.trim() : rt[engine]?.defaultAccount;
     const payload = { client: body.querySelector('#wa-client').value.trim(), blurb: body.querySelector('#wa-blurb').value.trim(), aliases: body.querySelector('#wa-aliases').value, runtime: engine, account, ownProfile: own, allowUngated: rt[engine]?.capabilities?.gated === false && !!body.querySelector('#wa-ungated')?.checked };
     if (!edit && !body.querySelector('#wa-name').value.trim()) { body.querySelector('#wa-name').focus(); return ctx.toast('Give it a name first.', 'warn'); }
-    if (own && !profileOnly && !account) { body.querySelector('#wa-email').focus(); return ctx.toast('Which account should it run as?', 'warn'); }
+    if ((own || shared) && !profileOnly && !account) { body.querySelector('#wa-email').focus(); return ctx.toast('Which account should it run as?', 'warn'); }
     btn.disabled = true;
     try {
       if (edit) {
@@ -753,6 +757,7 @@ export async function openConnections(wsId, { from, edit } = {}) {
     type: s.type || 'stdio', mn: name, on: s.enabled !== false, md: s.description || '',
     mc: s.command || '', ma: (s.args || []).join('\n'), me: Object.entries(s.env || {}).map(([k, v]) => `${k}=${v}`).join('\n'),
     mu: s.url || '', mh: Object.entries(s.headers || {}).map(([k, v]) => `${k}: ${v}`).join('\n'),
+    mo: s.oauth?.clientId || '', mp: s.oauth?.callbackPort ? String(s.oauth.callbackPort) : '',
   });
   const closeForm = () => { adding = false; editing = null; draft = { type: 'stdio' }; };
   w.edit = name => { if (name) pendingEdit = name; };
@@ -816,7 +821,7 @@ export async function openConnections(wsId, { from, edit } = {}) {
       <div class="field"><div class="section-h"><span class="label">External connections · MCP servers (${Object.keys(mcp).length})</span><button class="btn sm" data-act="add">${icon('plus')}Add</button></div>
         <div class="list">${Object.entries(mcp).map(([n, s]) => `<div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center">
           <span><b>${esc(n)}</b> <span class="chip">${esc(s.type)}</span>${s.enabled ? '' : ' <span class="chip">off</span>'}<br><span class="data muted">${esc(s.type === 'stdio' ? `${s.command} ${[].concat(s.args || []).join(' ')}` : s.url)}</span>${s.description ? `<br><span class="hint">${esc(s.description)}</span>` : ''}</span>
-          <span class="btnrow"><button class="btn sm" data-test="${esc(n)}">Test</button><button class="btn sm" data-edit="${esc(n)}" aria-pressed="${editing === n}">${icon('edit')}Edit</button><button class="btn sm icon" data-del="${esc(n)}" aria-label="Remove ${esc(n)}">${icon('trash')}</button></span></div>`).join('') || '<div class="hint">None yet. Add an MCP server and the Agent Builder can hand it to agents.</div>'}</div>
+          <span class="btnrow">${!s.auth ? '' : s.auth.status === 'waiting' ? '<span class="plate blink">signing in</span>' : s.auth.signedIn ? `<span class="chip" title="${s.auth.viaClaude ? 'Signed in through Claude Code for this workspace’s own account: its agents’ runs use it.' : 'Signed in with OAuth. Orchy keeps the token, never the workspace.'}">${icon('check')}signed in${s.auth.viaClaude ? ' · via Claude Code' : ''}</span><button class="btn sm" data-login="${esc(n)}">Sign in again</button>` : `<button class="btn sm" data-login="${esc(n)}" title="For servers that sign in with an account instead of an API key">Sign in</button>`}${s.auth?.status === 'failed' && s.auth.error ? `<span class="hint" title="${esc(s.auth.error)}">sign-in failed</span>` : ''}<button class="btn sm" data-test="${esc(n)}">Test</button><button class="btn sm" data-edit="${esc(n)}" aria-pressed="${editing === n}">${icon('edit')}Edit</button><button class="btn sm icon" data-del="${esc(n)}" aria-label="Remove ${esc(n)}">${icon('trash')}</button></span></div>`).join('') || '<div class="hint">None yet. Add an MCP server and the Agent Builder can hand it to agents.</div>'}</div>
         ${!paired && Object.keys(mcp).length ? `<div class="btnrow"><span class="hint" style="flex:1">This browser isn’t paired, so the values in these servers show as ••••••. Pair it to see, test or change them.</span><button class="btn sm" data-act="pair">${icon('key')}Pair this browser</button></div>` : ''}
         <div data-form></div></div>
       <div class="field"><div class="section-h"><span class="label">One connections (${d.connections.one.length})</span><span class="btnrow">${d.oneScoped !== false && !oneErr ? `<button class="btn sm" data-act="app">${icon('plus')}Add app</button>` : ''}<button class="btn sm ghost" data-act="one-guide">How One works</button><button class="btn sm" data-act="refresh">${icon('refresh')}Refresh</button></span></div>
@@ -894,9 +899,21 @@ export async function openConnections(wsId, { from, edit } = {}) {
     body.querySelectorAll('[data-test]').forEach(b => b.addEventListener('click', async () => {
       if (await pairFirst()) return;
       b.disabled = true; b.textContent = 'Testing…';
-      const r = await api(`/api/workspaces/${current}/mcp-test`, { method: 'POST', body: mcp[b.dataset.test] }).catch(e => ({ ok: false, error: e.message }));
+      const { auth: _auth, ...saved } = mcp[b.dataset.test] || {};
+      const r = await api(`/api/workspaces/${current}/mcp-test`, { method: 'POST', body: { ...saved, name: b.dataset.test } }).catch(e => ({ ok: false, error: e.message }));
       b.disabled = false; b.textContent = 'Test';
       ctx.toast(r.ok ? `${b.dataset.test}: works · ${r.tools.length} tools (${r.tools.slice(0, 4).map(t => t.name).join(', ')}${r.tools.length > 4 ? '…' : ''})` : `${b.dataset.test}: ${r.error}`, r.ok ? '' : 'warn');
+    }));
+    // OAuth sign-in for a server with no API key: the browser opens; this window redraws on connections.changed
+    body.querySelectorAll('[data-login]').forEach(b => b.addEventListener('click', async () => {
+      if (await pairFirst()) return;
+      b.disabled = true;
+      try {
+        const r = await api(`/api/workspaces/${current}/mcp/${encodeURIComponent(b.dataset.login)}/login`, { method: 'POST' });
+        // a service that turns Orchy's registration down signs in through Claude Code in a terminal window instead
+        ctx.toast(r?.status === 'terminal' ? `${b.dataset.login} only lets approved apps sign in, so a terminal opened to sign in through Claude Code. Follow it there (your browser opens); then reopen Connections.` : `${b.dataset.login} opened its sign-in page in your browser. Allow access there; this window updates when it’s done.`);
+        if (r?.status === 'terminal') b.disabled = false;
+      } catch (err) { b.disabled = false; ctx.toast(`${b.dataset.login}: ${err.message}`, 'warn'); }
     }));
     if (pendingEdit && mcp[pendingEdit] && !paired) { pendingEdit = null; openPair(); } // its values are hidden here
     else if (pendingEdit) { // opened from an agent's window: that server's form, or a new one under its name if it isn't here yet
@@ -922,7 +939,9 @@ export async function openConnections(wsId, { from, edit } = {}) {
         <div class="field"><label for="ma">Arguments (one per line)</label><textarea class="textarea data" id="ma" style="min-height:64px" placeholder="-y&#10;@some/mcp-server">${v('ma')}</textarea></div>
         <div class="field"><label for="me">Environment (KEY=value per line)</label><textarea class="textarea data" id="me" style="min-height:56px" placeholder="API_KEY=...">${v('me')}</textarea></div></div>
       <div data-http ${stdio ? 'hidden' : ''} style="display:grid;gap:var(--s3)"><div class="field"><label for="mu">URL</label><input class="input data" id="mu" placeholder="https://example.com/mcp" value="${v('mu')}"></div>
-        <div class="field"><label for="mh">Headers (Name: value per line)</label><textarea class="textarea data" id="mh" style="min-height:56px" placeholder="Authorization: Bearer ...">${v('mh')}</textarea></div></div>
+        <div class="field"><label for="mh">Headers (Name: value per line)</label><textarea class="textarea data" id="mh" style="min-height:56px" placeholder="Authorization: Bearer ...">${v('mh')}</textarea><span class="hint">No API key? Leave this empty, save, then press Sign in.</span></div>
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) 7em;gap:var(--s3)"><div class="field"><label for="mo">Sign-in app client ID (only if the service gives one)</label><input class="input data" id="mo" placeholder="empty: Orchy registers itself" value="${v('mo')}"></div>
+          <div class="field"><label for="mp">Callback port</label><input class="input data" id="mp" inputmode="numeric" placeholder="any" value="${v('mp')}"></div></div></div>
       <div class="field"><label for="md">What it's for</label><input class="input" id="md" placeholder="Shown to the Agent Builder when it picks connections" value="${v('md')}"></div>
       <div class="btnrow end"><button class="btn" data-act="cancel">Cancel</button><button class="btn" data-act="test">Test</button><button class="btn primary" data-act="save">${icon('check')}Save</button></div></div>`;
     slot.firstElementChild.addEventListener('input', e => { if (e.target.id) draft[e.target.id] = e.target.value; });
@@ -939,12 +958,13 @@ export async function openConnections(wsId, { from, edit } = {}) {
     const lines = id => slot.querySelector(id).value.split('\n').map(s => s.trim()).filter(Boolean);
     const def = () => ({ enabled: draft.on !== false, ...(draft.type === 'stdio'
       ? { type: draft.type, command: slot.querySelector('#mc').value.trim(), args: lines('#ma'), env: Object.fromEntries(lines('#me').map(l => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)])), description: slot.querySelector('#md').value.trim() }
-      : { type: draft.type, url: slot.querySelector('#mu').value.trim(), headers: Object.fromEntries(lines('#mh').map(l => [l.slice(0, l.indexOf(':')).trim(), l.slice(l.indexOf(':') + 1).trim()])), description: slot.querySelector('#md').value.trim() }) });
+      : { type: draft.type, url: slot.querySelector('#mu').value.trim(), headers: Object.fromEntries(lines('#mh').map(l => [l.slice(0, l.indexOf(':')).trim(), l.slice(l.indexOf(':') + 1).trim()])), description: slot.querySelector('#md').value.trim(),
+          ...(slot.querySelector('#mo').value.trim() ? { oauth: { clientId: slot.querySelector('#mo').value.trim(), callbackPort: Number(slot.querySelector('#mp').value.trim()) || null } } : {}) }) });
     slot.querySelector('[data-act="cancel"]').addEventListener('click', () => { closeForm(); slot.innerHTML = ''; body.querySelectorAll('[data-edit]').forEach(x => x.setAttribute('aria-pressed', 'false')); });
     slot.querySelector('[data-act="test"]').addEventListener('click', async e => {
       const btn = e.currentTarget;
       btn.disabled = true;
-      const r = await api(`/api/workspaces/${current}/mcp-test`, { method: 'POST', body: def() }).catch(err => ({ ok: false, error: err.message }));
+      const r = await api(`/api/workspaces/${current}/mcp-test`, { method: 'POST', body: { ...def(), ...(editing ? { name: editing } : {}) } }).catch(err => ({ ok: false, error: err.message }));
       btn.disabled = false;
       ctx.toast(r.ok ? `Works · ${r.tools.length} tools` : `Didn't connect: ${r.error}`, r.ok ? '' : 'warn');
     });

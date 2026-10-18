@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { db, save } from './store.mjs';
 import { expandPath, ROOT, env, ownerName, readText } from './env.mjs';
 import { workspaces, RETIRED_DIR } from './workspaces.mjs';
+import { agyRoot } from './engines/antigravity.mjs';
 import { fencedDirs, guardedFile, rootRel, LOCK_MARKERS } from './backend.mjs';
 
 const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS', 'WebSearch', 'WebFetch', 'TodoWrite', 'Task', 'Agent', 'NotebookRead', 'ToolSearch', 'Skill', 'ListMcpResourcesTool', 'ReadMcpResourceTool', 'SendUserMessage']);
@@ -1290,7 +1291,8 @@ function freeDelete(seg, cwd, ws, ctx) {
 }
 
 // ── Sign-ins on this PC: another workspace's Claude or Codex profile, any Claude or Codex login file, One's logins ──
-const profileDirs = w => [w.claudeConfigDir ? expandPath(w.claudeConfigDir) : path.join(os.homedir(), '.claude'), w.codexHome ? expandPath(w.codexHome) : path.join(os.homedir(), '.codex')];
+// (each workspace's Antigravity folders too: its agents' agy settings and conversations, engines/antigravity.mjs)
+const profileDirs = w => [w.claudeConfigDir ? expandPath(w.claudeConfigDir) : path.join(os.homedir(), '.claude'), w.codexHome ? expandPath(w.codexHome) : path.join(os.homedir(), '.codex'), agyRoot(w)];
 const samePath = (a, b) => path.relative(path.resolve(a), path.resolve(b)) === '';
 /** Which sign-in a path reaches, or null. */
 function signInArea(p, ws, ctx) {
@@ -1714,7 +1716,7 @@ async function decideOnce(toolName, input, ctx) {
     // without its own One login the CLI would quietly use the orchestrator's account: never let that happen
     // (nor a One call Orchy can't read, or a program named by a variable, which could be it)
     if (ctx.oneScoped === false && (calls.length || hidden || segs.some(s => computedHead(s, shell)))) {
-      return { decision: 'deny', reason: `${ws.name} isn't signed in to its own One account yet, so the One CLI is off here${calls.length ? '' : ' (and so is a program called through a variable or alias, which could be it: call programs by name)'}. Do the task without One, or tell ${ownerName()} (mcp__jos__ask_user) that One needs signing in from the Workspace window.` };
+      return { decision: 'deny', reason: `${ws.name} isn't signed in to its own One account yet, so the One CLI is off here${calls.length ? '' : ' (and so is a program called through a variable or alias, which could be it: call programs by name)'}. Do the task without One, or tell ${ownerName()} (mcp__jos__ask_user) that One needs signing in from the Workspaces window.` };
     }
     // each ask names the piece of the line that needs it; one the owner always allows passes and the next one asks
     // (never an outward one in a run a head handed over)

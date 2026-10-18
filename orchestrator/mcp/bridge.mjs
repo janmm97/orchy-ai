@@ -156,6 +156,7 @@ const ALL_TOOLS = [
       properties: {
         status: { type: 'string', enum: ['completed', 'partial', 'blocked', 'failed'] },
         summary: { type: 'string', description: 'Detailed, honest summary: what you did, what you found or produced, what you could not do and why.' },
+        result: { type: 'string', description: `When the task was to fetch, find, look up or show something (an email, a message, a list, numbers, an answer): the thing itself, in full, as Markdown (an email: From, To, Date, Subject, then the body as plain text). ${ownerName()} sees it as is, right under the report Orchy gives in the dashboard. Leave out when the task only did something.` },
         actions_taken: { type: 'array', items: { type: 'string' }, description: 'Each meaningful action, e.g. "Sent email to x@y.com via the shared gmail".' },
         outputs: { type: 'array', items: { type: 'string' }, description: 'Links, file paths, IDs, or results produced.' },
         follow_ups: { type: 'array', items: { type: 'string' }, description: `Anything ${ownerName()} should do or decide next.` },
@@ -328,12 +329,12 @@ Check this before you rely on it, and say in your report_done what you handed to
       const list = (label, xs) => (xs?.length ? `\n${label}:\n${xs.map(x => `- ${x}`).join('\n')}` : '');
       if (r.status === 'agreed' && r.agreement) {
         const g = r.agreement;
-        return text(`Your huddle with ${st.with} ended in an agreement (${r.turns} turns, huddle ${st.huddleId}${r.taskDir ? `, transcript Tasks/${r.taskDir}/HUDDLE.md` : ''}).
+        return text(`Your huddle with ${st.with} ended in an agreement (${r.turns} turns, huddle ${st.huddleId}${r.taskDir ? `, transcript ${r.taskRel || `Tasks/${r.taskDir}`}/HUDDLE.md` : ''}).
 Summary: ${g.summary}${list('Decisions', g.decisions)}${list(`Work once ${ownerName()} approves`, (g.work || []).map(w => `${w.agent}: ${w.task}`))}${list(`Questions for ${ownerName()}`, g.questions_for_owner)}${list(`Still contested (${ownerName()} decides)`, g.dissent)}
 
 It's waiting for ${ownerName()} in the dashboard. Nothing in it runs until ${ownerName()} approves; then each part starts as its own run (yours resumes the huddle). Don't do that work here. Carry on with the rest of your task, and say in report_done that the agreement is waiting for ${ownerName()}.`);
       }
-      return text(`Your huddle with ${st.with} ended without an agreement: ${r.status}${r.note ? ` (${r.note})` : ''}${r.taskDir ? ` (transcript Tasks/${r.taskDir}/HUDDLE.md)` : ''}. ${ownerName()} can pick it up again from the huddle window. Carry on without it, and say so in report_done.`);
+      return text(`Your huddle with ${st.with} ended without an agreement: ${r.status}${r.note ? ` (${r.note})` : ''}${r.taskDir ? ` (transcript ${r.taskRel || `Tasks/${r.taskDir}`}/HUDDLE.md)` : ''}. ${ownerName()} can pick it up again from the huddle window. Carry on without it, and say so in report_done.`);
     }
     case 'call_owner': {
       let c;

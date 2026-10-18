@@ -10,7 +10,8 @@ import { db as storeDb, save as storeSave, runEventsPath } from './store.mjs';
 import { emit as busEmit } from './bus.mjs';
 import { ownerName } from './env.mjs';
 import { workspace as wsById } from './workspaces.mjs';
-import { clientHome, taskRoot } from './clientspace.mjs';
+import { clientHome, taskRoot, taskRel } from './clientspace.mjs';
+import { listAgents, homeOf, departmentOf, departmentsOf, wsRel } from './agents.mjs';
 import { LABELS, nextActivity } from './activity.mjs';
 import * as artifacts from './artifacts.mjs';
 import { sideEffects } from './recover.mjs';
@@ -18,6 +19,7 @@ import { sideEffects } from './recover.mjs';
 // Swappable for tests (scripts/test-validate.mjs).
 const deps = {
   db: storeDb, save: storeSave, emit: busEmit, workspace: wsById,
+  agents: wsId => listAgents(wsId),
   events: runId => { try { return fs.readFileSync(runEventsPath(runId), 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); } catch { return []; } },
   artifactsFor: run => artifacts.listArtifacts({ run, limit: 1000 }),
   sync: run => artifacts.syncRun(run, { ended: true }),
@@ -197,7 +199,7 @@ export function appSteps(events = []) {
   for (const e of events) {
     if (e.kind !== 'tool' || isBridge(e.tool)) continue;
     const shell = e.tool === 'Bash' || e.tool === 'PowerShell';
-    if (!shell && !/^mcp__/.test(String(e.tool || '')) && !['Write', 'Edit', 'MultiEdit'].includes(e.tool) && !/^ACP_/.test(String(e.tool || ''))) continue;
+    if (!shell && !/^mcp__/.test(String(e.tool || '')) && !['Write', 'Edit', 'MultiEdit'].includes(e.tool) && !/^(ACP|AGY)_/.test(String(e.tool || ''))) continue;
     const text = `${e.tool || ''} ${e.summary || ''} ${e.input?.command || ''} ${shell || /^mcp__/.test(e.tool) ? '' : String(e.input?.content || e.input?.new_string || '').slice(0, 300)}`;
     out.push({ text, flow: /\bflow\s+execute\b/i.test(text), end: e.toolUseId ? ends.get(e.toolUseId) || 'open' : 'open' });
   }
@@ -266,6 +268,36 @@ function expectsCheck(expects, arts) {
   return miss.length ? { name: 'Expected files', ok: false, level: 'fail', note: `No ${miss.join(', ')} from this step` } : { name: 'Expected files', ok: true, note: `${expects.length} found` };
 }
 
+// ── organised by department: only in a workspace laid out that way (config `departments`) ──
+/** A build that left an agent without `department` + `home` fails: the owner's "Ask it to fix" sends it back. */
+function agentsCheck(run, ws) {
+  if (!run.createdAgents?.length || !ws || !departmentsOf(ws).length) return null;
+  let list = [];
+  try { list = deps.agents(ws.id) || []; } catch { return null; }
+  const touched = run.createdAgents.map(c => list.find(a => a.slug === c.slug)).filter(Boolean);
+  const miss = touched.filter(a => !a.department || !a.home);
+  const n = touched.length;
+  if (!miss.length) return n ? { name: 'Agent homes', ok: true, note: `${n} agent file${n === 1 ? '' : 's'} with department + home` } : null;
+  return { name: 'Agent homes', ok: false, level: 'fail', note: `${miss.map(a => a.callName || a.slug).join(', ')} ${miss.length === 1 ? 'has' : 'have'} no department + home in the frontmatter` };
+}
+
+/** Files a run saved outside its home, its task folder and its department's shared folders (teammates' homes aren't). */
+function placesCheck(run, ws, arts) {
+  if (!ws || run.client || run.isBuilder || run.backend || !departmentsOf(ws).length) return null;
+  let list = [];
+  try { list = deps.agents(ws.id) || []; } catch { return null; }
+  const agent = run.agentSlug ? list.find(a => a.slug === run.agentSlug) || null : null;
+  const own = homeOf(ws, agent), dept = departmentOf(ws, agent), task = taskRel(run);
+  const homes = [...list.map(a => homeOf(ws, a)), ws.generalistHome ? wsRel(ws.generalistHome) : null].filter(h => h && h !== own);
+  const under = (rel, p) => !!p && (rel === p.toLowerCase() || rel.startsWith(`${p.toLowerCase()}/`));
+  const fine = rel => under(rel, task) || under(rel, own) || (under(rel, dept) && !homes.some(h => under(rel, h)));
+  const mine = arts.filter(a => a.status !== 'missing' && (a.runIds || [a.runId]).includes(run.id));
+  if (!mine.length) return null;
+  const out = mine.filter(a => !fine(String(a.rel || '').toLowerCase()));
+  if (!out.length) return { name: 'Where it saved', ok: true, note: '' };
+  return { name: 'Where it saved', ok: false, level: 'warn', note: `${out.length} file${out.length === 1 ? '' : 's'} outside its home and department: ${out.slice(0, 3).map(a => a.rel).join(', ')}${out.length > 3 ? '…' : ''}` };
+}
+
 /**
  * The deterministic pass (sync, no model). `events` = the run's recorded events (plus its team runs' for app claims),
  * `arts` = its artifacts (artifacts.listArtifacts({run})), `expects` = a step's promised [{kind, note}].
@@ -278,7 +310,7 @@ export function checkRun(run, { events = [], arts = [], ws = null, expects = nul
   if (!run.report && run.resultText && !did.length) checks.push({ name: 'Report', ok: true, note: 'Answered in its last message (it only read)' });
   else if (!run.report) checks.push({ name: 'Report', ok: false, level: 'warn', note: `Finished without a report${did.length ? ` after ${did.length} step${did.length === 1 ? '' : 's'} that could change things` : ''}` });
   else checks.push({ name: 'Report', ok: true, note: run.report.status === 'completed' ? '' : `It says ${run.report.status}` });
-  for (const c of [statusCheck(run, events), outputsCheck(run, ws, arts), actionsCheck(run, [...events, ...teamEvents]), expectsCheck(expects, arts)]) if (c) checks.push(c);
+  for (const c of [statusCheck(run, events), outputsCheck(run, ws, arts), actionsCheck(run, [...events, ...teamEvents]), expectsCheck(expects, arts), agentsCheck(run, ws), placesCheck(run, ws, arts)]) if (c) checks.push(c);
   return { verdict: verdictOf(checks), checks: checks.map(tidy), at: new Date().toISOString(), ms: Date.now() - t0 };
 }
 const tidy = c => ({ name: c.name, ok: !!c.ok, note: c.note || '', ...(c.ok ? {} : { level: c.level || 'warn' }) });

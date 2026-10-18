@@ -10,6 +10,8 @@
 //   instructionFile                  the instructions file the harness reads in the workspace folder
 //   defaultProfileLabel              how the default profile is shown ("(default ~/.claude)")
 //   capabilities: { gated, mcp, resume, headless, clientSafe, clientReason?, huddles, notes }
+//   optIn?: 'ENV_NAME'                an engine that is off unless the owner sets ENV_NAME=1 in .env (engineOffered)
+//   sharedLogin?: true                one sign-in per computer: every workspace on it must name the same account
 //       gated: false = Orchy can't put every risky action behind its approval gate; startRun refuses it unless the
 //       workspace has `allowUngated: true` in config.json
 //   install: { cmd, optional, note, shellNote? }   how the setup guide / `npm run setup` / `npm run check` offer to install it
@@ -33,6 +35,8 @@ import codex from './codex.mjs';
 import opencode from './opencode.mjs';
 import hermes from './hermes.mjs';
 import deepseek from './deepseek.mjs';
+import antigravity from './antigravity.mjs';
+import { env } from '../env.mjs';
 
 const REG = new Map();
 
@@ -53,7 +57,7 @@ export function registerEngine(def) {
   return () => { if (prev) REG.set(def.id, prev); else REG.delete(def.id); };
 }
 
-for (const e of [claude, codex, opencode, hermes, deepseek]) registerEngine(e);
+for (const e of [claude, codex, opencode, hermes, deepseek, antigravity]) registerEngine(e);
 
 /** One registered engine, or null (an id that config.json mentions but this Orchy has no adapter for is not an engine). */
 export const engine = id => REG.get(id) || null;
@@ -67,18 +71,31 @@ export const engineIds = () => [...REG.keys()];
 export function ungatedRefusal(ws, eng) {
   if (!eng || eng.capabilities.gated) return null;
   if (ws?.allowUngated === true) return null;
-  return `${ws?.name || 'This workspace'} runs on ${eng.label}, which Orchy can't hold behind its approval gate, so it could change files and run commands without asking. Orchy won't start it unless you allow that for this workspace (Workspace → ${ws?.name || 'the workspace'} → allow it to run without approvals).`;
+  return `${ws?.name || 'This workspace'} runs on ${eng.label}, which Orchy can't hold behind its approval gate, so it could change files and run commands without asking. Orchy won't start it unless you allow that for this workspace (Workspaces → ${ws?.name || 'the workspace'} → allow it to run without approvals).`;
+}
+
+/**
+ * Is this engine switched on here? Most always are; an opt-in one (Antigravity) only once the owner sets its variable
+ * (ORCHY_ANTIGRAVITY=1 in .env). One that isn't offered is not shown for new workspaces and no run starts on it.
+ */
+export const engineOffered = e => !!e && (!e.optIn || /^(1|true|yes|on)$/i.test(String(env(e.optIn) || '').trim()));
+
+/** Why no run may start on this engine right now (it is opt-in and switched off), or null. */
+export function offeredRefusal(eng) {
+  if (!eng || engineOffered(eng)) return null;
+  return `${eng.label} is switched off in this Orchy. To use it, set ${eng.optIn}=1 in .env (README → Supported harnesses).`;
 }
 
 /** What the dashboard and /api/runtimes show about an engine. */
 export const engineInfo = e => ({
   id: e.id, label: e.label, blurb: e.blurb || '', accountModel: e.accountModel, fields: e.fields,
   instructionFile: e.instructionFile || null, capabilities: e.capabilities,
+  offered: engineOffered(e), optIn: e.optIn || null, sharedLogin: !!e.sharedLogin,
 });
 
 /** Every registered engine as a setup-guide row: found / version / install command / gated (setup, the dashboard's Tools step and `npm run check` all read this). */
 export function engineTools({ win = process.platform === 'win32' } = {}) {
-  return engines().map(e => {
+  return engines().filter(engineOffered).map(e => {
     const i = e.install || {};
     return {
       id: e.id, label: e.label, kind: 'harness', optional: i.optional !== false && e.id !== 'claude',

@@ -148,9 +148,9 @@ fs.writeFileSync(file, JSON.stringify({ servers: saved }));
   const lit = src.match(/^const OWNERLESS = \/(.+)\/;$/m)?.[1];
   const OWNERLESS = lit && new RegExp(lit);
   ok(!!OWNERLESS && /req\.method !== 'GET' && req\.method !== 'HEAD' && !OWNERLESS\.test\(pathname\)/.test(src), 'every request but GET and HEAD needs the paired browser, outside a short list');
-  ok(OWNERLESS && !['/api/workspaces/acme/mcp/gh', '/api/workspaces/acme/mcp-test', '/api/workspaces/acme/mcp'].some(p => OWNERLESS.test(p)), 'no MCP route is on that list');
+  ok(OWNERLESS && !['/api/workspaces/acme/mcp/gh', '/api/workspaces/acme/mcp-test', '/api/workspaces/acme/mcp', '/api/workspaces/acme/mcp/gh/login'].some(p => OWNERLESS.test(p)), 'no MCP route is on that list');
   const routes = [...src.matchAll(/^on\('(\w+)', '(\/api\/workspaces\/:ws\/mcp[^']*)'/gm)].map(m => `${m[1]} ${m[2]}`);
-  ok(same(routes, ['GET /api/workspaces/:ws/mcp', 'PUT /api/workspaces/:ws/mcp/:name', 'DELETE /api/workspaces/:ws/mcp/:name', 'POST /api/workspaces/:ws/mcp-test']), 'the only GET is the list, which hides values from an unpaired browser', routes.join(', '));
+  ok(same(routes, ['GET /api/workspaces/:ws/mcp', 'PUT /api/workspaces/:ws/mcp/:name', 'DELETE /api/workspaces/:ws/mcp/:name', 'POST /api/workspaces/:ws/mcp-test', 'POST /api/workspaces/:ws/mcp/:name/login']), 'the only GET is the list, which hides values from an unpaired browser (sign-in is a POST, so owner-only)', routes.join(', '));
 }
 
 fs.rmSync(TMP, { recursive: true, force: true });

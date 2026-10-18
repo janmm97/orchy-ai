@@ -14,16 +14,18 @@ import crypto from 'node:crypto';
 import { ROOT, ORCH_DIR, DATA_DIR, ownerName } from './env.mjs';
 import { db, save, id, runEventsPath } from './store.mjs';
 import { emit } from './bus.mjs';
-import { workspace, accountCheck, readMcp, allConnections, modelFor, modelsFor, accountFor, engineFor, runtimeLabel } from './workspaces.mjs';
-import { engine, ungatedRefusal } from './engines/index.mjs';
+import { workspace, workspaces, accountCheck, readMcp, allConnections, modelFor, modelsFor, accountFor, engineFor, runtimeLabel, oneScope } from './workspaces.mjs';
+import { engine, engines, ungatedRefusal, offeredRefusal } from './engines/index.mjs';
 import { profilePath, shellLine } from './engines/shared.mjs';
 import { getAgent, listAgents, agentFingerprint, BUILDER_SLUG } from './agents.mjs';
 import { protocolFile, builderBrief, codexInstructions } from './prompts.mjs';
 import { namingBrief, nameOf } from './voiceagents.mjs';
 import { expireForRun, itemsForRun, createItem } from './inbox.mjs';
 import { appendRunLog, appendCostLine } from './logs.mjs';
-import { hasTaskDir, openTaskDir, saveTask, tasksDir } from './tasks.mjs';
-import { ensureHome, clientSettingsFile, clientReadDirs, adoptUploads, copyIntoTask, filesNote, taskRoot } from './clientspace.mjs';
+import { hasTaskDir, openTaskDir, saveTask } from './tasks.mjs';
+import { syncResources } from './resources.mjs';
+import { serversWithAuth } from './mcpauth.mjs';
+import { ensureHome, clientSettingsFile, clientReadDirs, adoptUploads, copyIntoTask, filesNote, taskRoot, tasksBase, taskRootRel, taskRel } from './clientspace.mjs';
 import { gateAndWait, waitAnswered } from './gate.mjs';
 import { askFields, clientDenyRules } from './clients.mjs';
 import { teamFor, huddlePartners, nativeAgentDenyRules } from './delegation.mjs';
@@ -216,7 +218,7 @@ function describeTool(name, input, run = null) {
 export async function startRun(opts) {
   const ws = workspace(opts.workspace);
   if (!ws.enabled) {
-    throw Object.assign(new Error(`${ws.name} is switched off, so Orchy isn't sending it work. Switch it back on in Workspace → ${ws.name}.`), { status: 409, code: 'WORKSPACE_DISABLED' });
+    throw Object.assign(new Error(`${ws.name} is switched off, so Orchy isn't sending it work. Switch it back on in Workspaces → ${ws.name}.`), { status: 409, code: 'WORKSPACE_DISABLED' });
   }
   // Orchy fixing his own code (backend.mjs): no agent, no client, Claude Code in the Orchy folder
   const backend = !!ws.builtin;
@@ -235,6 +237,12 @@ export async function startRun(opts) {
   // (allowUngated in config.json). Every run can change files or run commands, so every run is refused.
   const ungated = ungatedRefusal(ws, eng);
   if (ungated) throw Object.assign(new Error(ungated), { status: 409, code: 'UNGATED_ENGINE' });
+  // an opt-in engine (Antigravity) the owner hasn't switched on in .env
+  const off = offeredRefusal(eng);
+  if (off) throw Object.assign(new Error(off), { status: 409, code: 'ENGINE_OFF' });
+  // Orchy doesn't see every command an ungated engine runs, so it could reach the apps of whatever One login the CLI
+  // falls back to: a workspace without its own One login never runs on one
+  if (!eng.capabilities.gated && !backend && !oneScope(ws).own) throw Object.assign(new Error(`${ws.name} isn't signed in to its own One account yet, and ${eng.label}'s commands aren't all checked by Orchy, so it could reach another account's apps. Sign it in to One first (Workspaces → ${ws.name} → Sign in to One).`), { status: 409, code: 'ONE_SCOPE' });
 
   // the dashboard's account checks are cached for a minute; a run start wants one at most 10s old
   await eng.account(accountFor(ws, runtime).profileDir, { maxAge: 10_000 });
@@ -346,14 +354,17 @@ export async function startRun(opts) {
     createdAgents: [],
     liveAtStart: liveCount(), // how many runs were working when it started (the Usage tab's spend at >=4 live)
   };
-  // a generalist's task, and every client's, gets its own folder in Tasks/ (a follow-up keeps its parent's);
+  // a skill installed since the last sync is filed into Resources/ and linked before the agent loads its skills
+  if (!backend) { try { syncResources(ws, { moves: !liveIn(ws.id), index: 'auto' }); } catch (e) { console.warn('[resources]', e.message); } }
+  // a task gets its own folder in its agent's Tasks (tasks.mjs; a follow-up keeps its parent's);
   // a client's lives in the client's own corner of the workspace (clientspace.mjs)
   if (run.client) ensureHome(ws, run.client);
-  // a mission's steps all share the mission's folder (a plain name in the workspace's Tasks/, never a client's)
+  // a mission's steps all share the mission's folder (a plain name under the mission's Tasks, never a client's)
   const shared = run.missionId && !run.client && !backend && !run.huddleTalk && typeof opts.taskDir === 'string'
     && /^[\w][\w .-]{0,80}$/.test(opts.taskDir) && !opts.taskDir.includes('..') && !/[. ]$/.test(opts.taskDir) ? opts.taskDir : null;
   if (shared) {
-    fs.mkdirSync(path.join(tasksDir(ws), shared), { recursive: true });
+    run.taskRoot = taskRootRel({ taskRoot: opts.taskRoot });
+    fs.mkdirSync(path.join(tasksBase(ws, run), shared), { recursive: true });
     run.taskDir = shared;
   } else if (hasTaskDir(run)) run.taskDir = openTaskDir(ws, run, parent);
   // files the client uploaded (staged on their page) or the owner attached to a reply on the client's task
@@ -391,7 +402,7 @@ export async function startRun(opts) {
   run.prompt = prompt;
 
   // MCP: the Orchy bridge + the external servers this agent may use (all of them for the builder/generalist).
-  const servers = readMcp(ws);
+  const servers = await serversWithAuth(ws, readMcp(ws)); // servers signed in with OAuth carry their token as a header (mcpauth.mjs)
   const allowedMcp = agent && !isBuilder && agent.mcpServers.length ? agent.mcpServers : (agent && !isBuilder ? [] : null);
   const bridge = {
     command: process.execPath,
@@ -460,7 +471,7 @@ export async function startRun(opts) {
 function chainSeed(ws, run, parent, { chainTurns, lastInput }) {
   const holder = run.taskDir ? run : parent?.taskDir ? parent : null;
   const file = holder ? path.join(taskRoot(ws, holder), 'TASK.md') : null;
-  const shown = holder ? `Tasks/${holder.taskDir}/TASK.md` : null;
+  const shown = holder ? `${taskRel(holder)}/TASK.md` : null;
   let taskDoc = '';
   try { if (file && fs.existsSync(file)) taskDoc = fs.readFileSync(file, 'utf8').slice(0, 2500).trim(); } catch {}
   const lastSummary = String(parent?.report?.summary || parent?.resultText || '').slice(0, 1500).trim();
@@ -596,6 +607,15 @@ function hooksFor(run, ws) {
       }
       return out;
     },
+    // an engine that can't ask on the way (Antigravity) asks the owner once, before it starts; never remembered
+    approveRun: async ({ title, message }) => {
+      const item = createItem('approval', { runId: run.id, workspace: ws.id, agent: who, title, message, detail: run.instruction, noRemember: true, ...askFields(run) });
+      setRunStatus(run, 'waiting');
+      const it = await waitAnswered(item.id);
+      const ok = it.status === 'answered' && !!it.answer?.approve;
+      if (ok) setRunStatus(run, 'starting');
+      return ok;
+    },
     usage: tokens => { run.tokens = tokens; },
     cost: usd => { run.costUsd = usd; },
     done: ({ code, status, error, resultText }) => {
@@ -622,7 +642,11 @@ const RT = {
   hooks: hooksFor,
   setupSettingsFile: (ws, run) => setupSettingsFile(ws, run),
   instructions: (ws, run, agentMarkdown, planText) => codexInstructions(ws, run, agentMarkdown, planText),
-  deps: { ensureHome, clientSettingsFile, clientReadDirs, backendSettingsFile, nativeAgentDenyRules, clientDenyRules, listAgents, protocolFile },
+  deps: {
+    allWorkspaces: () => workspaces(),
+    // every harness profile folder of the other workspaces, and this one's for its other engines (Antigravity's deny rules)
+    profileDirs: (ws, others = [], except = null) => [...others.flatMap(w => engines().map(e => w[e.fields.profile])), ...engines().filter(e => e.id !== except).map(e => ws[e.fields.profile])].filter(Boolean).map(profilePath),
+    ensureHome, clientSettingsFile, clientReadDirs, backendSettingsFile, nativeAgentDenyRules, clientDenyRules, listAgents, protocolFile },
 };
 
 function handleLine(run, ws, line) {

@@ -52,12 +52,17 @@ function codexEnv(codexHome) {
 }
 
 /** Minimal JSON-RPC client for `codex app-server` (stdio, one JSON message per line). */
+/** `codex app-server`, with the config override that keeps AGENTS.md discovery inside the run's own folder. */
+export const CODEX_ARGS = ['-c', 'project_root_markers=[]', 'app-server'];
+
 class AppServer {
   constructor({ codexHome, cwd }) {
     const b = codexBin();
     if (!b) throw new Error('Codex isn\'t installed on this PC (no codex CLI or ChatGPT VS Code extension found). Install it, or set CODEX_CLI_PATH in .env.');
     if (codexHome) fs.mkdirSync(expandPath(codexHome), { recursive: true });
-    this.child = spawn(b, ['app-server'], { cwd: cwd || os.homedir(), env: codexEnv(codexHome), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: b.endsWith('.cmd') });
+    // project_root_markers=[]: Codex reads AGENTS.md only in the folder it starts in, never the folders above it (the
+    // workspaces live inside Orchy's own repo, whose AGENTS.md is for coding agents working on Orchy, not for agent runs)
+    this.child = spawn(b, CODEX_ARGS, { cwd: cwd || os.homedir(), env: codexEnv(codexHome), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: b.endsWith('.cmd') });
     this.n = 0;
     this.pending = new Map();
     this.stderr = '';
@@ -337,7 +342,7 @@ export function launchCodexRun(opts, hooks) {
     await srv.init();
     const common = {
       cwd: opts.cwd, model: opts.model, approvalPolicy: 'untrusted', sandbox: 'workspace-write',
-      developerInstructions: opts.developerInstructions, config: { mcp_servers: opts.mcpServers || {} },
+      developerInstructions: opts.developerInstructions, config: { mcp_servers: opts.mcpServers || {}, project_root_markers: [] },
     };
     const r = opts.resumeThreadId
       ? await srv.request('thread/resume', { threadId: opts.resumeThreadId, ...common, excludeTurns: true }, 60_000)

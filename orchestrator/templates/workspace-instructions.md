@@ -5,7 +5,7 @@ Workspace for **{{CLIENT}}**. {{BLURB}}
 ## One CLI — Platform Integrations
 
 The One CLI (`one`) is installed on this machine. This folder gets its **own** One login
-(`one init --auth browser --project`, done from Orchy's Workspace window → {{NAME}} → Sign in to One), so it only sees
+(`one init --auth browser --project`, done from Orchy's Workspaces window → {{NAME}} → Sign in to One), so it only sees
 {{CLIENT}}'s connections. Until then, don't use `one` here: it would fall back to another account.
 
 **Whenever you need anything involving a third-party app or external service, use the One CLI.**
@@ -41,6 +41,8 @@ This folder is one of the workspaces driven by {{OWNER}}'s orchestrator, Orchy, 
 - Agents live in `.claude/agents/*.md`; `agent-builder.md` is the Chief of AI Agents and holds the Orchy Agent Spec.
 - When run by Orchy you get the `jos` MCP tools (`mcp__jos__*`): `ask_user` when unsure (never guess), `report_done` once at the end (it's logged to `../LOGS.md`), `note` for progress worth showing {{OWNER}}, `call_owner` only when something is truly urgent (it rings {{OWNER}} in the dashboard; never in a client's task), and `delegate` for department heads with a `team:`. The AI Agent Builder also gets `request_connections`, `jev_pick_tools` and `voice_agent`. Routine work runs on its own; decisions (money, sending, calendar, deleting, sharing) and risky steps on this PC pop an approval window for {{OWNER}} automatically.
 - External MCP servers for this workspace are registered in `.jos/mcp.json` (managed from the dashboard's Connections window).
-- `Tasks/` keeps every task this workspace's generalist has done: one folder per task (`<date>-<first words>`) with `TASK.md` (the request, what was done, outputs, follow-ups) and the files made for it. When {{OWNER}} mentions an earlier task, look there first. Only this workspace's `Tasks/` is yours.
+- Tasks: every task gets a folder (`<date>-<first words>`) with `TASK.md` (the request, what was done, outputs, follow-ups) and the files made for it. This workspace is organised by department: an agent's tasks are in its home (`<Department>/<call name>/Tasks/`), huddles and missions in `<Department>/Tasks/`, the generalist's in its home under Operations; a workspace without departments keeps them in `Tasks/` here. When {{OWNER}} mentions an earlier task, look there first. Only this workspace's Tasks are yours.
+- Every agent and sub-agent belongs to a department and has a home: save files only in your home, your task folder or your department's shared folders. Files {{OWNER}} attaches land in `Uploads/`.
+- `Resources/` holds every skill (`Resources/Skills/`, linked into `.claude/skills/` and `.agents/skills/`), a copy of each MCP server without secrets, and a note per CLI; `Resources/INDEX.md` lists them and which agents use them. Orchy files new skills there on his own; only the AI Agent Builder changes anything in `Resources/`.
 - `Uploads/` holds files {{OWNER}} attached to a task (from Give a task or Follow up).
 - Never touch another workspace's folder, accounts or data.

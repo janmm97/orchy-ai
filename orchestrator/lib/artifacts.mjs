@@ -26,7 +26,7 @@ import { officeText, xlsxSheets, pptxSlides } from './uploads.mjs';
 import { BUILDER_SLUG } from './agents.mjs';
 
 export const MAX_ARTIFACTS = 5000;
-export const SCAN = { depth: 6, entries: 20_000, perRun: 200 };
+export const SCAN = { depth: 6, entries: 20_000, perRun: 200 }; // depth 6: <Department>/<agent>/Tasks/<task>/<folder>/file
 const MAX_TEXT = 2 * 1024 * 1024;       // text/code/json previews
 const MAX_OFFICE_CHARS = 200_000;       // office text previews
 const MAX_ROWS = 1000;                  // csv/tsv/xlsx rows
@@ -298,7 +298,7 @@ export function outputBits(s) {
   return { urls, paths: [...paths].filter(Boolean).slice(0, 40) };
 }
 
-/** Files modified while the run ran, under `root` (bounded; skips hidden/setup folders and Uploads at the top). */
+/** Files modified while the run ran, under `root` (bounded; skips hidden/setup folders and Uploads and Resources at the top). */
 function scanModified(root, fromMs, toMs, { skipTop = [] } = {}) {
   const out = [];
   let seen = 0;
@@ -345,7 +345,7 @@ export function syncRun(run, { ended = !!run?.endedAt } = {}) {
     if (!run.huddleTalk && run.startedAt) {
       const from = Date.parse(run.startedAt) - 2000, to = Date.parse(run.endedAt || new Date().toISOString()) + 5000;
       const root = run.client ? clientHome(ws, run.client) : ws.dir;
-      for (const f of scanModified(root, from, to, { skipTop: run.client ? [] : ['uploads'] })) add(f, 'workspace-scan');
+      for (const f of scanModified(root, from, to, { skipTop: run.client ? [] : ['uploads', 'resources'] })) add(f, 'workspace-scan');
     }
     run.artifactScan = new Date().toISOString();
     dirty = true;

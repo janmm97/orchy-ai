@@ -68,6 +68,9 @@ function summarize(ws, file) {
     team,
     // C-suite: may start a huddle from its own runs (huddle.mjs#partnersFor). Builders build, they don't huddle on their own.
     executive: slug !== BUILDER_SLUG && (typeof meta.executive === 'boolean' ? meta.executive : isExecutive(role, meta.display_name, team)),
+    // where it works: its department and its home folder, both relative to the workspace (`Marketing/Writer`)
+    department: meta.department ? wsRel(meta.department) : null,
+    home: meta.home ? wsRel(meta.home) : null,
     schedule: meta.schedule || null,
     scheduleTask: meta.schedule_task || null,
     scheduleText: meta.schedule ? describeSchedule(meta.schedule) || `unreadable schedule: ${meta.schedule}` : null,
@@ -80,6 +83,46 @@ function summarize(ws, file) {
   };
 }
 
+/**
+ * A folder inside the workspace as `Marketing/Writer` (forward slashes), or null: nothing absolute, no climbing out,
+ * no hidden folders (so never `.clients/`, `.claude/`), and never Resources/ or Uploads/.
+ */
+export function wsRel(p) {
+  const raw = String(p || '').trim();
+  const parts = raw.split(/[\\/]+/).filter(Boolean);
+  if (!parts.length || path.isAbsolute(raw) || /^[A-Za-z]:/.test(raw)) return null;
+  if (parts.some(s => s === '..' || s.startsWith('.') || /[\x00-\x1f<>:"|?*]/.test(s) || /[ .]$/.test(s))) return null;
+  if (/^(resources|uploads)$/i.test(parts[0])) return null;
+  return parts.join('/');
+}
+
+/** The workspace's department folders (`config.json` `workspaces[].departments`), checked. */
+export const departmentsOf = ws => (Array.isArray(ws?.departments) ? ws.departments.map(wsRel).filter(d => d && !d.includes('/')) : []);
+
+/**
+ * Where an agent keeps its work, relative to the workspace (`Marketing/Writer`), or null for the flat layout
+ * (`Tasks/` at the top). Its frontmatter `home`, else `<department>/<call name>`, else a department folder that
+ * already holds a folder of its call name or slug (a workspace organised before its agent files name a home).
+ * No agent = the generalist (`workspaces[].generalistHome`).
+ */
+export function homeOf(ws, agent) {
+  if (!agent) return ws.generalistHome ? wsRel(ws.generalistHome) : null;
+  if (agent.home) return agent.home;
+  const names = [...new Set([agent.callName, agent.slug].filter(Boolean))];
+  if (agent.department) return wsRel(`${agent.department}/${names[0]}`);
+  for (const d of departmentsOf(ws)) {
+    for (const n of names) if (wsRel(n) && fs.existsSync(path.join(ws.dir, d, n))) return `${d}/${n}`;
+  }
+  return null;
+}
+
+/** The department an agent sits in (its frontmatter, else its home's first folder), or null. */
+export function departmentOf(ws, agent) {
+  if (agent?.department) return agent.department.split('/')[0];
+  const home = homeOf(ws, agent);
+  return home && home.includes('/') ? home.split('/')[0] : null;
+}
+
 export function listAgents(wsId) {
   const list = [];
   for (const ws of wsId ? [workspace(wsId)] : workspaces()) {
@@ -87,7 +130,12 @@ export function listAgents(wsId) {
     if (!fs.existsSync(dir)) continue;
     for (const f of fs.readdirSync(dir)) {
       if (!f.endsWith('.md')) continue;
-      try { list.push(summarize(ws, path.join(dir, f))); } catch (e) { console.warn('[agents] skip', f, e.message); }
+      try {
+        const a = summarize(ws, path.join(dir, f));
+        // the department it sits in (frontmatter, else its home folder), for the Workspaces window's groups
+        a.dept = departmentsOf(ws).length ? departmentOf(ws, a) : null;
+        list.push(a);
+      } catch (e) { console.warn('[agents] skip', f, e.message); }
     }
   }
   return list.sort((a, b) => (b.isBuilder - a.isBuilder) || a.displayName.localeCompare(b.displayName));

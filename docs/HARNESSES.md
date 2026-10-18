@@ -13,8 +13,18 @@ Nothing here is marked as tested against a real install yet. Every status below 
 | OpenCode | yes, by its own config: every tool set to `ask` | implemented, unverified against the real binary (fake-server tests only) |
 | Hermes | **no** | implemented, unverified against the real binary. Refused unless the workspace sets `allowUngated` |
 | DeepSeek Harness | **no** | implemented, unverified against the real binary. Refused unless the workspace sets `allowUngated` |
+| Antigravity | **no** (it can't ask mid-run; the owner approves each whole run first) | implemented, unverified against the real binary in this repo (fake-binary tests only). Off by default (`ORCHY_ANTIGRAVITY=1` in `.env`), refused unless the workspace sets `allowUngated` |
 
-"Gated: no" means Orchy cannot prove that the harness asks before every file change, command or tool call, so `startRun` refuses the workspace unless the owner sets `allowUngated: true` for it in `orchestrator/config.json` (Workspace, the workspace, "allow it to run without approvals"). Hermes and DeepSeek ship in that state on purpose. The README table carries the same statuses.
+"Gated: no" means Orchy cannot prove that the harness asks before every file change, command or tool call, so `startRun` refuses the workspace unless the owner sets `allowUngated: true` for it in `orchestrator/config.json` (Workspaces, the workspace, "allow it to run without approvals"). Hermes, DeepSeek and Antigravity ship in that state on purpose. A workspace on any ungated harness also needs its own One login (`startRun` refuses it otherwise, code `ONE_SCOPE`): Orchy doesn't see every command such a harness runs, so the One CLI could fall back to another account. The README table carries the same statuses.
+
+## Which instructions a run reads
+
+Workspaces live in `workspaces/` inside this repo, whose root CLAUDE.md and AGENTS.md are for coding agents working on Orchy, not for agent runs.
+
+- **Claude Code:** the run's settings file lists them in `claudeMdExcludes` (`runner.mjs#setupSettingsFile`).
+- **Codex:** Codex joins every AGENTS.md from the project root (the nearest folder with a `project_root_markers` entry, `.git` by default) down to the run's folder. Orchy starts `codex -c project_root_markers=[] app-server` and repeats `project_root_markers: []` in each thread's config; an empty list disables the parent walk, so only the workspace's own AGENTS.md is read (checked against Codex's source, `codex-rs/core/src/agents_md.rs`; unverified against a real install here).
+- **OpenCode:** it takes the first AGENTS.md (else CLAUDE.md) walking up from the run's folder (opencode.ai/docs/rules), so the workspace's own wins as long as the workspace has one (new workspaces get both; a workspace switched to OpenCode gets AGENTS.md copied from its CLAUDE.md). Orchy sets `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT=1`, so the owner's personal `~/.claude/CLAUDE.md` isn't read either. Unverified against a real install.
+- **Hermes, DeepSeek Harness, Antigravity:** how they discover instruction files above the working folder is unconfirmed. Orchy passes each run's instructions itself (ACP session prompt, or agy's stdin). If you run one of them, check whether the repo-root AGENTS.md shows up in a run, and report it.
 
 Ori Harness (`ori`) is a launcher, not a separate harness. See the end of this file.
 
@@ -166,13 +176,39 @@ So in `dsh --profile acp` an in-workspace file change, a read of any file and ne
 4. Allow the workspace (`allowUngated`) and run: "create a file, read a file outside the folder, run `git push`". Note which of the three produced a `session/request_permission` (see the feed's "asks through ACP" line) and which did not.
 5. Update the evidence above and decide whether the gate can be flipped.
 
+## Antigravity
+
+| | |
+|---|---|
+| Install | Google's Antigravity CLI (`agy`); Orchy looks on PATH, in `~/.gemini/bin` and `~/.local/bin`, or at `AGY_CLI_PATH` |
+| Switched on | Off by default. Set `ORCHY_ANTIGRAVITY=1` in `.env` to offer it in the Add window; until then no run starts on it (`offeredRefusal`, code `ENGINE_OFF`) |
+| Headless command Orchy uses | `agy --gemini_dir <agent folder> --output-format stream-json --input-format stream-json --disable-slash-commands [--model <id>] [--effort <e>] [--conversation <id>] --log-file <file> -p=`, the prompt as one stream-json line on stdin |
+| Approvals | None mid-run: headless agy can't ask and its hooks can only block. Every run waits for the owner's OK on an approval card first (never remembered), then agy runs `always-proceed` inside deny rules Orchy writes into the agent's own agy folder (`antigravity-cli/settings.json` `permissions.deny`): no writes to the workspace's setup (`.claude/`, `.agents/`, `Resources/`, CLAUDE.md, AGENTS.md, GEMINI.md…), no reads of other workspaces, their profile folders, Retired/, Orchy's own code and data, `.env`, Uploads, Reports, LOGS.md, the harnesses' and One's sign-in folders, or other workspaces' agy folders. Its shell commands are not checked |
+| MCP | `config/mcp_config.json` in the agent folder: the `jos` bridge (its run id and token ride in agy's environment, never the file) plus the agent's allowed servers, each with the bridge's variables blanked |
+| Config and account | One Google sign-in per computer, so every Antigravity workspace names the same account (`antigravityAccount`; Orchy refuses a second, different one, and `accountCheck` compares it with the email agy's `models` log says it signed in as before every run). Agent folders: `antigravityHome`, default `~/.antigravity-orchy/<workspace id>/<agent>` |
+| Not offered | Client pages, huddles (`clientSafe: false`, `huddles: false`), and any workspace without its own One login |
+
+### Still unconfirmed
+
+- Event shapes (`init`, `step_update` with tool `ACTIVE`/`DONE`/`ERROR`, `result` with `denied_actions`) and flag names come from the agy builds the adapter was written against; nobody has run this repo's adapter against a real agy.
+- That the sign-in check works on macOS and Linux (where agy may keep its sign-in somewhere else than on Windows).
+- That deny rules use forward-slash absolute paths on every platform.
+- Google's terms for consumer plans may not allow wrapping agy in another app; check yours before switching it on.
+
+### Manual verification checklist (not done yet)
+
+1. Set `ORCHY_ANTIGRAVITY=1`, add a test workspace on Antigravity with its own One login and `allowUngated`.
+2. Run a task that writes `.claude/x.md` and reads another workspace's folder: both should come back as refused (the feed shows "denied"), the run's own task folder should work.
+3. Confirm the approval card appears before agy starts, and that Stop ends the agy process tree.
+4. Sign agy in as another Google account: the next run must be refused (`ACCOUNT_MISMATCH`).
+
 ## Ori Harness (launcher)
 
 **Not supported yet.** `ori` is a launcher, not an engine: `ori <agent> --model <id>` starts a named agent through OpenRouter credentials (`ori login` signs in), so the process that runs the work is chosen and configured by `ori`, not by Orchy. Orchy cannot yet show that `ori` passes Orchy's gating settings (the per-run permission config, `HERMES_HOME`-style profile variables, the ACP bridge) through to the harness it starts, or that it adds no `--yolo` / `--full-auto` style flag, so a per-workspace `launcher: 'ori'` setting is not offered. If you want OpenRouter models today: OpenCode and Hermes both support OpenRouter as a provider with their own login inside the workspace's profile. Install, for reference: `curl -fsSL https://openrouter.ai/labs/ori/install.sh | bash` (Windows: `irm https://openrouter.ai/labs/ori/install.ps1 | iex`).
 
 ## Adding a harness (engine adapters)
 
-Every harness is an engine module in `orchestrator/lib/engines/` registered in `index.mjs` (the interface is documented at the top of that file): binary lookup, `install`, `account()`, `profileEnv()`, `mcpConfig()`, `launch()` and `capabilities`. The setup script, the dashboard's setup guide (Tools step) and `npm run check` list every registered engine with found / version / install command / gated. An engine with `capabilities.gated: false` is refused by `startRun` unless the workspace has `allowUngated: true` in `config.json`. An ACP harness can reuse `engines/acp.mjs`.
+Every harness is an engine module in `orchestrator/lib/engines/` registered in `index.mjs` (the interface is documented at the top of that file): binary lookup, `install`, `account()`, `profileEnv()`, `mcpConfig()`, `launch()` and `capabilities`. The setup script, the dashboard's setup guide (Tools step) and `npm run check` list every registered engine with found / version / install command / gated. An engine with `capabilities.gated: false` is refused by `startRun` unless the workspace has `allowUngated: true` in `config.json`. An ACP harness can reuse `engines/acp.mjs`. Optional fields: `optIn: 'ENV_NAME'` keeps an engine off until the owner sets that variable to 1 in `.env`; `sharedLogin: true` means one sign-in per computer (every workspace on it must name the same account); `openModels: true` lets an agent name any model id the harness lists. An engine that can't ask mid-run can call `rt.hooks(run, ws).approveRun({ title, message })` to get the owner's OK for the whole run first (Antigravity does).
 
 ## Updating this file
 

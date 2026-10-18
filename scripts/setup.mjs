@@ -17,7 +17,7 @@ export const ONE_GUIDE = `Getting started with One:
   Orchy works with One.
   1) Create an account at https://app.withone.ai/sign-in.
   2) Make one organization per business or client (org switcher, top left).
-  3) In Orchy: Workspace → your workspace → Sign in to One.
+  3) In Orchy: Workspaces → your workspace → Sign in to One.
   4) Orchy → Connections → Add app.
   5) Can't find an app? In the One dashboard click Developers (bottom left) → Embeddable Auth,
      search for the tool and turn on its Visible toggle.

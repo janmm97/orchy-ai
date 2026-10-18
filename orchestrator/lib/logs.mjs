@@ -4,6 +4,7 @@ import path from 'node:path';
 import { LOGS_PATH, DATA_DIR, config, ownerName } from './env.mjs';
 import { db } from './store.mjs';
 import { accountFor, runtimeLabel } from './workspaces.mjs';
+import { taskRel } from './clientspace.mjs';
 
 const HEADER = `# Orchy Logs
 
@@ -79,7 +80,7 @@ export function appendRunLog(run, ws, items = []) {
 | **Task** | ${run.instruction.replace(/\|/g, '\\|').replace(/\n+/g, ' ').slice(0, 400)} |
 | **Duration** | ${fmtDuration(run.durationMs)}${run.numTurns ? ` · ${run.numTurns} turns` : ''} |
 | **Run** | \`${run.id}\` |
-${run.delegatedBy ? `| **Delegated by** | ${run.delegatedByName} · run \`${run.delegatedBy}\` |\n` : ''}${run.missionId ? `| **Mission** | step ${run.stepId} of \`${run.missionId}\` |\n` : ''}${run.taskDir ? `| **Task folder** | \`${path.basename(ws.dir)}/${run.client ? `.clients/${run.client}/` : ''}Tasks/${run.taskDir}\` |\n` : ''}
+${run.delegatedBy ? `| **Delegated by** | ${run.delegatedByName} · run \`${run.delegatedBy}\` |\n` : ''}${run.missionId ? `| **Mission** | step ${run.stepId} of \`${run.missionId}\` |\n` : ''}${run.taskDir ? `| **Task folder** | \`${path.basename(ws.dir)}/${run.client ? `.clients/${run.client}/` : ''}${taskRel(run)}\` |\n` : ''}
 **Summary**
 
 ${(r.summary || run.resultText || 'The agent finished without writing a summary.').trim()}
@@ -155,7 +156,7 @@ export function huddleLogEntry(h, ws) {
 | **Task** | ${h.topic.replace(/\|/g, '\\|').replace(/\n+/g, ' ').slice(0, 400)} |
 | **Turns** | ${h.turns.filter(t => t.by !== 'owner' && t.by !== 'orchy').length} |
 | **Huddle** | \`${h.id}\` |
-${h.taskDir ? `| **Transcript** | \`${path.basename(ws.dir)}/Tasks/${h.taskDir}/HUDDLE.md\` |\n` : ''}
+${h.taskDir ? `| **Transcript** | \`${path.basename(ws.dir)}/${taskRel(h)}/HUDDLE.md\` |\n` : ''}
 **Summary**
 
 ${(a.summary || 'They ended without an agreement.').trim()}
@@ -208,7 +209,7 @@ export function missionLogEntry(m, ws) {
 | **Steps** | ${m.steps.length} · ${m.steps.filter(s => s.status === 'done').length} done${m.autoFixes ? ` · ${m.autoFixes} automatic fix${m.autoFixes === 1 ? '' : 'es'}` : ''}${m.replanned ? ` · replanned ${m.replanned}×` : ''} |
 | **Cost** | $${(Number(m.cost) || 0).toFixed(2)} (plan $${(Number(m.costs?.plan) || 0).toFixed(2)}, ceiling $${(Number(m.ceiling) || 0).toFixed(2)}) |
 | **Mission** | \`${m.id}\` |
-${m.taskDir ? `| **Task folder** | \`${path.basename(ws.dir)}/Tasks/${m.taskDir}\` |\n` : ''}
+${m.taskDir ? `| **Task folder** | \`${path.basename(ws.dir)}/${taskRel(m)}\` |\n` : ''}
 **Steps**
 ${bullets(steps)}
 

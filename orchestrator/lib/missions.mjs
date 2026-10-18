@@ -38,7 +38,7 @@ import * as recover from './recover.mjs';
 import { listArtifacts } from './artifacts.mjs';
 import { itemsForRun } from './inbox.mjs';
 import { fmtTime, bullets, appendMissionLog } from './logs.mjs';
-import { tasksDir } from './tasks.mjs';
+import { tasksBase, taskRel as folderRel } from './clientspace.mjs';
 
 /** Limits. `ceiling` and `maxLive` are Settings defaults. */
 export const LIMITS = { minSteps: 2, maxSteps: 6, maxLive: 2, liveCap: 3, ceiling: 15, autoFixes: 2, retries: recover.MAX_AUTO, inputChars: 3000, taskChars: 1500, countdown: 10, objectiveMin: 0.4 };
@@ -91,8 +91,8 @@ const line = (s, n) => trim(String(s ?? '').replace(/\s+/g, ' '), n);
 const money = n => `$${(Number(n) || 0).toFixed(2)}`;
 const round = n => Math.round((Number(n) || 0) * 100000) / 100000;
 const timers = new Map(); // missionId → countdown timer; `${mid}:${stepId}` → retry timer
-/** The mission's shared folder, relative to its workspace (`Tasks/<folder>`), or null before Go. */
-export const taskRel = m => (m?.taskDir ? `Tasks/${m.taskDir}` : null);
+/** The mission's shared folder, relative to its workspace (`Marketing/Tasks/<folder>`, `Tasks/<folder>`), or null before Go. */
+export const taskRel = m => folderRel(m);
 
 /** Settings → Missions. Sure missions start on their own only while both auto-dispatch and this are on. */
 export function missionSettings(s = deps.db().settings || {}) {
@@ -402,8 +402,13 @@ export async function go(mid, { auto = false } = {}) {
   m.status = 'running';
   m.startedAt = iso();
   m.autoStarted = !!auto;
-  // one shared folder in the workspace's Tasks/ (tasks.mjs#openTaskDir names it after the day and the objective)
-  if (deps.openTaskDir) m.taskDir = deps.openTaskDir(ws, { instruction: m.objective || m.text, startedAt: m.startedAt, workspace: ws.id, client: null });
+  // one shared folder (tasks.mjs#openTaskDir names it after the day and the objective), in the department of the
+  // agent that takes the first step (tasks.mjs#taskRootFor; `general` = the generalist's), else the workspace's Tasks/
+  if (deps.openTaskDir) {
+    const t = { instruction: m.objective || m.text, startedAt: m.startedAt, workspace: ws.id, client: null, lead: m.steps[0]?.agent || 'general' };
+    m.taskDir = deps.openTaskDir(ws, t);
+    m.taskRoot = t.taskRoot || null;
+  }
   m.filePaths = m.files.length ? deps.handFiles(ws, m.files) : [];
   touch(m);
   await tick(m);
@@ -504,7 +509,7 @@ async function startStep(m, s, { followUpOf = null, text = null, retryOf = null,
   try {
     const run = await deps.startRun({
       workspace: ws.id, agentSlug: s.agent === 'general' ? null : s.agent, kind: 'task', instruction: text || stepInstruction(m, s),
-      session: m.session, missionId: m.id, stepId: s.id, taskDir: m.taskDir, routing: { source: 'mission', missionId: m.id },
+      session: m.session, missionId: m.id, stepId: s.id, taskDir: m.taskDir, taskRoot: m.taskRoot || null, routing: { source: 'mission', missionId: m.id },
       ...(followUpOf ? { resumeSessionId: followUpOf.sessionId, parentRunId: followUpOf.id } : {}),
       ...(retryOf ? { retryOf: retryOf.id, retries: s.attempts.retries } : {}),
     });
@@ -773,11 +778,11 @@ function wrapUp(m) {
   });
 }
 
-/** Tasks/<folder>/TASK.md for the whole mission (its steps' own rounds aren't written one by one: tasks.mjs#saveTask). */
+/** <Tasks>/<folder>/TASK.md for the whole mission (its steps' own rounds aren't written one by one: tasks.mjs#saveTask). */
 export function writeTask(m, ws) {
   if (!m.taskDir) return null;
   const who = ownerName();
-  const dir = path.join(tasksDir(ws), m.taskDir);
+  const dir = path.join(tasksBase(ws, m), m.taskDir);
   fs.mkdirSync(dir, { recursive: true });
   const title = line(m.objective || m.text, 90);
   const STEP = { done: 'Done', skipped: 'Skipped', stopped: 'Stopped', waiting: `Waiting on ${who}`, failed: 'Failed', pending: 'Not started', running: 'Running', fixing: 'Fixing', retrying: 'Retrying', checking: 'Being checked', interrupted: 'Cut off' };

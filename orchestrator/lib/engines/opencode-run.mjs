@@ -92,6 +92,9 @@ export async function startOpenCodeServer(opts) {
     // wins over any opencode.json in the workspace folder: nothing there can switch an ask to an allow
     OPENCODE_CONFIG_CONTENT: JSON.stringify(guardConfig()),
     OPENCODE_SERVER_PASSWORD: password,
+    // the owner's own ~/.claude/CLAUDE.md is not this run's (OpenCode reads it as a fallback otherwise). Project rules:
+    // OpenCode takes the first AGENTS.md (else CLAUDE.md) walking up from the workspace, which is the workspace's own.
+    OPENCODE_DISABLE_CLAUDE_CODE_PROMPT: '1',
   });
   const shell = /\.(cmd|bat)$/i.test(bin);
   const args = serveArgs(port);

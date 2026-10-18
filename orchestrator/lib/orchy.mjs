@@ -122,6 +122,8 @@ export async function reportRun(run, ws, extra = {}) {
   const r = run.report || {};
   // Orchy's own check of the run (validate.mjs): what's off, said in the report; flags only, nothing is re-run
   const off = (run.validation?.checks || []).filter(c => !c.ok).map(c => `${c.name}: ${c.note || 'not ok'}`).join('; ');
+  // what the owner asked to see (the email, the list): shown as is under the report; without a report, the agent's last message
+  const result = run.backend ? '' : String(r.result || (!run.report && run.outcome === 'completed' ? run.resultText : '') || '').trim().slice(0, 20000);
   const facts = run.backend ? `You just finished working on your own code (Orchy's), because ${ownerName()} reported a problem. Tell ${ownerName()} in 1-2 short spoken sentences, in the first person, what was wrong and what you changed (or why you couldn't). Don't mention restarting, reloading or what happens next; that's said right after.
 ${ownerName()} said: ${run.instruction.slice(0, 400)}
 Outcome: ${run.outcome}
@@ -134,7 +136,8 @@ Outcome: ${run.outcome}
 Summary: ${(r.summary || run.resultText || run.error || '').slice(0, 1500)}
 Follow-ups: ${(r.follow_ups || []).join('; ') || 'none'}
 New/updated agents: ${(run.createdAgents || []).map(a => a.error ? `${a.slug} (BROKEN FILE, can't run until fixed: ${a.error.split('\n')[0]})` : a.slug).join(', ') || 'none'}${off ? `
-Your own check of its report found something off (say what in one short clause, plainly, as your check, not the agent's words; don't suggest you fixed or re-ran anything): ${off.slice(0, 500)}` : ''}`;
+Your own check of its report found something off (say what in one short clause, plainly, as your check, not the agent's words; don't suggest you fixed or re-ran anything): ${off.slice(0, 500)}` : ''}${result ? `
+It's shown in full right under your message, so don't repeat or summarise it; just say it's below: ${result.slice(0, 300)}` : ''}`;
   let text;
   try {
     text = await think(facts, { model: config.orchy.summaryModel, purpose: 'report', workspace: ws.id });
@@ -142,13 +145,13 @@ Your own check of its report found something off (say what in one short clause, 
     const ok = run.outcome === 'completed';
     text = run.backend
       ? `${ok ? 'Done working on my code' : run.outcome === 'stopped' ? 'My fix was stopped' : 'My fix ran into trouble'}. ${(r.summary || run.error || '').split(/(?<=\.)\s/)[0] || ''}`.trim()
-      : `${who(run)} in ${ws.name} ${ok ? 'is done' : run.outcome === 'stopped' ? 'was stopped' : 'ran into trouble'}. ${(r.summary || run.error || '').split(/(?<=\.)\s/)[0] || ''}`.trim();
+      : `${who(run)} in ${ws.name} ${ok ? 'is done' : run.outcome === 'stopped' ? 'was stopped' : 'ran into trouble'}. ${(r.summary || run.error || '').split(/(?<=\.)\s/)[0] || ''}${off ? ` My check found something off: ${off.split('; ')[0]}.` : ''}`.trim();
   }
   if (extra.tail) text = `${text} ${extra.tail}`;
   // the report goes back to the session that sent the work (runs from before sessions get their own)
   const session = ensureSession(run.session, { text: run.instruction, origin: 'run' });
   if (run.session !== session.id) { run.session = session.id; save(); }
-  return say(text, { runId: run.id, workspace: ws.id, kind: 'report', outcome: run.outcome, session: session.id, ...(extra.meta || {}) });
+  return say(text, { runId: run.id, workspace: ws.id, kind: 'report', outcome: run.outcome, session: session.id, ...(result ? { result } : {}), ...(extra.meta || {}) });
 }
 
 // ── The daily greeting: a fresh, funny hello the first time the owner opens Orchy each day ──

@@ -166,13 +166,17 @@ export function bootReport() {
 // with the owner's OK, every time (never "always allow").
 export const GUARDED_GLOBS = [
   'orchestrator/lib/policy.mjs', 'orchestrator/lib/gate.mjs', 'orchestrator/lib/workspaces.mjs', 'orchestrator/lib/clients.mjs',
-  'orchestrator/lib/clientspace.mjs', 'orchestrator/lib/backend.mjs', 'orchestrator/lib/owner.mjs', 'orchestrator/lib/cfaccess.mjs', 'orchestrator/portal.mjs', 'orchestrator/mcp/bridge.mjs', 'orchestrator/mcp/cwd-hook.mjs',
-  'orchestrator/lib/artifacts.mjs', 'orchestrator/lib/recover.mjs', 'orchestrator/lib/huddlecoach.mjs', 'orchestrator/scripts/restart.mjs', 'orchestrator/config.json', '.env', '.claude/**', '.codex/**', '.one/**', '.mcp.json',
+  'orchestrator/lib/clientspace.mjs', 'orchestrator/lib/backend.mjs', 'orchestrator/lib/owner.mjs', 'orchestrator/lib/cfaccess.mjs', 'orchestrator/lib/clientview.mjs', 'orchestrator/lib/r2.mjs', 'orchestrator/portal.mjs', 'orchestrator/mcp/bridge.mjs', 'orchestrator/mcp/cwd-hook.mjs',
+  'orchestrator/lib/artifacts.mjs', 'orchestrator/lib/recover.mjs', 'orchestrator/lib/huddlecoach.mjs', 'orchestrator/lib/missions.mjs',
+  // every engine adapter (its gated flag, account model, approval wiring), the Codex/Claude Code account checks, MCP
+  // sign-in tokens, and Resources/ (it moves skill folders and blanks secrets in MCP copies)
+  'orchestrator/lib/engines/**', 'orchestrator/lib/codex.mjs', 'orchestrator/lib/claude.mjs', 'orchestrator/lib/mcpauth.mjs', 'orchestrator/lib/resources.mjs',
+  'orchestrator/scripts/restart.mjs', 'orchestrator/config.json', '.env', '.claude/**', '.codex/**', '.one/**', '.mcp.json',
 ];
 const GUARDED = new RegExp(`^(${GUARDED_GLOBS.map(g => g.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\/\*\*$/, '(/.*)?')).join('|')})$`, 'i');
 // …and the same rules where they're wired into other files (the dashboard's origin lock, the account check before a
 // run, Claude Code's permission tool): an edit that takes out text naming one asks too
-export const LOCK_MARKERS = /\b(accountCheck|crossSite|LOCAL_HOSTS|LOCAL_ORIGINS|oneScope|clientDenyRules|clientSettingsFile|backendSettingsFile|gateAndWait|BRIDGE_TOKEN|NO_SCHEDULER|isOwner|isOwnerBrowser|ownerOnly|OWNERLESS|FILE_READS|resolveFile|retryGate|RESTART_TOKEN|REPORT_TOKEN)\b|cf-ray|cf-connecting-ip|sec-fetch-site|permission-prompt-tool/i;
+export const LOCK_MARKERS = /\b(accountCheck|crossSite|LOCAL_HOSTS|LOCAL_ORIGINS|oneScope|clientDenyRules|clientSettingsFile|backendSettingsFile|gateAndWait|BRIDGE_TOKEN|NO_SCHEDULER|isOwner|isOwnerBrowser|ownerOnly|OWNERLESS|FILE_READS|resolveFile|retryGate|MAX_EXPIRES|NO_TUNNEL|ungatedRefusal|offeredRefusal|approveRun|claudeMdExcludes|project_root_markers|RESTART_TOKEN|REPORT_TOKEN)\b|cf-ray|cf-connecting-ip|sec-fetch-site|permission-prompt-tool/i;
 
 /** A path inside the Orchy folder as Windows reads it ("CLAUDE.md ", "x::$DATA" are the same files), relative with /, or null. */
 export function rootRel(p) {

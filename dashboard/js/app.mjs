@@ -1150,6 +1150,8 @@ function connectEvents() {
     refreshWorkspaceWindows();
     refreshSetup();
   });
+  // an MCP server added, removed or signed in (mcpauth.mjs), or an app connected: the open Connections/Workspaces windows redraw
+  on('connections.changed', () => refreshWorkspaceWindows());
   // the status word says so while the live feed is down, and goes back to Orchy's state when it's up
   es.onerror = () => { state.orchy.online = false; tickDoing(); };
   es.onopen = () => { state.orchy.online = true; tickDoing(); }; // the hello that follows says whether to reload

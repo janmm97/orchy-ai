@@ -13,6 +13,7 @@ import { buildPromptBody } from '../lib/engines/opencode-run.mjs';
 import { toClaudeMcp } from '../lib/engines/claude.mjs';
 import { toCodexMcp } from '../lib/engines/codex.mjs';
 import { OPENCODE_PERMISSION, permissionLooksSafe, mapTool, modelParts } from '../lib/engines/opencode-config.mjs';
+import { CODEX_ARGS } from '../lib/codex.mjs';
 
 let fail = 0;
 const ok = (cond, label, extra = '') => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${label}${cond ? '' : `  ${extra}`}`); if (!cond) fail++; };
@@ -21,7 +22,7 @@ const keep = { workspaces: [...config.workspaces] };
 process.on('exit', () => { config.workspaces = keep.workspaces; });
 
 // ── the registry ──
-ok(JSON.stringify(engineIds()) === JSON.stringify(['claude', 'codex', 'opencode', 'hermes', 'deepseek']), 'registry lists claude, codex, opencode, hermes, deepseek', JSON.stringify(engineIds()));
+ok(JSON.stringify(engineIds()) === JSON.stringify(['claude', 'codex', 'opencode', 'hermes', 'deepseek', 'antigravity']), 'registry lists claude, codex, opencode, hermes, deepseek, antigravity', JSON.stringify(engineIds()));
 ok('hermes' in config.runtimes && !!engine('hermes') && !!engine('deepseek') && !engine('hermes').capabilities.gated && !engine('deepseek').capabilities.gated, 'hermes / deepseek are engines, registered as NOT gated (refused unless allowUngated)');
 ok(!!ungatedRefusal({ name: 'H' }, engine('hermes')) && !!ungatedRefusal({ name: 'D' }, engine('deepseek')) && ungatedRefusal({ name: 'H', allowUngated: true }, engine('hermes')) === null, 'hermes / deepseek are refused by default and allowed once the workspace opts in');
 ok(JSON.stringify(Object.keys(runtimes())) === JSON.stringify(engineIds()), 'runtimes() lists registered engines only', JSON.stringify(Object.keys(runtimes())));
@@ -33,7 +34,7 @@ for (const e of engines()) {
 ok(engine('claude').capabilities.clientSafe && engine('claude').capabilities.huddles, 'claude: client-safe, huddles');
 ok(!engine('codex').capabilities.clientSafe && !engine('codex').capabilities.huddles && !!engine('codex').capabilities.clientReason, 'codex: not client-safe, no huddles, says why');
 ok(engine('opencode').capabilities.gated && !engine('opencode').capabilities.clientSafe && engine('opencode').accountModel === 'profile', 'opencode: gated, not client-safe, profile account model');
-ok(Object.keys(runtimeAvailability()).join() === 'claude,codex,opencode,hermes,deepseek', 'runtimeAvailability asks every engine');
+ok(Object.keys(runtimeAvailability()).join() === 'claude,codex,opencode,hermes,deepseek,antigravity', 'runtimeAvailability asks every engine');
 let bad = null;
 try { registerEngine({ id: 'half', label: 'Half' }); } catch (e) { bad = e; }
 ok(!!bad && !engine('half'), 'an incomplete engine is refused');
@@ -59,7 +60,7 @@ const fake = (id, over = {}) => ({
   ok(err?.code === 'UNGATED_ENGINE' && err.status === 409, 'startRun refuses the run before anything starts', err && `${err.code} ${err.message}`);
   ws.allowUngated = true;
   const err2 = await rejects(startRun({ workspace: 'w1', instruction: 'Do it' }));
-  ok(err2?.code === 'ACCOUNT_MISMATCH', 'with allowUngated the refusal is gone (the account check is next)', err2 && err2.code);
+  ok(err2?.code === 'ONE_SCOPE', 'with allowUngated the refusal is gone (next: an ungated engine needs the workspace’s own One login)', err2 && err2.code);
   ok(!/never launch/.test(String(err2?.message)), 'and the fake engine was not launched', err2?.message);
   config.workspaces.pop();
   undo();
@@ -179,6 +180,9 @@ ok(loginHint({ runtime: 'codex', codexAccount: 'owner@example.com', codexHome: '
 
 // ── protocol notes ──
 ok(engine('codex').protocolNotes({ ownerName: 'Sam' }).includes('## Working on Codex') && engine('opencode').protocolNotes({ ownerName: 'Sam' }).includes('## Working on OpenCode') && engine('claude').protocolNotes({ ownerName: 'Sam' }) === '', 'each engine adds its own protocol notes');
+
+// ── AGENTS.md: Codex reads it only in the run's own folder (workspaces sit inside Orchy's repo, whose AGENTS.md isn't theirs) ──
+ok(CODEX_ARGS.join(' ') === '-c project_root_markers=[] app-server', 'codex app-server starts with project_root_markers=[] (no AGENTS.md from the folders above)');
 
 console.log(fail ? `\n${fail} FAILED` : '\nall engine checks passed');
 process.exit(fail ? 1 : 0);

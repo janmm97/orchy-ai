@@ -25,7 +25,8 @@ import { getAgent, BUILDER_SLUG } from './agents.mjs';
 import { nameOf } from './voiceagents.mjs';
 import { clientSharedSlugs, cantHuddle, huddlePartners, huddleInvitees, MAX_RUN_HUDDLES } from './delegation.mjs';
 import { appendHuddleLog } from './logs.mjs';
-import { tasksDir } from './tasks.mjs';
+import { taskRootFor } from './tasks.mjs';
+import { tasksBase, taskRel } from './clientspace.mjs';
 import { config, ownerName } from './env.mjs';
 import { ensureSession, post as postChat } from './sessions.mjs';
 import * as runner from './runner.mjs';
@@ -186,7 +187,7 @@ export async function startFromRun(run, { agent, agents, topic } = {}) {
 /** What a huddle came to, for the run that started it (the bridge's `huddle` tool waits for this). */
 export function outcomeFor(h) {
   const done = !TALKING.has(h.status);
-  return { done, status: h.status, note: h.note || null, turns: turnsUsed(h), agreement: h.agreement, taskDir: h.taskDir || null, with: nameList(h.agents.slice(1).map(a => a.name)) };
+  return { done, status: h.status, note: h.note || null, turns: turnsUsed(h), agreement: h.agreement, taskDir: h.taskDir || null, taskRel: taskRel(h), with: nameList(h.agents.slice(1).map(a => a.name)) };
 }
 
 // ── turns ──
@@ -478,17 +479,18 @@ function end(h, status, why = '') {
   }
 }
 
-/** HUDDLE.md in the workspace's Tasks/: the whole talk and the agreement, rewritten as it goes on. */
+/** HUDDLE.md in the lead's department's Tasks/ (the workspace's Tasks/ without departments): the whole talk and the agreement, rewritten as it goes on. */
 function writeTranscript(h, ws) {
   const who = ownerName();
   if (!h.taskDir) {
+    h.taskRoot = taskRootFor(ws, { lead: h.agents[0]?.slug });
     const day = new Date(h.createdAt).toLocaleDateString('en-CA', { timeZone: config.timezone });
     const base = `${day}-huddle-${h.agents.map(a => a.slug).join('-')}`.slice(0, 64);
     let name = base;
-    for (let n = 2; fs.existsSync(path.join(tasksDir(ws), name)); n++) name = `${base}-${n}`;
+    for (let n = 2; fs.existsSync(path.join(tasksBase(ws, h), name)); n++) name = `${base}-${n}`;
     h.taskDir = name;
   }
-  const dir = path.join(tasksDir(ws), h.taskDir);
+  const dir = path.join(tasksBase(ws, h), h.taskDir);
   fs.mkdirSync(dir, { recursive: true });
   const g = h.agreement;
   const speaker = t => (isOwnerLine(t) ? who : t.kind === 'coach' ? `Orchy ${MODE_LABEL[t.mode] || ''}`.trim() : t.name);

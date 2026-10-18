@@ -18,7 +18,8 @@ import { listPlatforms } from './lib/one.mjs';
 import { toolStatus } from './lib/setupcheck.mjs';
 import { quickClaude } from './lib/claude.mjs';
 import { engine, engines } from './lib/engines/index.mjs';
-import { listAgents, getAgent, saveAgent, deleteAgent, BUILDER_SLUG } from './lib/agents.mjs';
+import { listAgents, getAgent, saveAgent, deleteAgent, BUILDER_SLUG, departmentsOf } from './lib/agents.mjs';
+import { syncAllResources } from './lib/resources.mjs';
 import { route, remodel, earlierRuns } from './lib/router.mjs';
 import { quickStatus } from './lib/status.mjs';
 import { jevMode, jevLabel } from './lib/jev.mjs';
@@ -41,6 +42,8 @@ import { clients, clientById, addClient, updateClient, rotateLink, removeClient,
 import { startPortal } from './portal.mjs';
 import { saveUpload, uploadInfo, publicUpload, handToWorkspace, withFiles } from './lib/uploads.mjs';
 import { taskFiles, taskFile, sendTaskFile, removeHome } from './lib/clientspace.mjs';
+import { r2Status } from './lib/r2.mjs';
+import * as mcpAuth from './lib/mcpauth.mjs';
 import * as artifacts from './lib/artifacts.mjs';
 import * as media from './lib/media.mjs';
 import * as validate from './lib/validate.mjs';
@@ -165,6 +168,14 @@ function reviewSay(text, meta) {
   return orchy.say(text, { ...meta, session: ensureSession(null, { text: 'Weekly usage review', origin: 'review' }).id });
 }
 if (!env('NO_SCHEDULER')) startUsageReview({ say: reviewSay });
+// Resources/ (resources.mjs): new skills filed and linked, MCP copies and INDEX.md refreshed, agent homes made, at boot
+// and every 10 minutes; skill folders only move in a workspace with nothing live. A test copy (NO_SCHEDULER) leaves
+// the workspace folders be.
+if (!env('NO_SCHEDULER')) {
+  const syncRes = () => syncAllResources(workspaces().filter(w => w.enabled), { busy: ws => runner.liveIn(ws.id) });
+  setTimeout(syncRes, 5_000).unref();
+  setInterval(syncRes, 10 * 60_000).unref();
+}
 
 // ── monthly impact report: last month's, written on the 1st ──
 if (!env('NO_SCHEDULER')) startMonthly({
@@ -423,7 +434,7 @@ async function extraAccounts(ws, force) {
 async function workspaceSummary(ws, { force = false } = {}) {
   const [account, extra] = await Promise.all([accountCheck(ws, { force }), extraAccounts(ws, force)]);
   return {
-    id: ws.id, name: ws.name, client: ws.client, blurb: ws.blurb, color: ws.color || null, aliases: ws.aliases || [], handles: handles(ws), folder: ws.folder,
+    id: ws.id, name: ws.name, client: ws.client, blurb: ws.blurb, color: ws.color || null, aliases: ws.aliases || [], handles: handles(ws), folder: ws.folder, departments: departmentsOf(ws),
     runtime: ws.runtime, runtimeLabel: runtimeLabel(ws.runtime), models: modelsFor(ws), enabled: ws.enabled,
     claudeAccount: ws.claudeAccount || null, codexAccount: ws.codexAccount || null, ownProfile: !!ws[engine(ws.runtime)?.fields.profile],
     // every registered engine's account and profile for this workspace, and whether it may run an engine Orchy can't gate
@@ -801,7 +812,14 @@ on('GET', '/api/workspaces/:ws', async (req, _res, { ws: wsId }) => {
 on('GET', '/api/workspaces/:ws/connections', async (req, _res, { ws: wsId }) => allConnections(workspace(wsId), { force: new URL(req.url, 'http://x').searchParams.has('refresh') }));
 // MCP servers: their values (env, headers, arguments, the URL past its host, any other field) only go to a browser
 // the owner paired; any other gets names and shape. Changing, removing and testing one are owner-only like every non-GET.
-on('GET', '/api/workspaces/:ws/mcp', async (req, _res, { ws: wsId }) => shownMcp(readMcp(workspace(wsId)), owner.isOwner(req, PORT)));
+// A remote server's sign-in state (signed in or not, waiting, the last error) shows to any browser: never its token,
+// which stays in orchestrator/data/mcp-auth.json (mcpauth.mjs).
+on('GET', '/api/workspaces/:ws/mcp', async (req, _res, { ws: wsId }) => {
+  const ws = workspace(wsId);
+  const servers = readMcp(ws);
+  const shown = shownMcp(servers, owner.isOwner(req, PORT));
+  return Object.fromEntries(Object.entries(shown).map(([n, s]) => [n, servers[n]?.url && s && typeof s === 'object' ? { ...s, auth: mcpAuth.authStatus(ws, n, servers[n]) } : s]));
+});
 on('PUT', '/api/workspaces/:ws/mcp/:name', async (req, _res, { ws: wsId, name }) => {
   const def = upsertMcp(workspace(wsId), decodeURIComponent(name), await readBody(req));
   emit('connections.changed', { workspace: wsId });
@@ -809,10 +827,34 @@ on('PUT', '/api/workspaces/:ws/mcp/:name', async (req, _res, { ws: wsId, name })
 });
 on('DELETE', '/api/workspaces/:ws/mcp/:name', async (_req, _res, { ws: wsId, name }) => {
   removeMcp(workspace(wsId), decodeURIComponent(name));
+  mcpAuth.forget(workspace(wsId), decodeURIComponent(name));
   emit('connections.changed', { workspace: wsId });
   return { ok: true };
 });
-on('POST', '/api/workspaces/:ws/mcp-test', async (req) => testMcp(await readBody(req)));
+on('POST', '/api/workspaces/:ws/mcp-test', async (req, _res, { ws: wsId }) => {
+  const { name, auth: _auth, ...def } = await readBody(req);
+  const ws = workspace(wsId);
+  // a saved server's own sign-in rides along (only for the URL it was made for)
+  const r = await testMcp(typeof name === 'string' && name ? await mcpAuth.withAuth(ws, name, def) : def);
+  // signed in through Claude Code: runs use that token, but Orchy never holds it, so its own Test can't
+  if (r.needsLogin && name && mcpAuth.claudeSignedIn(ws, name, def.url)) return { ok: false, viaClaude: true, error: 'signed in through Claude Code, which the agents’ runs use. Orchy never holds that token, so this Test can’t check it; a task that uses it will.' };
+  return r;
+});
+// OAuth sign-in for a remote MCP server with no API key: opens the owner's browser; the window updates when it's done
+on('POST', '/api/workspaces/:ws/mcp/:name/login', async (_req, _res, { ws: wsId, name }) => {
+  const ws = workspace(wsId), n = decodeURIComponent(name);
+  const def = readMcp(ws)[n];
+  if (!def) throw Object.assign(new Error(`No MCP server called ${n}`), { status: 404 });
+  let r;
+  try { r = await mcpAuth.startLogin(ws, n, def, { onDone: () => emit('connections.changed', { workspace: wsId }) }); }
+  catch (e) {
+    // a service that only lets approved apps register: sign the workspace's own Claude Code account in instead
+    if (e.code !== 'register-refused' || !ws.claudeAccount) throw Object.assign(e, { status: e.status || 400 });
+    r = mcpAuth.openClaudeLogin(ws, n, def);
+  }
+  emit('connections.changed', { workspace: wsId });
+  return { status: r.status };
+});
 
 // ── Adding, switching off and retiring workspaces ("agents" to the owner) ──
 const wsChanged = async (wsId, extra = {}) => emit('workspaces.changed', {
@@ -824,10 +866,14 @@ const liveIn = wsId => Object.values(db().runs).filter(r => r.workspace === wsId
 on('GET', '/api/runtimes', async () => {
   const have = runtimeAvailability();
   const cfg = runtimes();
-  const rows = await Promise.all(engines().map(async e => {
+  // an opt-in engine the owner hasn't switched on (engineOffered) only shows for a workspace already on it
+  const shown = engines().filter(e => cfg[e.id]?.offered !== false || workspaces().some(w => w.runtime === e.id));
+  const rows = await Promise.all(shown.map(async e => {
     // only an engine that runs here is asked who its default profile is signed in as
     const a = have[e.id]?.available && e.accountModel === 'email' ? await e.account(null).catch(() => null) : null;
-    return [e.id, { ...cfg[e.id], available: !!have[e.id]?.available, version: have[e.id]?.available ? e.version?.() || null : null, defaultAccount: a?.email || null, sandbox: a?.sandbox || null }];
+    // one sign-in per computer: the account the other workspaces on it already use comes first
+    const shared = e.sharedLogin ? workspaces().map(w => w[e.fields.account]).find(Boolean) || null : null;
+    return [e.id, { ...cfg[e.id], available: !!have[e.id]?.available, version: have[e.id]?.available ? e.version?.() || null : null, defaultAccount: shared || a?.email || null, sandbox: a?.sandbox || null }];
   }));
   return Object.fromEntries(rows);
 });
@@ -889,7 +935,7 @@ on('POST', '/api/workspaces/:ws/retire', async (req, _res, { ws: wsId }) => {
   await wsChanged(wsId, { retired: retiredSummary() });
   if (r.clientsOff?.length) clientsChanged(); // its client links are switched off with it
   voiceRefresh(true);
-  orchy.say(`${ws.name} is retired. Its folder is in Retired/${r.archivedFolder}, and I won't send it anything. You can bring it back from the Workspace window.`, { session: null });
+  orchy.say(`${ws.name} is retired. Its folder is in Retired/${r.archivedFolder}, and I won't send it anything. You can bring it back from the Workspaces window.`, { session: null });
   return r;
 });
 on('GET', '/api/workspaces-retired', async () => retiredSummary());
@@ -905,6 +951,7 @@ on('DELETE', '/api/workspaces-retired/:ws', async (req, _res, { ws: wsId }) => {
   const { confirm } = await readBody(req);
   if (String(confirm || '').trim().toLowerCase() !== r.name.toLowerCase()) throw Object.assign(new Error(`Type "${r.name}" to confirm`), { status: 400 });
   const p = purgeRetired(wsId);
+  mcpAuth.forgetWorkspace(wsId); // its MCP sign-ins go with it
   if (p?.clientsRemoved?.length) clientsChanged();
   db().rules = db().rules.filter(x => x.workspace !== wsId);
   save();
@@ -988,7 +1035,8 @@ async function runAgent(ws, slug, { instruction, model, files }) {
 // A link's secret is shown once, when it's made; a lost link is replaced.
 function clientPages() {
   const base = clientBase();
-  return { port: CLIENT_PORT(), base, online: /^https:\/\//.test(base) };
+  // client video plays only through R2 links (r2.mjs); the Clients window says when it's off
+  return { port: CLIENT_PORT(), base, online: /^https:\/\//.test(base), video: r2Status().on };
 }
 const clientsChanged = () => emit('clients.changed', { clients: clients(), clientPages: clientPages() });
 on('GET', '/api/clients', async () => clients());
@@ -1381,7 +1429,7 @@ on('GET', '/api/bridge/call/:id', async (req, _res, { id: cid }) => {
 // ── Huddles: two agents of a workspace talk a task through; the owner approves what they agree (huddle.mjs) ──
 on('GET', '/api/huddles', async () => huddles.listHuddles(30));
 on('GET', '/api/huddles/:id', async (_req, _res, { id: hid }) => huddles.getHuddle(hid));
-// from the Workspace window (Jev's card starts one through dispatchProposal)
+// from the Workspaces window (Jev's card starts one through dispatchProposal)
 on('POST', '/api/huddles', async (req) => {
   const b = await readBody(req);
   const ws = workspace(String(b.workspace || ''));
