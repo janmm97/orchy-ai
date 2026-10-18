@@ -12,10 +12,9 @@ Nothing here is marked as tested against a real install yet. Every status below 
 | Codex | yes (`untrusted` policy, every approval request) | pending real-install test |
 | OpenCode | yes, by its own config: every tool set to `ask` | implemented, unverified against the real binary (fake-server tests only) |
 | Hermes | **no** | implemented, unverified against the real binary. Refused unless the workspace sets `allowUngated` |
-| DeepSeek Harness | **no** | implemented, unverified against the real binary. Refused unless the workspace sets `allowUngated` |
 | Antigravity | **no** (it can't ask mid-run; the owner approves each whole run first) | implemented, unverified against the real binary in this repo (fake-binary tests only). Off by default (`ORCHY_ANTIGRAVITY=1` in `.env`), refused unless the workspace sets `allowUngated` |
 
-"Gated: no" means Orchy cannot prove that the harness asks before every file change, command or tool call, so `startRun` refuses the workspace unless the owner sets `allowUngated: true` for it in `orchestrator/config.json` (Workspaces, the workspace, "allow it to run without approvals"). Hermes, DeepSeek and Antigravity ship in that state on purpose. A workspace on any ungated harness also needs its own One login (`startRun` refuses it otherwise, code `ONE_SCOPE`): Orchy doesn't see every command such a harness runs, so the One CLI could fall back to another account. The README table carries the same statuses.
+"Gated: no" means Orchy cannot prove that the harness asks before every file change, command or tool call, so `startRun` refuses the workspace unless the owner sets `allowUngated: true` for it in `orchestrator/config.json` (Workspaces, the workspace, "allow it to run without approvals"). Hermes and Antigravity ship in that state on purpose. A workspace on any ungated harness also needs its own One login (`startRun` refuses it otherwise, code `ONE_SCOPE`): Orchy doesn't see every command such a harness runs, so the One CLI could fall back to another account. The README table carries the same statuses.
 
 ## Which instructions a run reads
 
@@ -24,7 +23,7 @@ Workspaces live in `workspaces/` inside this repo, whose root CLAUDE.md and AGEN
 - **Claude Code:** the run's settings file lists them in `claudeMdExcludes` (`runner.mjs#setupSettingsFile`).
 - **Codex:** Codex joins every AGENTS.md from the project root (the nearest folder with a `project_root_markers` entry, `.git` by default) down to the run's folder. Orchy starts `codex -c project_root_markers=[] app-server` and repeats `project_root_markers: []` in each thread's config; an empty list disables the parent walk, so only the workspace's own AGENTS.md is read (checked against Codex's source, `codex-rs/core/src/agents_md.rs`; unverified against a real install here).
 - **OpenCode:** it takes the first AGENTS.md (else CLAUDE.md) walking up from the run's folder (opencode.ai/docs/rules), so the workspace's own wins as long as the workspace has one (new workspaces get both; a workspace switched to OpenCode gets AGENTS.md copied from its CLAUDE.md). Orchy sets `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT=1`, so the owner's personal `~/.claude/CLAUDE.md` isn't read either. Unverified against a real install.
-- **Hermes, DeepSeek Harness, Antigravity:** how they discover instruction files above the working folder is unconfirmed. Orchy passes each run's instructions itself (ACP session prompt, or agy's stdin). If you run one of them, check whether the repo-root AGENTS.md shows up in a run, and report it.
+- **Hermes, Antigravity:** how they discover instruction files above the working folder is unconfirmed. Orchy passes each run's instructions itself (ACP session prompt, or agy's stdin). If you run one of them, check whether the repo-root AGENTS.md shows up in a run, and report it.
 
 Ori Harness (`ori`) is a launcher, not a separate harness. See the end of this file.
 
@@ -90,16 +89,16 @@ Changed because of the docs: `experimental.mcp_timeout` was removed (the docs do
 
 ## ACP (Agent Client Protocol) engines
 
-Hermes and DeepSeek Harness run through one shared ACP client, `orchestrator/lib/engines/acp.mjs` (JSON-RPC 2.0 over stdio, one message per line, https://agentclientprotocol.com). What the client does:
+Hermes runs through the shared ACP client, `orchestrator/lib/engines/acp.mjs` (JSON-RPC 2.0 over stdio, one message per line, https://agentclientprotocol.com). What the client does:
 
 - `initialize` with `clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }`: Orchy gives the agent no file or terminal powers; any `fs/*` or `terminal/*` request that arrives anyway is answered "method not found".
 - The Orchy bridge (and the workspace's allowed stdio MCP servers) go in `session/new` `mcpServers` (stdio form: `name`, `command`, `args`, `env` as a list of `{ name, value }`). Remote MCP servers are not passed.
 - Every `session/request_permission` goes to the Orchy gate with the tool mapped to the names `policy.mjs` knows (`execute` to Bash, `edit`/`delete`/`move` to Edit with each path, `fetch` to WebFetch, `read` to Read, MCP names to `mcp__server__tool`; `other`, `switch_mode` and unknown kinds are an unrecognised tool, which always asks the owner). The answer is the agent's own `allow_once` or `reject_once` option, never an `*_always` option. A gate error, a timeout, a malformed request, a missing `*_once` option or a stop all answer `cancelled`.
-- Safety net: a tool of a kind other than `read`/`search`/`think` that starts running without a permission request for it, or that runs after Orchy refused it, aborts the run as failed ("agent acted without asking"). This is on for any engine registered as gated. For the two ungated engines below it is switched off (the owner opted in) and the fact is written to the run feed instead.
+- Safety net: a tool of a kind other than `read`/`search`/`think` that starts running without a permission request for it, or that runs after Orchy refused it, aborts the run as failed ("agent acted without asking"). This is on for any engine registered as gated. For Hermes, which is ungated, it is switched off (the owner opted in) and the fact is written to the run feed instead.
 - Resume uses `session/load` only when the agent advertised `loadSession`; otherwise the run starts fresh and says so. `session/cancel` is sent on Stop; the process tree is killed if it does not finish.
 - The client never decides an engine is gated. An engine is gated only if its docs show every action reaches `session/request_permission` and a real-binary test confirms it.
 
-Tests: `orchestrator/scripts/test-engine-acp.mjs` (a fake ACP agent in `orchestrator/scripts/fake-acp-agent.mjs`, plus the Hermes and DeepSeek generated configs).
+Tests: `orchestrator/scripts/test-engine-acp.mjs` (a fake ACP agent in `orchestrator/scripts/fake-acp-agent.mjs`, plus the Hermes generated config).
 
 ## Hermes
 
@@ -139,42 +138,6 @@ So in `hermes acp` a file edit, a web fetch or an MCP call can happen without Or
 4. Look at `<profile>/config.yaml` after a run: manual approvals, no allowlist, no yolo.
 5. Try an MCP call and a web fetch; note whether any permission request reached Orchy.
 6. If every kind asked, update the "Why it is not gated" section and flip the flag.
-
-## DeepSeek Harness
-
-**Status: implemented, unverified against the real binary (public preview, APIs change). Gated: NO.** Refused unless the workspace sets `allowUngated`.
-
-| | |
-|---|---|
-| Install | `npx @deepseek-ai/dsh web` runs it, but Orchy needs the `dsh` command on the PATH (or `DSH_CLI_PATH` in `.env`). Orchy never installs it |
-| How Orchy runs it | `dsh --profile acp` through the ACP client, `cwd` = the workspace folder, `DSH_HOME` = the workspace's folder, `DSH_PERMISSION_MODE=workspace-write`. No `--patch` overlays, no mode flags |
-| Forced config | Before every run Orchy writes `$DSH_HOME/profiles/acp/cordis.patch.yml`, keeping the owner's provider and model entries, removing any auto-approval / "Auto review" plugin and any permission-presets entry, and adding `@deepseek-ai/dsh-permission-presets` with `defaultPreset: workspace-write` (sandbox `workspace-write`, approval `ask`). It never writes `danger-full-access` / `never`, and never enables auto approval |
-| MCP | Through ACP `session/new` `mcpServers` (support in `dsh` unconfirmed) |
-| Account | `accountModel: 'profile'`: `deepseekProfile` is the `DSH_HOME` folder (its own, shared with no other workspace). Logged in = the API key is saved in `$DSH_HOME/.credentials.yaml` (set in the Web UI: `DSH_HOME=<folder> dsh web`, Settings, Models). `account().label` is the provider(s) and model from `dsh --profile acp --dump-config`, parsed defensively |
-| Models | All `default`; resume starts a fresh session each time (loading Web UI sessions is not wired) |
-
-### Why it is not gated (evidence)
-
-- The permission docs describe presets that pair a sandbox mode with an approval policy (`ask` or `never` only). The default `workspace-write` confines writes to the workspace and temp folders by sandbox: writes inside the workspace do not ask, and reads and network are not confined. Approvals appear for escalation out of the sandbox and `ask_user_question`. One doc page says outright that this is not a sandbox against everything.
-- The ACP page says permission presets are exposed as ACP session modes (`read-only`, `workspace-write`, `danger-full-access`) and that tool calls report kinds, titles, locations and diffs. It does not say a permission request is sent as `session/request_permission`, and it does not mention `mcpServers`.
-- The third-party sources that describe the default sandbox disagree (read-only versus workspace-write).
-
-So in `dsh --profile acp` an in-workspace file change, a read of any file and network calls can happen without Orchy being asked.
-
-**What would flip it to gated:** a real-binary test that, with the generated patch, every tool kind outside `read`/`search`/`think` sends `session/request_permission` (including in-workspace edits, which would mean the `read-only` preset with approvals, or a documented policy that asks for them), plus a way to keep reads inside the folder. Then set `capabilities.gated: true` and `strict` on in `deepseek.mjs`.
-
-### Still unconfirmed
-
-- The `cordis.patch.yml` format for the permission plugin beyond `defaultPreset` (the plugin README lists a `presets` map but its schema is not fully shown), that a patch under `profiles/acp/` is read by `dsh --profile acp`, the `.credentials.yaml` location for CLI use, `dsh --dump-config` output, `DSH_PERMISSION_MODE` semantics, and whether `dsh` has any setting to make in-workspace writes ask.
-- The `dsh` documentation at the repo (`apps/cli/README.md`, `docs/subsystems/approval.md`, `SAFETY.md`) could not be fetched during this work (404 on the paths tried); the evidence above comes from the docs site, the permission-presets README and third-party summaries.
-
-### Manual verification checklist (not done yet)
-
-1. Install `dsh`; confirm `dsh --version`; read `SAFETY.md` and `docs/subsystems/approval.md` in the repo.
-2. Run `DSH_HOME=<folder> dsh web`, save the API key in Settings, Models. Add the workspace in Orchy with that folder as the DeepSeek profile.
-3. Run `dsh --profile acp --dump-config` with `DSH_HOME` set, after one Orchy run: confirm the permission preset is `workspace-write`/`ask` and no auto-approval plugin appears.
-4. Allow the workspace (`allowUngated`) and run: "create a file, read a file outside the folder, run `git push`". Note which of the three produced a `session/request_permission` (see the feed's "asks through ACP" line) and which did not.
-5. Update the evidence above and decide whether the gate can be flipped.
 
 ## Antigravity
 
