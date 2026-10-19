@@ -3,7 +3,9 @@
 //
 // An engine module's default export has this shape:
 //   id, label, models: [quick, normal, strong], blurb
-//   fields: { account, profile }     the workspace keys in config.json (e.g. claudeAccount / claudeConfigDir)
+//   fields: { account, profile, computerLogin? }   the workspace keys in config.json (e.g. claudeAccount / claudeConfigDir);
+//                                    computerLogin (Hermes): the key for the owner's choice between this computer's
+//                                    sign-in (shared by every workspace set that way) and the profile's own
 //   accountModel: 'email' | 'profile'  'email' = a login with an email address; 'profile' = no account concept (API keys,
 //                                     provider logins): accountCheck needs a profile folder of its own, shared with no
 //                                     other workspace, and reports the provider(s) from account().label
@@ -20,7 +22,8 @@
 //                                    profile's sign-in) once `bin` runs; winRepair finishes a half-done Windows install
 //   bin() → path|null, version() → string|null, available() → boolean
 //   account(profileDir, { force, maxAge }) → Promise<{ loggedIn, email?, label, error?, subscription?, sandbox? }>
-//   profileEnv(profileDir) → { ENV_VAR: value }   the variables that pick the per-workspace profile
+//   profileEnv(profileDir, account?) → { ENV_VAR: value }   the variables that pick the per-workspace profile
+//                                    (account: accountFor's answer, for an engine whose login depends on computerLogin)
 //   loginCommand(account, { win }) → the harness's login command (the env prefix comes from profileEnv)
 //   loginAlt(account, ws) → a hint shown beside the command, or null
 //   mcpConfig({ servers, allowed, bridge }) → the harness's own MCP config for Orchy's bridge + the allowed servers
@@ -93,6 +96,7 @@ export const engineInfo = e => ({
   id: e.id, label: e.label, blurb: e.blurb || '', accountModel: e.accountModel, fields: e.fields,
   instructionFile: e.instructionFile || null, capabilities: e.capabilities,
   offered: engineOffered(e), optIn: e.optIn || null, sharedLogin: !!e.sharedLogin,
+  computerLogin: !!e.fields.computerLogin, // a workspace may run on this computer's sign-in or one of its own
 });
 
 /** The command that installs this engine on this OS ('' when it has none). */

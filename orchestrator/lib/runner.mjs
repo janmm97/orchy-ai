@@ -62,7 +62,8 @@ export function accountKey(ws, runtime = ws.runtime) {
     prof = path.resolve(profilePath(a.profileDir)).replace(/[\\/]+$/, '');
     if (process.platform === 'win32') prof = prof.toLowerCase();
   }
-  const who = eng?.accountModel === 'profile' ? prof || 'default' : String(a.email || '').toLowerCase().trim() || prof || 'default';
+  // workspaces on the computer's Hermes sign-in share one account: one queue, one limit pause
+  const who = a.computerLogin ? 'computer' : eng?.accountModel === 'profile' ? prof || 'default' : String(a.email || '').toLowerCase().trim() || prof || 'default';
   return `${runtime}:${who}`;
 }
 

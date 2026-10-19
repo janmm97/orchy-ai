@@ -177,11 +177,16 @@ export function modelFor(ws, model, runtime = ws.runtime) {
 export function engineFor(ws, agent) { return agent?.engine || ws.runtime; }
 
 // ── accounts: each workspace runs under exactly one login per runtime ──
-/** { runtime, email, profileDir, model } for one of the workspace's engines (its default one unless named). */
+/**
+ * { runtime, email, profileDir, model, computerLogin } for one of the workspace's engines (its default one unless
+ * named). computerLogin (engines that offer it, Hermes): true = it runs on this computer's sign-in, shared with every
+ * workspace set that way; false = only its own profile's sign-in; undefined = the engine has no such choice.
+ */
 export function accountFor(ws, runtime = ws.runtime) {
   const e = engine(runtime);
   if (!e) return { runtime, email: null, profileDir: null, model: 'email', unknown: true };
-  return { runtime: e.id, email: ws[e.fields.account] || null, profileDir: ws[e.fields.profile] || null, model: e.accountModel };
+  const lend = e.fields.computerLogin ? { computerLogin: ws[e.fields.computerLogin] !== false } : {};
+  return { runtime: e.id, email: ws[e.fields.account] || null, profileDir: ws[e.fields.profile] || null, model: e.accountModel, ...lend };
 }
 
 const sameDir = (a, b) => {
@@ -219,10 +224,13 @@ export async function accountCheck(ws, { force = false, runtime = ws.runtime } =
     if (ws.builtin) problem = `Orchy's own backend can't run on ${e.label}`;
     else if (!a.profileDir) problem = `${ws.name} has no ${e.label} profile folder of its own (${e.fields.profile} in config.json). ${e.label} workspaces must not share logins.`;
     else if (clash) problem = `${ws.name} and ${clash.name} point at the same ${e.label} profile folder (${configDir}). Give each its own, so their logins never mix.`;
-    const status = problem ? { loggedIn: false } : await e.account(a.profileDir, { force });
+    const status = problem ? { loggedIn: false } : await e.account(a.profileDir, { force, ...(a.computerLogin === false ? { computerLogin: false } : {}) });
+    // on its own sign-in, a config that would still reach the computer's is refused (tier-catalog.mjs#ownLoginProblem)
+    if (!problem && status.problem) problem = `${ws.name} is set to use its own ${e.label} sign-in, but ${status.problem}`;
     const ok = !problem && !!status.loggedIn;
     return {
       ...base, ok, expected: a.email || (a.profileDir ? configDir : null), actual: status.label || null,
+      computerLogin: a.computerLogin,
       hint: problem ? null : await computerHint(ws, e, a, status, { force }),
       email: status.email || a.email || null,
       loggedIn: !!status.loggedIn, configDir,
@@ -267,7 +275,11 @@ async function computerHint(ws, e, a, status, { force }) {
   try { pc = await e.account(null, { force }); } catch {}
   if (!pc?.loggedIn) return null;
   const who = pc.email || pc.label || null;
-  return `${e.label} is signed in on this computer${who ? ` (${who})` : ''}, but ${ws.name} keeps its own ${e.label} profile, so it needs its own sign-in once: press Log in, or paste the command below.${e.computerLoginNote ? ` ${e.computerLoginNote}` : ''}`;
+  const on = `${e.label} is signed in on this computer${who ? ` (${who})` : ''}`;
+  // on the computer's sign-in and still not signed in: the computer's is one Hermes doesn't lend (a key in its .env)
+  if (a.computerLogin) return `${on}, but not in a way ${ws.name} can use.${e.computerLoginNote ? ` ${e.computerLoginNote}` : ''} Press Log in to sign this computer in with OAuth.`;
+  if (a.computerLogin === false) return `${on}, but ${ws.name} is set to use its own ${e.label} sign-in, so it needs one: press Log in, or paste the command below. Or let it use this computer's sign-in (Workspaces → ${ws.name} → Edit).`;
+  return `${on}, but ${ws.name} keeps its own ${e.label} profile, so it needs its own sign-in once: press Log in, or paste the command below.`;
 }
 
 /** A shell command (PowerShell on Windows) that logs this workspace's profile for an engine in. Pasteable as-is. */
@@ -276,7 +288,7 @@ export function loginHint(ws, runtime = ws.runtime) {
   if (!e) return '';
   const a = accountFor(ws, runtime);
   const win = process.platform === 'win32';
-  return `${envPrefix(e.profileEnv(a.profileDir), win)}${e.loginCommand(a, { win })}`;
+  return `${envPrefix(e.profileEnv(a.profileDir, a), win)}${e.loginCommand(a, { win })}`;
 }
 export function loginAlt(ws, runtime = ws.runtime) {
   const e = engine(runtime);
@@ -675,6 +687,8 @@ export function addWorkspace({ name, client, blurb, aliases, runtime = 'claude',
     codexAccount: runtime === 'codex' ? email : null,
     codexHome: runtime === 'codex' && ownProfile ? profileDir('codex', id) : null,
     ...(profileOnly ? { [eng.fields.account]: email.slice(0, 80) || null, [eng.fields.profile]: profileDir(eng.id, id) } : {}),
+    // Hermes: this computer's sign-in, or (ownProfile) a sign-in of its own; always written, so the choice is on record
+    ...(eng.fields.computerLogin ? { [eng.fields.computerLogin]: ownProfile !== true } : {}),
     ...(eng.sharedLogin ? { [eng.fields.account]: email } : {}),
     ...(allowUngated === true && !eng.capabilities.gated ? { allowUngated: true } : {}),
     createdAt: new Date().toLocaleDateString('en-CA'),
@@ -720,6 +734,7 @@ export function updateWorkspace(id, patch = {}) {
   }
   // a profile-only engine (OpenCode) always has a profile folder of its own, made when the engine is picked
   if (profileOnly && !entry[eng.fields.profile]) entry[eng.fields.profile] = profileDir(eng.id, id);
+  if (eng.fields.computerLogin && patch.ownProfile !== undefined) entry[eng.fields.computerLogin] = patch.ownProfile !== true;
   // running a harness Orchy can't gate is the owner's explicit, per-workspace choice
   if ('allowUngated' in patch) entry.allowUngated = patch.allowUngated === true;
   if (!profileOnly && !entry[eng.fields.account]) {

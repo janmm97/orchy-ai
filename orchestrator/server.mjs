@@ -433,7 +433,7 @@ async function workspaceSummary(ws, { force = false } = {}) {
     enabled: ws.enabled,
     claudeAccount: ws.claudeAccount || null, codexAccount: ws.codexAccount || null, ownProfile: !!ws[engine(ws.runtime)?.fields.profile],
     // every registered engine's account and profile for this workspace, and whether it may run an engine Orchy can't gate
-    accounts: Object.fromEntries(engines().map(e => [e.id, { account: ws[e.fields.account] || null, ownProfile: !!ws[e.fields.profile] }])), allowUngated: ws.allowUngated === true, gated: engine(ws.runtime)?.capabilities.gated !== false,
+    accounts: Object.fromEntries(engines().map(e => [e.id, { account: ws[e.fields.account] || null, ownProfile: !!ws[e.fields.profile], ...(e.fields.computerLogin ? { computerLogin: ws[e.fields.computerLogin] !== false } : {}) }])), allowUngated: ws.allowUngated === true, gated: engine(ws.runtime)?.capabilities.gated !== false,
     account, extraAccounts: extra, oneScoped: oneScope(ws).own, oneLogin: oneLoginStatus(ws.id), oneAdd: oneAddStatus(ws.id), createdAt: ws.createdAt || null,
     mcpCount: Object.keys(readMcp(ws)).length,
   };

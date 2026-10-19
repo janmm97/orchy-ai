@@ -8,7 +8,7 @@ import path from 'node:path';
 import { config } from '../lib/env.mjs';
 import { engine, engines, engineIds, registerEngine, ungatedRefusal, engineInstallCmd, runRefusal } from '../lib/engines/index.mjs';
 import { accountCheck, accountFor, runtimes, modelFor, modelsFor, loginHint, runtimeAvailability, profileClash, backendWorkspace, setBackendAccount } from '../lib/workspaces.mjs';
-import { startRun } from '../lib/runner.mjs';
+import { startRun, accountKey } from '../lib/runner.mjs';
 import { buildPromptBody } from '../lib/engines/opencode-run.mjs';
 import { toClaudeMcp } from '../lib/engines/claude.mjs';
 import { toCodexMcp } from '../lib/engines/codex.mjs';
@@ -262,7 +262,21 @@ ok(loginHint({ runtime: 'codex', codexAccount: 'owner@example.com', codexHome: '
   a = await accountCheck(w, { force: true });
   ok(a.plan === 'Nous Portal · Free' && JSON.stringify(a.availableModels) === '["nous/hermes-5:free"]', 'hermes: a free tier only offers the free models', JSON.stringify(a));
   const hint = loginHint(w);
-  ok(hint.includes('HERMES_HOME') && /portal$/.test(hint), 'hermes: login hint pins HERMES_HOME and runs `hermes portal` (OAuth)', hint);
+  ok(accountFor(w).computerLogin === true && !hint.includes('HERMES_HOME') && /portal$/.test(hint), 'hermes: a workspace on this computer’s sign-in (the default) logs the computer in with `hermes portal` (OAuth)', hint);
+  // the owner picked its own sign-in: only the profile's sign-ins count, and its config must stay on them
+  w.hermesComputerLogin = false;
+  const ownHint = loginHint(w);
+  ok(accountFor(w).computerLogin === false && ownHint.includes('HERMES_HOME') && ownHint.includes('HERMES_SHARED_AUTH_DIR') && /portal$/.test(ownHint), 'hermes: on its own sign-in, Log in pins HERMES_HOME and a Nous token store of its own', ownHint);
+  a = await accountCheck(w, { force: true });
+  ok(!a.ok && a.loggedIn && /own Hermes sign-in.*names no provider/.test(a.profileProblem || ''), 'hermes: its own sign-in with no provider in its config is refused (Hermes could pick the computer’s)', a.profileProblem);
+  fs.writeFileSync(path.join(dir, 'config.yaml'), 'model:\n  default: nous/hermes-5:free\n  provider: nous\nfallback_providers:\n  - provider: deepseek\n    model: deepseek-chat\n');
+  a = await accountCheck(w, { force: true });
+  ok(!a.ok && /deepseek/i.test(a.profileProblem || ''), 'hermes: … and so is a fallback provider it isn’t signed in to itself', a.profileProblem);
+  fs.writeFileSync(path.join(dir, 'config.yaml'), 'model:\n  default: nous/hermes-5:free\n  provider: nous\nauxiliary:\n  vision:\n    provider: auto\n');
+  a = await accountCheck(w, { force: true });
+  ok(a.ok && a.computerLogin === false && !a.profileProblem, 'hermes: its own sign-in, with its config on its own provider, runs', a.error);
+  const pc = { ...w, id: 'hm2', hermesProfile: `${dir}-2`, hermesComputerLogin: true };
+  ok(accountKey(pc) === 'hermes:computer' && accountKey({ ...pc, id: 'hm3', hermesProfile: `${dir}-3` }) === 'hermes:computer' && accountKey(w) !== 'hermes:computer', 'hermes: workspaces on the computer’s sign-in share one account queue; one on its own sign-in has its own');
   config.workspaces.splice(config.workspaces.indexOf(w), 1);
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 4, retryDelay: 100 });
 }

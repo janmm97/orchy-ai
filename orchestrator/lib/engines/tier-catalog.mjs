@@ -82,17 +82,46 @@ export function hermesRootFor(profileHome, native = hermesNativeHome()) {
   return path.basename(path.dirname(p)) === 'profiles' ? path.dirname(path.dirname(p)) : null;
 }
 
+const lc = p => String(p || '').trim().toLowerCase();
+// the providers a config sends work to besides its main one: fallback_providers and auxiliary.<task>.provider
+// ('auto' and 'main' follow the main provider)
+function hermesSideProviders(y) {
+  const out = [];
+  for (const f of Array.isArray(y.fallback_providers) ? y.fallback_providers : []) out.push(typeof f === 'string' ? f : f?.provider);
+  for (const t of Object.values(y.auxiliary && typeof y.auxiliary === 'object' ? y.auxiliary : {})) if (t && typeof t === 'object') out.push(t.provider);
+  return out.map(lc).filter(p => p && p !== 'auto' && p !== 'main');
+}
+
 function hermesConfig(dir) {
   try {
     const y = YAML.parse(fs.readFileSync(path.join(dir, 'config.yaml'), 'utf8')) || {};
+    // endpoints the config itself holds (custom, custom:<name>, a `providers:` entry) need no sign-in
+    const endpoints = Object.keys(y.providers && typeof y.providers === 'object' ? y.providers : {}).map(lc);
     const m = y.model;
-    if (typeof m === 'string') return { provider: y.provider || null, model: m, raw: { model: m, ...(y.provider ? { provider: y.provider } : {}) } };
+    // the provider Hermes itself goes by: model.provider only (0.21 resolve_requested_provider; a top-level one isn't read)
+    const more = { pinned: m && typeof m === 'object' ? m.provider || null : null, side: hermesSideProviders(y), endpoints };
+    if (typeof m === 'string') return { provider: y.provider || null, model: m, raw: { model: m, ...(y.provider ? { provider: y.provider } : {}) }, ...more };
     if (m && typeof m === 'object') {
       const { api_key: _key, ...model } = m; // a key never moves between files
-      return { provider: m.provider || y.provider || null, model: m.default || m.name || null, raw: { model, ...(y.provider ? { provider: y.provider } : {}) } };
+      return { provider: m.provider || y.provider || null, model: m.default || m.name || null, raw: { model, ...(y.provider ? { provider: y.provider } : {}) }, ...more };
     }
+    return { provider: null, model: null, raw: null, ...more };
   } catch {}
-  return { provider: null, model: null, raw: null };
+  return { provider: null, model: null, raw: null, pinned: null, side: [], endpoints: [] };
+}
+
+/**
+ * A profile on its own sign-in must send every request to a provider it signed in to itself: Hermes falls back to the
+ * computer's auth.json for any provider the profile lacks, and with no provider named it picks one by itself (0.21:
+ * resolve_provider "auto"). The config's main provider, fallbacks and side-task providers are checked. null = fine.
+ */
+function ownLoginProblem(cfg, own) {
+  const mine = p => own.has(p) || p === 'custom' || p.startsWith('custom:') || cfg.endpoints.includes(p);
+  const main = lc(cfg.pinned);
+  if (!main) return "its Hermes config names no provider (model.provider), so Hermes could pick this computer's sign-in by itself. Pick a model on its own sign-in (press Log in, or run `hermes model` with its profile), then Re-check.";
+  const away = [main, ...cfg.side].filter(p => !mine(p));
+  if (!away.length) return null;
+  return `its Hermes config sends work to ${[...new Set(away)].map(providerName).join(', ')}, which it isn't signed in to itself, so Hermes would use this computer's sign-in for that. Sign it in there too (Log in), or pick a model on its own sign-in (\`hermes model\` with its profile), then Re-check.`;
 }
 
 /** The providers a Hermes home's auth.json is signed in to. `storedOnly`: count only rows that hold their secret (a row
@@ -124,8 +153,10 @@ function hermesEnvProviders(dir) {
  * Hermes sign-in, plan/tier and model list for one profile (or the PC's default home when profileDir is null).
  * A profile is read the way Hermes reads it: its own sign-ins first, then, for a provider it has none for, the
  * computer's (the home it sits in). Those are `computerProviders`. Keys in the computer's .env are not shared.
+ * `borrow: false` (a workspace set to its own sign-in): only the profile's own sign-ins count, and `problem` says why
+ * a run would still reach the computer's (ownLoginProblem).
  */
-export function inspectHermesAccount(profileDir, { statusText = '', native } = {}) {
+export function inspectHermesAccount(profileDir, { statusText = '', native, borrow = true } = {}) {
   const parsed = parseHermesStatus(statusText);
   const homes = hermesHomes(profileDir);
   const home = homes.find(d => ['auth.json', 'config.yaml', '.env'].some(f => fs.existsSync(path.join(d, f)))) || homes[0] || null;
@@ -138,7 +169,7 @@ export function inspectHermesAccount(profileDir, { statusText = '', native } = {
   if (home) for (const p of hermesEnvProviders(home)) own.add(p);
 
   // the computer's sign-ins, for the providers this profile has none of its own for
-  const root = profileDir && home ? hermesRootFor(home, native) : null;
+  const root = profileDir && home && borrow ? hermesRootFor(home, native) : null;
   const pcAuth = (root && readJson(path.join(root, 'auth.json'))) || {};
   const computerProviders = root ? [...hermesAuthProviders(pcAuth, { storedOnly: true })].filter(p => !own.has(p)) : [];
   const pcCfg = computerProviders.length ? hermesConfig(root) : { provider: null, model: null, raw: null };
@@ -164,6 +195,7 @@ export function inspectHermesAccount(profileDir, { statusText = '', native } = {
 
   return {
     loggedIn,
+    problem: profileDir && !borrow && loggedIn ? ownLoginProblem(cfg, own) : null,
     email: loggedIn ? email : null,
     label: loggedIn ? providers.join(', ') + (configuredModel ? ` (${configuredModel})` : '') + whose : null,
     providers,

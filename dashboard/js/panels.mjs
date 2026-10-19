@@ -458,6 +458,8 @@ export async function openAddWorkspace({ edit = null, from } = {}) {
   let engine = edit?.runtime || (rt.claude?.available ? 'claude' : Object.keys(rt).find(k => rt[k]?.available) || 'claude');
   const ownNow = () => !!edit?.ownProfile;
   const currentEmail = () => edit?.accounts?.[engine]?.account || '';
+  // Hermes: this computer's sign-in (the default) or one of its own; a workspace moving to it starts on the computer's
+  const ownLoginNow = () => edit?.runtime === engine && edit?.accounts?.[engine]?.computerLogin === false;
   const render = () => {
     const r = rt[engine] || {};
     const profileOnly = r.accountModel === 'profile'; // no email: provider logins in a profile folder of its own
@@ -488,7 +490,10 @@ export async function openAddWorkspace({ edit = null, from } = {}) {
             <label class="choice"><input type="checkbox" id="wa-ungated" ${edit?.allowUngated ? 'checked' : ''}><span>I understand: let it run without approvals</span></label></div>` : ''}</div>
         ${r.sharedLogin ? `<div class="field"><label class="label" for="wa-email">Runs as</label>
           <span class="hint">${esc(r.label || '')} signs in via Google OAuth once for this computer, shared by every ${esc(r.label || '')} workspace${def ? `: <b>${esc(def)}</b>${r.plan ? ` (${esc(r.plan)})` : ''}` : ''}. Every tool call it makes waits for Orchy’s approvals first.</span>
-          <input class="input" id="wa-email" type="email" placeholder="the Google account’s email" value="${esc(mine || def || '')}"></div>` : profileOnly ? `<div class="field"><span class="label">Runs as</span>
+          <input class="input" id="wa-email" type="email" placeholder="the Google account’s email" value="${esc(mine || def || '')}"></div>` : profileOnly && r.computerLogin ? `<div class="field"><span class="label">Runs as</span>
+          <label class="choice"><input type="radio" name="wa-acct" value="default" ${ownLoginNow() ? '' : 'checked'}><span>This computer’s ${esc(r.label || '')} sign-in${r.defaultAccount ? ` · <b>${esc(r.defaultAccount)}</b>${r.plan ? ` <span class="chip">${esc(r.plan)}</span>` : ''}` : ' · not signed in yet'}</span><span class="hint">Sign ${esc(r.label || '')} in once and every workspace set this way works. They all use, and bill, that same account.</span></label>
+          <label class="choice"><input type="radio" name="wa-acct" value="own" ${ownLoginNow() ? 'checked' : ''}><span>Its own sign-in</span><span class="hint">Signs in once in its own ${esc(r.label || '')} profile and never uses this computer’s sign-in, so its work bills only the account you sign it in with.</span></label>
+          <input class="input" id="wa-email" type="text" maxlength="80" placeholder="Account email or provider, for your reference (optional)" value="${esc(mine)}" ${ownLoginNow() ? '' : 'hidden'}></div>` : profileOnly ? `<div class="field"><span class="label">Runs as</span>
           <span class="hint">Its own ${esc(r.label || '')} OAuth profile folder, made for it so its logins never mix with another agent’s${r.defaultAccount ? ` · default signed in as <b>${esc(r.defaultAccount)}</b>${r.plan ? ` (${esc(r.plan)})` : ''}` : ''}. You sign in via OAuth once (a sign-in window opens after you set it up) and Orchy detects your plan/tier automatically.</span>
           <input class="input" id="wa-email" type="text" maxlength="80" placeholder="Account email or provider (optional, e.g. you@example.com)" value="${esc(mine)}"></div>` : `<div class="field"><span class="label">Runs as</span>
           ${def ? `<label class="choice"><input type="radio" name="wa-acct" value="default" ${pickOwn ? '' : 'checked'}><span>Your default ${esc(r.label || '')} profile · <b>${esc(def)}</b>${r.plan ? ` <span class="chip">${esc(r.plan)}</span>` : ''}</span><span class="hint">Same login as your other ${esc(r.label || '')} work.</span></label>` : ''}
@@ -550,8 +555,10 @@ export async function openAddWorkspace({ edit = null, from } = {}) {
     if (blocked()) return ctx.toast(`Install ${rt[engine]?.label || engine} first, then press Re-check.`, 'warn');
     const profileOnly = rt[engine]?.accountModel === 'profile';
     const shared = !!rt[engine]?.sharedLogin; // one sign-in per computer: the email typed, never a profile of its own
-    const own = !shared && (profileOnly || body.querySelector('[name="wa-acct"]:checked')?.value === 'own');
-    const account = own || shared ? body.querySelector('#wa-email').value.trim() : rt[engine]?.defaultAccount;
+    const picked = body.querySelector('[name="wa-acct"]:checked')?.value === 'own';
+    // a profile-only engine always has its own profile folder; for Hermes, `own` is the sign-in choice
+    const own = !shared && (profileOnly && !rt[engine]?.computerLogin ? true : picked);
+    const account = profileOnly ? (own ? body.querySelector('#wa-email').value.trim() : '') : own || shared ? body.querySelector('#wa-email').value.trim() : rt[engine]?.defaultAccount;
     const payload = { client: body.querySelector('#wa-client').value.trim(), blurb: body.querySelector('#wa-blurb').value.trim(), aliases: body.querySelector('#wa-aliases').value, runtime: engine, account, ownProfile: own, allowUngated: rt[engine]?.capabilities?.gated === false && !!body.querySelector('#wa-ungated')?.checked };
     if (!edit && !body.querySelector('#wa-name').value.trim()) { body.querySelector('#wa-name').focus(); return ctx.toast('Give it a name first.', 'warn'); }
     if ((own || shared) && !profileOnly && !account) { body.querySelector('#wa-email').focus(); return ctx.toast('Which account should it run as?', 'warn'); }

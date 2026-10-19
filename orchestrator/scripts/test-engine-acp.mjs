@@ -243,6 +243,21 @@ async function run(scenario, over = {}, { cfg = {}, io = {}, afterStart, takeHoo
   const b = inspectHermesAccount(own, { native: NATIVE });
   ok(b.loggedIn && b.computerProviders.join() === 'deepseek' && /deepseek from this computer's sign-in/.test(b.label) && b.tier === 'free', 'hermes: a profile’s own sign-in wins; only the providers it lacks come from the computer', b.label);
 
+  // a workspace set to its own sign-in (borrow: false): the computer's sign-ins never count, and its config must stay on its own
+  const e0 = inspectHermesAccount(empty, { native: NATIVE, borrow: false });
+  ok(!e0.loggedIn && !e0.computerProviders.length && e0.computerModel === null && e0.problem === null, 'hermes: on its own sign-in, an empty profile is not signed in (the computer’s doesn’t count)');
+  const ownCase = (yaml) => { put(own, 'config.yaml', yaml); return inspectHermesAccount(own, { native: NATIVE, borrow: false }); };
+  const o1 = ownCase('model:\n  default: hermes-4\n  provider: nous\n');
+  ok(o1.loggedIn && o1.providers.join() === 'nous' && !o1.computerProviders.length && o1.problem === null && !/this computer/.test(o1.label), 'hermes: own sign-in on its own provider: fine, and nothing from the computer', JSON.stringify(o1));
+  ok(/names no provider/.test(ownCase('model: hermes-4\nprovider: nous\n').problem || ''), 'hermes: a provider Hermes doesn’t read (top-level, not model.provider) leaves it picking by itself: refused');
+  ok(/deepseek/.test(ownCase('model:\n  default: deepseek-chat\n  provider: deepseek\n').problem || ''), 'hermes: a main provider only the computer is signed in to: refused');
+  ok(/deepseek/.test(ownCase('model:\n  default: hermes-4\n  provider: nous\nfallback_providers:\n  - provider: deepseek\n').problem || '') && /openrouter/i.test(ownCase('model:\n  default: hermes-4\n  provider: nous\nauxiliary:\n  compression:\n    provider: openrouter\n').problem || ''), 'hermes: a fallback or side-task provider it isn’t signed in to: refused');
+  ok(ownCase('model:\n  default: hermes-4\n  provider: nous\nauxiliary:\n  vision:\n    provider: auto\n  web_extract:\n    provider: main\n').problem === null && ownCase('model:\n  default: kimi\n  provider: custom:lab\nproviders:\n  lab:\n    base_url: https://x.example\n').problem === null, 'hermes: side tasks on auto/main, and an endpoint its own config holds, are fine');
+  fs.rmSync(path.join(own, 'config.yaml'));
+  const ownEnv = hermesEnv(own, { PATH: '/bin', HERMES_SHARED_AUTH_DIR: '/pc/shared' }, { ownLogin: true });
+  ok(ownEnv.HERMES_HOME === own && ownEnv.HERMES_SHARED_AUTH_DIR.startsWith(own) && hermesEnv(own, { PATH: '/bin', HERMES_SHARED_AUTH_DIR: '/pc/shared' }).HERMES_SHARED_AUTH_DIR === undefined, 'hermes: its own sign-in gets a Nous token store inside its profile; on the computer’s, Hermes’s own (and never the PC’s variable)');
+  ok(JSON.stringify(hermes.profileEnv(own, { computerLogin: true })) === '{}' && hermes.profileEnv(own, { computerLogin: false }).HERMES_SHARED_AUTH_DIR && !hermes.profileEnv(own).HERMES_SHARED_AUTH_DIR, 'hermes: Log in signs in the computer for a workspace on its sign-in, else its own profile');
+
   const loose = path.join(TMP, 'loose-profile');
   fs.mkdirSync(loose, { recursive: true });
   ok(!inspectHermesAccount(loose, { native: NATIVE }).loggedIn, 'hermes: a profile outside any Hermes home borrows nothing');
