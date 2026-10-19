@@ -20,11 +20,14 @@ for (const [ws, list] of [['acme', [['agent-builder', 'AI Agent Builder', 'Chief
   fs.mkdirSync(dir, { recursive: true });
   for (const [slug, display, role, call] of list) fs.writeFileSync(path.join(dir, `${slug}.md`), agentMd(slug, display, role, call));
 }
-// acme has a Claude Code profile folder of its own; studio uses the default profile, logged in as its own account
-config.workspaces.push(
+// acme has a Claude Code profile folder of its own; studio uses the default profile, logged in as its own account.
+// They go first in the list, so an install's own "acme" or "studio" workspace is never the one found (and nothing of
+// the install's is taken out of the list, in case anything saves it).
+const FIXTURES = [
   { id: 'acme', name: 'Acme Workspace', client: 'Acme Inc', blurb: '', folder: `${FOLDER}/acme`, runtime: 'claude', enabled: true, aliases: [], color: 'jade', claudeAccount: 'ops@example.com', claudeConfigDir: '~/.claude-acme' },
   { id: 'studio', name: 'Studio Workspace', client: 'Studio Ltd', blurb: '', folder: `${FOLDER}/studio`, runtime: 'claude', enabled: true, aliases: [], color: 'violet', claudeAccount: 'studio@example.com' },
-);
+];
+config.workspaces.unshift(...FIXTURES);
 
 let fail = 0;
 const ok = (cond, label, extra = '') => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${label}${cond ? '' : `  ${extra}`}`); if (!cond) fail++; };
@@ -242,7 +245,7 @@ try {
   ok(C.sameIssue('New Redis service where a file does', 'A new Redis service where a file would do') && !C.sameIssue('No rollback if the export fails', 'Run the drafts in parallel'), 'same issue in other words is caught; a different one isn’t');
 } finally {
   cleanup();
-  config.workspaces = config.workspaces.filter(w => w.id !== 'acme' && w.id !== 'studio');
+  config.workspaces = config.workspaces.filter(w => !FIXTURES.includes(w)); // the fixtures only, never an install's own
   fs.rmSync(path.join(ROOT, FOLDER), { recursive: true, force: true });
 }
 

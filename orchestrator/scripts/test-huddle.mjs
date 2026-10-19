@@ -31,7 +31,9 @@ fs.mkdirSync(path.join(WS_DIR, '.claude', 'agents'), { recursive: true });
 const BETA = [['agent-builder', 'AI Agent Builder', 'Chief of AI Agents', 'Iris'], ['analyst', 'Lab Analyst', 'Analyst', 'Nora'], ['chief-of-staff', 'Chief of Staff', 'Chief of Staff', 'Cass'],
   ['researcher', 'Researcher', 'Researcher', 'Rex'], ['editor', 'Editor', 'Editor', 'Eve'], ['designer', 'Designer', 'Designer', 'Dov']];
 for (const [slug, display, role, call] of BETA) fs.writeFileSync(path.join(WS_DIR, '.claude', 'agents', `${slug}.md`), agentMd(slug, display, role, call));
-config.workspaces.push({ id: 'beta', name: 'Beta Labs', client: 'Beta Labs Inc', blurb: 'Lab notebooks and sample orders.', folder: FOLDER, runtime: 'claude', enabled: true, aliases: [], color: 'jade', claudeAccount: 'sam@example.com' });
+// first in the list, so an install's own "beta" workspace is never the one found
+const BETA_WS = { id: 'beta', name: 'Beta Labs', client: 'Beta Labs Inc', blurb: 'Lab notebooks and sample orders.', folder: FOLDER, runtime: 'claude', enabled: true, aliases: [], color: 'jade', claudeAccount: 'sam@example.com' };
+config.workspaces.unshift(BETA_WS);
 
 let fail = 0;
 const ok = (cond, label, extra = '') => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${label}${cond ? '' : `  ${extra}`}`); if (!cond) fail++; };
@@ -446,7 +448,7 @@ try {
   ok(!('huddle_with' in asked), 'two named agents in different workspaces don\'t either');
 }
 
-config.workspaces = config.workspaces.filter(w => w.id !== 'beta');
+config.workspaces = config.workspaces.filter(w => w !== BETA_WS); // the fixture only, never an install's own
 fs.rmSync(WS_DIR, { recursive: true, force: true });
 console.log(fail ? `\n${fail} failed` : '\nall good');
 process.exit(fail ? 1 : 0);

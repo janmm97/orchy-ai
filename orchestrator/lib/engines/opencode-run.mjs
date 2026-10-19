@@ -11,7 +11,8 @@
 // are documented, and the plugin docs list permission.asked / permission.replied, message.part.updated, session.idle,
 // session.status and session.error. permission.updated is an older name Orchy still accepts. The fields inside an event
 // (id/sessionID/permission|type/patterns|pattern/metadata/callID) and the `system` prompt field are NOT in the docs pages
-// and are read defensively. None of it has run against a real binary yet (docs/HARNESSES.md).
+// and are read defensively. Checked against the real OpenCode 1.19.3 (an ask allowed, one refused, a workspace
+// opencode.json set to "allow" still asking; docs/HARNESSES.md). OpenCode 2 is another API and is not run (opencode.mjs#runRefusal).
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';

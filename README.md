@@ -31,7 +31,7 @@ Orchy is a local AI-agent orchestrator. You tell Orchy what you need, by text or
 
 - 💬 **Text or voice.** Type a task, or talk to Orchy and call your agents. Voice is optional and off until you switch it on (ElevenLabs or Deepgram).
 - 🧭 **Smart routing, optional.** Jev picks the workspace, agent and model, and shows you its pick first. Without it, Orchy matches each message by its words.
-- 🧰 **Bring your own harness.** Claude Code, Codex, OpenCode, Hermes or Antigravity, each signed in with the workspace's own account and every one held behind your approvals.
+- 🧰 **Bring your own harness.** Claude Code, Codex, OpenCode, Hermes or Antigravity, each signed in with the account you pick for that workspace, and every one held behind your approvals.
 - 🔌 **Your real apps.** Gmail, Slack, Notion, Stripe and 1000+ more through the [One CLI](https://withone.ai).
 - ✋ **Asks before it acts.** Money, sending, calendar changes, deleting and sharing wait for your OK in the dashboard.
 - 🗂️ **Workspaces that never mix.** One folder per business or client, with its own logins, agents and instructions.
@@ -276,9 +276,9 @@ Putting them online (Cloudflare Tunnel, Access, and R2 for video) is in [docs/CO
 |---|---|---|
 | **Claude Code** (recommended) | `curl -fsSL https://claude.ai/install.sh \| bash`; Windows (PowerShell): `irm https://claude.ai/install.ps1 \| iex` | ✅ yes |
 | **Codex** | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh`; Windows: `powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 \| iex"` | ✅ yes |
-| **OpenCode** | `curl -fsSL https://opencode.ai/install \| bash`; on Windows `npm install -g opencode-ai` | ✅ yes |
+| **OpenCode** (version 1) | `curl -fsSL https://opencode.ai/install \| bash`; on Windows `npm install -g opencode-ai`. OpenCode 2 isn't supported yet: its code mode can reach the internet without asking ([why](docs/HARNESSES.md#opencode-2)) | ✅ yes |
 | **Hermes** | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash`; on Windows (PowerShell) `iex (irm https://hermes-agent.nousresearch.com/install.ps1)` | ✅ yes |
-| **Antigravity** (off by default) | Google's `agy` CLI (see antigravity.google), then `ORCHY_ANTIGRAVITY=1` in `.env` | ✅ yes |
+| **Antigravity** (off by default) | `curl -fsSL https://antigravity.google/cli/install.sh \| bash`; on Windows (PowerShell) `irm https://antigravity.google/cli/install.ps1 \| iex`; then `ORCHY_ANTIGRAVITY=1` in `.env`. Google doesn't support running `agy` from another app on personal plans ([details](docs/HARNESSES.md#antigravity)) | ✅ yes |
 
 "Gated" means every risky action asks Orchy first. How far each one has been tested against its real program is in [docs/HARNESSES.md](docs/HARNESSES.md). OpenCode and Hermes offer the models their sign-in lists, and take any model id you type. You don't have to type these: **Install** in the dashboard (Add workspace, or Set up Orchy → Tools) runs the right one for your computer in a terminal window, then the sign-in. A harness whose program is there but won't start (an install that didn't finish) shows as **won't start**, with the command that fixes it.
 
@@ -300,7 +300,7 @@ This health check tests each workspace's accounts, the One CLI, Jev, voice, agen
 | The dashboard says it can't make changes | The browser isn't paired: see Pairing under [First run](#first-run). |
 | A workspace says it is not signed in to One | Workspaces, the workspace, "Sign in to One". |
 | A run is refused for an account mismatch | The harness profile for that workspace is logged into the wrong account: sign in again with the right one. |
-| A workspace "isn't logged in", but you signed in to the harness in a terminal | A plain terminal signs in the computer's profile, not the workspace's. Hermes workspaces use the computer's Hermes sign-in on their own. For OpenCode, or a Claude Code or Codex workspace with its own profile, press **Log in** on the workspace: the window it opens signs in that workspace's profile. Then press Re-check. |
+| A workspace "isn't logged in", but you signed in to the harness in a terminal | A plain terminal signs in the computer's profile, not the workspace's. A Hermes workspace set to "This computer's sign-in" (the default) uses it on its own; one set to "Its own sign-in" needs **Log in**. For OpenCode, or a Claude Code or Codex workspace with its own profile, press **Log in** on the workspace: the window it opens signs in that workspace's profile. Then press Re-check. |
 | A harness shows **won't start**, or Windows says "This version of … opencode.exe is not compatible with the version of Windows you're running" | Its install didn't finish. For OpenCode on Windows, npm skipped the package's setup step (often `npm config get ignore-scripts` is `true`), so a placeholder `opencode.exe` is left in place of the real one. Press **Install** (it installs again and finishes that step itself), or run `cd "$env:APPDATA\npm\node_modules\opencode-ai"; node postinstall.mjs`. Then press Re-check. |
 
 ## Project structure

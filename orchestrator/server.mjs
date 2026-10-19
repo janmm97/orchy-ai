@@ -17,7 +17,7 @@ import { scaffoldWorkspace, ensureInstructions } from './lib/scaffold.mjs';
 import { listPlatforms } from './lib/one.mjs';
 import { toolStatus } from './lib/setupcheck.mjs';
 import { quickClaude } from './lib/claude.mjs';
-import { engine, engines, engineInstallCmd } from './lib/engines/index.mjs';
+import { engine, engines, engineInstallCmd, runRefusal } from './lib/engines/index.mjs';
 import { installHarness, installJob } from './lib/installer.mjs';
 import { listAgents, getAgent, saveAgent, deleteAgent, BUILDER_SLUG, departmentsOf } from './lib/agents.mjs';
 import { syncAllResources } from './lib/resources.mjs';
@@ -433,7 +433,7 @@ async function workspaceSummary(ws, { force = false } = {}) {
     enabled: ws.enabled,
     claudeAccount: ws.claudeAccount || null, codexAccount: ws.codexAccount || null, ownProfile: !!ws[engine(ws.runtime)?.fields.profile],
     // every registered engine's account and profile for this workspace, and whether it may run an engine Orchy can't gate
-    accounts: Object.fromEntries(engines().map(e => [e.id, { account: ws[e.fields.account] || null, ownProfile: !!ws[e.fields.profile] }])), allowUngated: ws.allowUngated === true, gated: engine(ws.runtime)?.capabilities.gated !== false,
+    accounts: Object.fromEntries(engines().map(e => [e.id, { account: ws[e.fields.account] || null, ownProfile: !!ws[e.fields.profile], ...(e.fields.computerLogin ? { computerLogin: ws[e.fields.computerLogin] !== false } : {}) }])), allowUngated: ws.allowUngated === true, gated: engine(ws.runtime)?.capabilities.gated !== false,
     account, extraAccounts: extra, oneScoped: oneScope(ws).own, oneLogin: oneLoginStatus(ws.id), oneAdd: oneAddStatus(ws.id), createdAt: ws.createdAt || null,
     mcpCount: Object.keys(readMcp(ws)).length,
   };
@@ -893,6 +893,7 @@ on('GET', '/api/runtimes', async () => {
       install: engineInstallCmd(e) || null, // what the Add window shows for an engine not on this PC yet
       installing: !have[e.id]?.available && !!installJob(e.id), // Orchy opened its install window (installer.mjs)
       version: have[e.id]?.available ? e.version?.() || null : null,
+      refusal: have[e.id]?.available ? runRefusal(e) : null, // installed, but a version Orchy won't run (OpenCode 2)
       defaultAccount: shared || a?.email || a?.label || null,
       loggedIn: !!a?.loggedIn,
       plan: a?.plan || a?.subscriptionType || a?.subscription || null,
@@ -1583,7 +1584,7 @@ on('GET', '/api/setup', async (req) => {
     owner: { name: (config.owner?.name || '').trim(), set: !!(config.owner?.name || '').trim() },
     timezone: config.timezone,
     os: process.platform,
-    tools, harness: tools.some(t => t.kind === 'harness' && t.found), keys,
+    tools, harness: tools.some(t => t.kind === 'harness' && t.found && !t.refusal), keys,
     workspaces: { count: list.length, list },
     backend: await backendSummary({ force }), // the account "Fix Orchy" runs under (the Tools step offers one)
     done: !!db().settings.setupDone,

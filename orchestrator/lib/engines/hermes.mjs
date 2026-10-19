@@ -27,24 +27,39 @@ const bin = () => { if (!binCache || !fs.existsSync(binCache)) binCache = resolv
 let probe = null;
 const cache = new Map();
 
-/** `hermes acp` and what it needs: HERMES_HOME is the profile boundary (the docs' profile alias sets exactly that). */
-export const hermesArgs = () => ['acp'];
-export function hermesEnv(profileDir, base = process.env) {
-  return scrubbedEnv(profileDir ? { HERMES_HOME: profilePath(profileDir) } : {}, { HERMES_ACP_SKIP_CONFIGURED_MCP: '1' }, { dropPrefixes: ['HERMES_'], dropNames: HERMES_DROP }, base);
+/**
+ * The variables that pick a workspace's profile. HERMES_HOME is the profile boundary (the docs' profile alias sets
+ * exactly that). A profile on its own sign-in (`ownLogin`) also gets its own shared Nous token store: Hermes keeps one
+ * for the whole computer (<home>/shared) and one-tap imports it into a profile that signs in to Nous.
+ */
+export function hermesProfileEnv(profileDir, { ownLogin = false } = {}) {
+  if (!profileDir) return {};
+  const home = profilePath(profileDir);
+  return { HERMES_HOME: home, ...(ownLogin ? { HERMES_SHARED_AUTH_DIR: path.join(home, 'orchy-own-nous') } : {}) };
 }
+
+/** `hermes acp` and what it needs. */
+export const hermesArgs = () => ['acp'];
+export function hermesEnv(profileDir, base = process.env, { ownLogin = false } = {}) {
+  return scrubbedEnv(hermesProfileEnv(profileDir, { ownLogin }), { HERMES_ACP_SKIP_CONFIGURED_MCP: '1' }, { dropPrefixes: ['HERMES_'], dropNames: HERMES_DROP }, base);
+}
+
+/** Does this workspace run on the computer's Hermes sign-in? Yes unless the owner picked its own (`hermesComputerLogin: false`). */
+export const usesComputerLogin = ws => ws?.hermesComputerLogin !== false;
 
 /** The hook's command line as Hermes splits it (quotes stripped per token, so paths with spaces are fine). */
 export const hermesHookCommand = ({ script, credsFile }, node = process.execPath) => [node, script, 'hermes', credsFile].map(a => `"${a}"`).join(' ');
 
 /** Write the forced approvals and Orchy's hook into the profile's config.yaml (keeping the owner's other keys). A profile
- * with no model yet gets the one picked for Hermes on this computer, when the profile can sign in to its provider. */
-export function writeHermesConfig(profileDir, { hookCommand = null } = {}) {
+ * on the computer's sign-in with no model yet gets the one picked for Hermes on this computer, when the profile can sign
+ * in to its provider. */
+export function writeHermesConfig(profileDir, { hookCommand = null, borrow = true } = {}) {
   const dir = profilePath(profileDir);
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'config.yaml');
   let cur = '';
   try { cur = fs.readFileSync(file, 'utf8'); } catch {}
-  const next = buildHermesConfigYaml(cur, { hookCommand, fallbackModel: inspectHermesAccount(dir).computerModel });
+  const next = buildHermesConfigYaml(cur, { hookCommand, fallbackModel: borrow ? inspectHermesAccount(dir).computerModel : null });
   if (!hermesConfigLooksSafe(next, { hookCommand })) throw new Error('Orchy could not build a safe Hermes config.');
   if (next !== cur) fs.writeFileSync(file, next, { mode: 0o600 });
   return file;
@@ -55,7 +70,9 @@ export default {
   label: 'Hermes',
   models: ['default', 'default', 'default'],
   blurb: 'Nous Research’s Hermes Agent. Sign in with OAuth (`hermes portal` or `hermes auth add <provider> --type oauth`); Orchy detects your plan/tier and shows only the models in your tier.',
-  fields: { account: 'hermesAccount', profile: 'hermesProfile' },
+  // computerLogin: the owner picks, per workspace, between this computer's Hermes sign-in (shared by every workspace
+  // set that way, and billed to that account) and a sign-in of its own (usesComputerLogin)
+  fields: { account: 'hermesAccount', profile: 'hermesProfile', computerLogin: 'hermesComputerLogin' },
   accountModel: 'profile',
   openModels: true,
   instructionFile: 'AGENTS.md',
@@ -79,16 +96,19 @@ export default {
     return probe.v;
   },
   available: () => !!bin(),
-  /** Which OAuth provider(s) and plan/tier this profile is signed into, plus its tier-filtered model list. */
-  async account(profileDir, { force = false, maxAge = 60_000 } = {}) {
-    const key = profileDir ? profilePath(profileDir) : '__default__';
+  /** Which OAuth provider(s) and plan/tier this profile is signed into, plus its tier-filtered model list.
+   * `computerLogin: false`: only the profile's own sign-ins count. */
+  async account(profileDir, { force = false, maxAge = 60_000, computerLogin = true } = {}) {
+    const dir = profileDir ? profilePath(profileDir) : null;
+    const key = dir ? `${dir}${computerLogin ? '' : '#own'}` : '__default__';
     const hit = cache.get(key);
     if (!force && hit && Date.now() - hit.at < maxAge) return hit.v;
-    const v = inspectHermesAccount(profileDir ? key : null);
+    const v = inspectHermesAccount(dir, { borrow: computerLogin });
     cache.set(key, { at: Date.now(), v });
     return v;
   },
-  profileEnv(profileDir) { return profileDir ? { HERMES_HOME: profilePath(profileDir) } : {}; },
+  // Log in signs in whatever the workspace runs on: this computer's Hermes (no profile variables), or its own profile
+  profileEnv(profileDir, a = {}) { return a.computerLogin ? {} : hermesProfileEnv(profileDir, { ownLogin: a.computerLogin === false }); },
   loginCommand: (a, { win }) => (win ? `& ${psq(bin() || 'hermes')} portal` : `${sq(bin() || 'hermes')} portal`),
   loginAlt: () => 'Signs in via OAuth to Nous Portal (`hermes portal`), or run `hermes auth add <provider> --type oauth` (e.g. openai-codex, anthropic, copilot, xai) in the same terminal to sign in with your ChatGPT Plus/Pro, Claude Pro/Max, GitHub Copilot, or SuperGrok subscription.',
   mcpConfig: ({ servers, allowed, bridge }) => toAcpMcp(servers, allowed, bridge),
@@ -99,11 +119,15 @@ export default {
 - Skills in \`.claude/skills/<name>/\` are plain folders: when your instructions name one, read its \`SKILL.md\` and the files it points to, and follow them.
 `,
   launch(run, ws, opts, rt) {
+    const borrow = usesComputerLogin(ws);
+    // own sign-in: checked again on the config as it is now (accountCheck's answer can be a minute old)
+    const problem = borrow ? null : inspectHermesAccount(profilePath(ws.hermesProfile), { borrow: false }).problem;
+    if (problem) throw Object.assign(new Error(`${ws.name} is set to use its own Hermes sign-in, but ${problem}`), { status: 409, code: 'ACCOUNT_MISMATCH' });
     const hooks = rt.hooks(run, ws);
     // from here every tool call Hermes makes waits for the gate (mcp/tool-hook.mjs → runner.mjs#toolHook)
-    writeHermesConfig(ws.hermesProfile, { hookCommand: hermesHookCommand(hooks.useToolHook('hermes')) });
+    writeHermesConfig(ws.hermesProfile, { hookCommand: hermesHookCommand(hooks.useToolHook('hermes')), borrow });
     const handle = launchAcpRun({
-      cwd: ws.dir, bin: bin(), args: hermesArgs(), env: hermesEnv(ws.hermesProfile), label: 'Hermes',
+      cwd: ws.dir, bin: bin(), args: hermesArgs(), env: hermesEnv(ws.hermesProfile, process.env, { ownLogin: !borrow }), label: 'Hermes',
       prompt: opts.prompt, system: rt.instructions(ws, run, opts.agentMarkdown, opts.planText),
       mcpServers: opts.mcp, resumeSessionId: opts.resume || null, requestedModel: run.model,
       strict: true, // every non-read tool must have asked: over ACP, or through the hook (hooks.takeHookAllow)
