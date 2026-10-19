@@ -33,6 +33,7 @@ function resolveBin() {
   const extra = [path.join(os.homedir(), '.gemini', 'bin'), path.join(os.homedir(), '.local', 'bin')];
   if (WIN && process.env.LOCALAPPDATA) {
     extra.push(
+      path.join(process.env.LOCALAPPDATA, 'agy', 'bin'), // Google's installer (install.ps1 / install.cmd)
       path.join(process.env.LOCALAPPDATA, 'Programs', 'Antigravity', 'bin'),
       path.join(process.env.LOCALAPPDATA, 'Programs', 'antigravity-cli'),
     );
@@ -41,40 +42,7 @@ function resolveBin() {
 }
 export const agyBin = () => { if (!binCache || !fs.existsSync(binCache)) binCache = resolveBin(); return binCache; };
 /** Tests point the adapter at a fake agy. */
-export function setAgyBinForTests(p) { binCache = p; testBinOverride = !!p; }
-
-function isTempTestBin(binPath) {
-  if (testBinOverride) return true;
-  if (!binPath) return false;
-  try {
-    const realTmp = fs.realpathSync(os.tmpdir()).toLowerCase();
-    const realBin = fs.realpathSync(binPath).toLowerCase();
-    return realBin.startsWith(realTmp);
-  } catch {
-    return String(binPath).toLowerCase().startsWith(os.tmpdir().toLowerCase());
-  }
-}
-
-/** Read Google OAuth sign-in state from ~/.gemini/google_accounts.json + ~/.gemini/oauth_creds.json (instant, no Electron spawn). */
-export function readGeminiOAuthAccount(geminiRoot = path.join(os.homedir(), '.gemini')) {
-  try {
-    const acctPath = path.join(geminiRoot, 'google_accounts.json');
-    const credsPath = path.join(geminiRoot, 'oauth_creds.json');
-    if (!fs.existsSync(acctPath)) return null;
-    const acct = JSON.parse(fs.readFileSync(acctPath, 'utf8'));
-    const active = typeof acct?.active === 'string' && acct.active.includes('@') ? acct.active.trim() : null;
-    if (!active) return { loggedIn: false, email: null, error: 'Antigravity isn’t signed in. Click Log in to sign in with Google OAuth.' };
-    if (fs.existsSync(credsPath)) {
-      const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
-      if (creds && (creds.refresh_token || creds.access_token)) {
-        return { loggedIn: true, email: active, subscription: 'Google OAuth', plan: 'Google OAuth' };
-      }
-    }
-    return null; // an account named but no token stored: ask agy itself
-  } catch {
-    return null;
-  }
-}
+export function setAgyBinForTests(p) { binCache = p; }
 
 /** Where a workspace keeps its agents' agy folders (`antigravityHome`, else ~/.antigravity-orchy/<id>). */
 export const agyRoot = ws => (ws?.antigravityHome ? expandPath(ws.antigravityHome) : path.join(os.homedir(), '.antigravity-orchy', String(ws?.id || 'workspace')));
@@ -92,19 +60,14 @@ function start(bin, args, opts) {
 // the PC's provider keys stay out (scrubbedEnv), and so do the other harnesses' profile variables
 const runEnv = (extra = {}) => scrubbedEnv({}, extra, { dropNames: ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'ANTIGRAVITY_GEMINI_DIR'] });
 
-// Who agy is signed in as: checks ~/.gemini Google OAuth credentials first, falling back to `agy models` for test shims.
+// Who agy is signed in as, from agy itself (`agy models` logs "authenticated successfully as …"). Never from
+// ~/.gemini/google_accounts.json: that file is Gemini CLI's, which can be signed in as someone else; agy keeps its
+// sign-in in the OS keyring (antigravity.google/docs/install, CLI tab).
 let acctCache = null;
 export async function agyAccount({ force = false, maxAge = 60_000 } = {}) {
   if (!force && acctCache && Date.now() - acctCache.at < maxAge) return acctCache.value;
   const bin = agyBin();
   if (!bin) return { loggedIn: false, email: null, error: 'Antigravity (agy) isn’t installed on this computer' };
-  if (!isTempTestBin(bin)) {
-    const fast = readGeminiOAuthAccount();
-    if (fast) {
-      acctCache = { at: Date.now(), value: fast };
-      return fast;
-    }
-  }
   const dir = path.join(DATA_DIR, 'agy-check');
   fs.mkdirSync(dir, { recursive: true });
   const log = path.join(dir, 'models.log');
@@ -116,7 +79,7 @@ export async function agyAccount({ force = false, maxAge = 60_000 } = {}) {
     let out = '';
     child.stdout.on('data', d => { out += d; });
     child.stderr.on('data', d => { out += d; });
-    const timer = setTimeout(() => killTree(child), 8_000);
+    const timer = setTimeout(() => killTree(child), 20_000); // ~3 s warm; a timeout would read as signed out
     child.on('error', e => { clearTimeout(timer); resolve({ loggedIn: false, email: null, error: e.message }); });
     child.on('close', () => {
       clearTimeout(timer);
@@ -132,10 +95,10 @@ export async function agyAccount({ force = false, maxAge = 60_000 } = {}) {
 // ── the agent's agy folder: settings (permissions) and MCP servers, rewritten every run ──
 const slash = p => path.resolve(p).replace(/\\/g, '/');
 // a workspace's own setup: agents, instructions, connections, Resources/. The builder may still write agent files.
-const SETUP = ['.claude/', '.codex/', '.agents/', '.gemini/', '.one/', '.jos/mcp.json', '.jos/retired/', '.clients/', 'Resources/', 'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', 'GEMINI.md', '.mcp.json'];
+const SETUP = ['.claude/', '.codex/', '.cursor/', '.agents/', '.gemini/', '.one/', '.jos/mcp.json', '.jos/retired/', '.clients/', 'Resources/', 'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', 'GEMINI.md', '.mcp.json'];
 const BUILDER_SETUP = ['.claude/settings.json', '.claude/settings.local.json', '.claude/skills/', '.claude/hooks/', '.claude/commands/', '.claude/rules/', '.claude/output-styles/', ...SETUP.filter(s => s !== '.claude/' && s !== 'Resources/')];
 // the sign-in folders of the harnesses and of One, in the home folder
-const SIGN_INS = ['.one', '.gemini', '.codex', '.claude', '.claude.json', '.hermes', '.config/opencode', '.local/share/opencode', '.deepseek'];
+const SIGN_INS = ['.one', '.gemini', '.codex', '.claude', '.claude.json', '.hermes', '.cursor', '.config/cursor', 'AppData/Roaming/Cursor', '.cursor-orchy', '.config/opencode', '.local/share/opencode', '.deepseek'];
 
 /**
  * The run's deny rules (a second fence behind the hook). Writes: its own workspace's setup. Reads (and so writes): every
@@ -271,8 +234,14 @@ export default {
   optIn: 'ORCHY_ANTIGRAVITY',
   instructionFile: 'AGENTS.md',
   defaultProfileLabel: '(~/.antigravity-orchy/<workspace>)',
-  // no install command: Google ships agy from antigravity.google (the Install button and setup show the note instead)
-  install: { optional: true, note: 'Optional and off by default (ORCHY_ANTIGRAVITY=1 in .env): Google’s Antigravity CLI, `agy`, from antigravity.google.' },
+  // Google's installers (antigravity.google/docs/getting-started, CLI tab): ~/.local/bin/agy, %LOCALAPPDATA%\agy\bin
+  // on Windows. Its sign-in is its first interactive start.
+  install: {
+    cmd: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
+    winCmd: 'powershell -ExecutionPolicy ByPass -c "irm https://antigravity.google/cli/install.ps1 | iex"',
+    signIn: 'agy', bin: 'agy', optional: true,
+    note: 'Optional and off by default (ORCHY_ANTIGRAVITY=1 in .env): Google’s Antigravity CLI, `agy`. Google’s FAQ says wrapping agy in another app isn’t supported on consumer Google plans; check your plan’s terms first.',
+  },
   capabilities: {
     gated: true, mcp: true, resume: true, headless: true,
     clientSafe: false,

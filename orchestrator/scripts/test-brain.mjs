@@ -83,6 +83,17 @@ const route = (text, opts = {}) => realRoute(text, { workspaces: ONE, agents: AG
   delete process.env.ORCHY_BRAIN;
   ok(brainEngine() !== 'claude', 'in order: a harness that won’t start is passed over');
   undo();
+  // a harness that starts but whose version Orchy won't run (runRefusal) is never the brain either
+  const undos = [
+    registerEngine({ ...engine('claude'), available: () => false }),
+    registerEngine({ ...engine('codex'), available: () => true, version: () => 'fake 1.0', runRefusal: () => 'not this version' }),
+    registerEngine({ ...engine('hermes'), available: () => true, version: () => 'fake 1.0' }),
+  ];
+  process.env.ORCHY_BRAIN = 'codex';
+  ok(brainEngine() === null, 'ORCHY_BRAIN=codex on a version Orchy refuses: no brain');
+  delete process.env.ORCHY_BRAIN;
+  ok(brainEngine() === 'hermes', 'in order: a refused version is passed over for the next that runs', brainEngine());
+  undos.reverse().forEach(u => u());
   if (keep === undefined) delete process.env.ORCHY_BRAIN; else process.env.ORCHY_BRAIN = keep;
   ok(['--safe-mode', '--oneshot', '-Q'].every(f => HERMES_BRAIN_ARGS.includes(f)) && HERMES_BRAIN_ARGS[HERMES_BRAIN_ARGS.indexOf('-t') + 1] === 'todo', 'Hermes as the brain: one-shot, safe mode, only its task-list toolset');
 }
@@ -99,7 +110,6 @@ const route = (text, opts = {}) => realRoute(text, { workspaces: ONE, agents: AG
   const want = {
     claude: ['curl -fsSL https://claude.ai/install.sh | bash', 'powershell -ExecutionPolicy ByPass -c "irm https://claude.ai/install.ps1 | iex"', 'claude auth login'],
     codex: ['curl -fsSL https://chatgpt.com/codex/install.sh | sh', 'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"', 'codex login'],
-    opencode: ['curl -fsSL https://opencode.ai/install | bash', 'npm install -g opencode-ai', 'opencode auth login'],
     hermes: ['curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash', 'powershell -ExecutionPolicy ByPass -c "iex (irm https://hermes-agent.nousresearch.com/install.ps1)"', 'hermes portal'],
   };
   for (const [id, [posix, win, signIn]] of Object.entries(want)) {
@@ -113,20 +123,19 @@ const route = (text, opts = {}) => realRoute(text, { workspaces: ONE, agents: AG
   ok(installBinDirs({ win: true, home: 'H', appData: 'A', localAppData: 'L' }).some(d => /Programs[\\/]OpenAI[\\/]Codex[\\/]bin$/.test(d)), 'Windows PATH includes where the Codex installer puts codex');
 }
 
-// ── half-done installs: the program is there but won't start (npm's placeholder opencode.exe) ──
+// ── half-done installs: the program is there but won't start (an npm package whose postinstall didn't run) ──
 {
-  const fake = (over = {}) => ({ id: 'fake', label: 'Fake', install: { winCmd: 'npm i -g fake', cmd: 'curl fake | sh', winRepair: 'node fix.mjs', bin: 'fake' }, bin: () => 'C:\\x\\fake.exe', available: () => true, version: () => '1.0', ...over });
+  const fake = (over = {}) => ({ id: 'fake', label: 'Fake', install: { winCmd: 'npm i -g fake', cmd: 'curl fake | sh', winRepair: 'node postinstall.mjs', signIn: 'fake auth login', bin: 'fake' }, bin: () => 'C:\\x\\fake.exe', available: () => true, version: () => '1.0', ...over });
   ok(engineHealth(fake()) === 'ok', 'a program that answers --version is ok');
   ok(engineHealth(fake({ version: () => null })) === 'broken', 'one that is there but fails --version is broken');
   ok(engineHealth(fake({ version: () => { throw new Error('boom'); } })) === 'broken', 'a probe that throws reads as broken');
   ok(engineHealth(fake({ available: () => false })) === 'missing', 'one that is not there is missing');
-  ok(engineRepairCmd(fake(), { win: true }) === 'node fix.mjs' && engineRepairCmd(fake(), { win: false }) === 'curl fake | sh', 'repair: the Windows fix there, installing again elsewhere');
-  ok(/won't start/.test(brokenMessage(fake(), { win: true })) && brokenMessage(fake(), { win: true }).includes('node fix.mjs'), 'the message says it won\'t start and how to finish it');
-  ok(/postinstall\.mjs/.test(engineRepairCmd(engine('opencode'), { win: true })), 'OpenCode on Windows: rerun its postinstall');
-  const ps = installScript(engine('opencode'), { win: true, dirs: [] });
-  ok(/\} elseif \(\$found\) \{/.test(ps) && ps.includes("won''t start") && ps.includes('postinstall.mjs') && ps.indexOf('opencode auth login') < ps.indexOf('elseif ($found)'), 'the install window signs in only when it runs, else shows the repair');
+  ok(engineRepairCmd(fake(), { win: true }) === 'node postinstall.mjs' && engineRepairCmd(fake(), { win: false }) === 'curl fake | sh', 'repair: the Windows fix there, installing again elsewhere');
+  ok(/won't start/.test(brokenMessage(fake(), { win: true })) && brokenMessage(fake(), { win: true }).includes('node postinstall.mjs'), 'the message says it won\'t start and how to finish it');
+  const ps = installScript(fake(), { win: true, dirs: [] });
+  ok(/\} elseif \(\$found\) \{/.test(ps) && ps.includes("won''t start") && ps.includes('postinstall.mjs') && ps.indexOf('fake auth login') < ps.indexOf('elseif ($found)'), 'the install window signs in only when it runs, else shows the repair');
   ok(/if \(\$found -and -not \$runs\) \{[^}]*node postinstall\.mjs[^}]*\$runs = Test-Runs/.test(ps) && ps.indexOf('$runs = Test-Runs') < ps.indexOf('if ($runs) {'), 'a reinstall that still won’t start runs the repair itself and tests again (npm skipping postinstall twice)');
-  ok(/\$global:LASTEXITCODE = 0; try \{ & 'opencode' --version \*> \$null; \$ok = \$\? -and \$global:LASTEXITCODE -eq 0 \} catch \{ \}/.test(ps), 'the probe counts a script launcher that returns normally, never a program that can’t start');
+  ok(/\$global:LASTEXITCODE = 0; try \{ & 'fake' --version \*> \$null; \$ok = \$\? -and \$global:LASTEXITCODE -eq 0 \} catch \{ \}/.test(ps), 'the probe counts a script launcher that returns normally, never a program that can’t start');
   ok(!installScript(engine('claude'), { win: true, dirs: [] }).includes('Test-Runs\n}') && !/-not \$runs/.test(installScript(engine('claude'), { win: true, dirs: [] })), 'an engine without a repair command has no repair step');
   const win = loginRun("& 'x' auth login", { win: true });
   ok(/^\$global:LASTEXITCODE = 0\n& 'x' auth login\nif \(\$\? -and \$global:LASTEXITCODE -eq 0\)/.test(win) && win.includes("didn''t finish") && win.includes('Done.'), 'the login window says Done only when the sign-in succeeded (PowerShell)');

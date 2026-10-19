@@ -1,5 +1,5 @@
 // Offline checks for run events and activity (activity.mjs, runner.mjs#record): activity states from recorded event
-// shapes (Claude Code, Codex, ACP/OpenCode feed names), the redaction pass, safe tool_done briefs, the open-tool tracker,
+// shapes (Claude Code, Codex, ACP feed names), the redaction pass, safe tool_done briefs, the open-tool tracker,
 // text-delta coalescing, Codex's item/completed mapping, and one Claude run through the real runner in a disposable
 // copy (a fake `claude` replays a stream-json transcript: n, toolUseId, tool_done, activity on run.event and run.updated).
 // No model calls, no network. Run: node orchestrator/scripts/test-activity.mjs
@@ -66,7 +66,7 @@ const codex = [
   [T('Bash', { command: 'Get-Content -Raw C:/work/skills/one/SKILL.md' }, 'Running `Get-Content'), 'running-command'],
   [T('WebSearch', { query: 'remotion docs' }, 'Searching the web: remotion docs'), 'searching-web'],
 ];
-// ACP (Hermes) and OpenCode map their tools to the same names (engines/acp.mjs#feedTool, opencode-config#mapTool)
+// ACP (Hermes) maps its tools to the same names (engines/acp.mjs#feedTool)
 const acp = [
   [T('Read', { file_path: 'notes/open-loops.md' }, 'read'), 'reading-files'],
   [T('Bash', { command: 'one --agent list' }, 'one --agent list'), 'looking-up-actions'],
@@ -76,7 +76,7 @@ const acp = [
   [T('tool_describe: Reading tool details', { kind: 'other' }, 'tool_describe'), 'working'],
   [T('generate_image', { prompt: 'a cat' }, 'generate_image'), 'generating-image'],
 ];
-for (const [group, rows] of [['Claude', claude], ['Codex', codex], ['ACP/OpenCode', acp]]) {
+for (const [group, rows] of [['Claude', claude], ['Codex', codex], ['ACP', acp]]) {
   for (const [e, want] of rows) assert.equal(st(e), want, `${group}: ${e.tool || e.kind} ${e.summary || ''} → ${want}`);
   ok(`${group}: ${rows.length} event shapes → states`);
 }

@@ -1,7 +1,7 @@
 // First-run setup guide: which tools are installed here, and the commands to install the missing ones.
 // Probes run asynchronously with a short timeout and are cached for 30 seconds, so the dashboard never waits on them for long.
 import { execFile } from 'node:child_process';
-import { engines, engineTools, engineRepairCmd } from './engines/index.mjs';
+import { engines, engineTools, engineRepairCmd, runRefusal } from './engines/index.mjs';
 import { findBinary } from './claude.mjs';
 
 const win = process.platform === 'win32', mac = process.platform === 'darwin';
@@ -44,7 +44,9 @@ export async function toolStatus({ force = false } = {}) {
       // a harness whose program is there but won't start (an install that didn't finish) shows what finishes it
       const e = !version && t.kind === 'harness' ? engines().find(x => x.id === t.id) : null;
       const broken = !!e?.available();
-      return { id: t.id, label: t.label, kind: t.kind || 'harness', found: !!version, version: version || null, broken, repairCmd: broken ? engineRepairCmd(e) || null : null, installCmd: t.install, required: !!n.required, recommended: !!n.recommended, note: n.note || t.note || '', gated: t.gated ?? null };
+      return { id: t.id, label: t.label, kind: t.kind || 'harness', found: !!version, version: version || null, broken, repairCmd: broken ? engineRepairCmd(e) || null : null, installCmd: t.install, required: !!n.required, recommended: !!n.recommended, note: n.note || t.note || '', gated: t.gated ?? null,
+        // found, but a version Orchy won't run (runRefusal): why, and the way to one it does
+        refusal: version && t.kind === 'harness' ? runRefusal(engines().find(x => x.id === t.id)) : null };
     }));
     cache = { at: Date.now(), tools };
     return tools;

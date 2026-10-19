@@ -213,14 +213,14 @@ const runs = [
   const ws = W.alpha;
   const own = { workspace: 'alpha', slug: 'writer', model: 'haiku' };
   ok(ceilingTierModel(ws, own, 2) === 'haiku' && ceilingTierModel(ws, null, 2) === tierModel(ws, 2) && ceilingTierModel(ws, { model: 'inherit' }, 0) === tierModel(ws, 0), 'ceilingTierModel: the agent’s model exactly, else the tier');
-  // engines whose tiers are all "default" (Hermes, OpenCode): an agent's own model id is kept, and moving a card off
-  // one says nothing about strength
-  const hermesWs = { id: 'hx', runtime: 'hermes' }, openWs = { id: 'ox', runtime: 'opencode' };
-  ok(ceilingTierModel(hermesWs, { model: 'nous/hermes-5' }, 0) === 'nous/hermes-5' && ceilingTierModel(openWs, { model: 'openrouter/anthropic/claude-x' }, 2) === 'openrouter/anthropic/claude-x',
-    'ceilingTierModel: a Hermes/OpenCode agent keeps the model id its file names');
-  ok(ceilingTierModel(hermesWs, { model: 'inherit' }, 1) === 'default' && ceilingTierModel(openWs, null, 2) === 'default', 'ceilingTierModel: no model of its own on Hermes/OpenCode is "default" (the harness picks)');
-  ok(remodel(hermesWs, ws, 'default') === tierModel(ws, 1) && remodel(openWs, ws, 'nous/x') === tierModel(ws, 1) && remodel(ws, hermesWs, tierModel(ws, 2)) === 'default',
-    'remodel: a card moved off Hermes/OpenCode lands on the middle tier, never the cheapest');
+  // an engine whose tiers are all "default" (Hermes): an agent's own model id is kept, and moving a card off it says
+  // nothing about strength
+  const hermesWs = { id: 'hx', runtime: 'hermes' };
+  ok(ceilingTierModel(hermesWs, { model: 'nous/hermes-5' }, 0) === 'nous/hermes-5' && ceilingTierModel(hermesWs, { model: 'openrouter/anthropic/claude-x' }, 2) === 'openrouter/anthropic/claude-x',
+    'ceilingTierModel: a Hermes agent keeps the model id its file names (provider/model, slashes after the first kept)');
+  ok(ceilingTierModel(hermesWs, { model: 'inherit' }, 1) === 'default' && ceilingTierModel(hermesWs, null, 2) === 'default', 'ceilingTierModel: no model of its own on Hermes is "default" (the harness picks)');
+  ok(remodel(hermesWs, ws, 'default') === tierModel(ws, 1) && remodel(hermesWs, ws, 'nous/x') === tierModel(ws, 1) && remodel(ws, hermesWs, tierModel(ws, 2)) === 'default',
+    'remodel: a card moved off Hermes lands on the middle tier, never the cheapest');
   const routed = await route('draft the support reply for Alpha', { agents: [...AGENTS, { workspace: 'alpha', slug: 'writer', displayName: 'Writer', description: 'Writes', model: 'haiku' }], ask: jev({ effort: 1.9, pick: 'alpha/writer' }) });
   ok(routed.agent === 'writer' && routed.model === 'haiku', 'a routed task to an agent with a model runs on that model', JSON.stringify({ a: routed.agent, m: routed.model }));
   ok(unroutedModel(ws, null, 'what is the link to the deck?') === tierModel(ws, 0), 'unrouted: a short lookup takes the light tier');

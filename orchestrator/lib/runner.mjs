@@ -1,7 +1,8 @@
 // Runs agents in their workspace folder under that workspace's account, on its engine (engines/index.mjs):
 //   Claude Code → `claude -p --output-format stream-json` with the Orchy bridge as permission-prompt tool
 //   Codex       → `codex app-server` (codex.mjs), every approval answered by the Orchy gate
-//   OpenCode    → `opencode serve` + its HTTP API (engines/opencode-run.mjs), every ask answered by the Orchy gate
+//   Hermes      → `hermes acp` (engines/hermes.mjs, acp.mjs), its pre_tool_call hook and ACP asks answered by the gate
+//   Antigravity → `agy -p` (engines/antigravity.mjs), its PreToolUse hook answered by the gate
 // This file holds what every engine shares (the run record, the feed, finishing, stopping); each engine's launch code
 // lives in its engines/ module and gets the `RT` object below.
 // Wires the Orchy MCP bridge, streams events, logs the result.
@@ -15,7 +16,7 @@ import { ROOT, ORCH_DIR, DATA_DIR, ownerName } from './env.mjs';
 import { db, save, id, runEventsPath } from './store.mjs';
 import { emit } from './bus.mjs';
 import { workspace, workspaces, accountCheck, readMcp, allConnections, modelFor, modelsFor, accountFor, engineFor, runtimeLabel, oneScope } from './workspaces.mjs';
-import { engine, engines, ungatedRefusal, offeredRefusal, engineInstallCmd, engineHealth, brokenMessage } from './engines/index.mjs';
+import { engine, engines, ungatedRefusal, offeredRefusal, engineInstallCmd, engineHealth, brokenMessage, runRefusal } from './engines/index.mjs';
 import { profilePath, shellLine } from './engines/shared.mjs';
 import { getAgent, listAgents, agentFingerprint, BUILDER_SLUG } from './agents.mjs';
 import { protocolFile, builderBrief, codexInstructions } from './prompts.mjs';
@@ -62,7 +63,8 @@ export function accountKey(ws, runtime = ws.runtime) {
     prof = path.resolve(profilePath(a.profileDir)).replace(/[\\/]+$/, '');
     if (process.platform === 'win32') prof = prof.toLowerCase();
   }
-  const who = eng?.accountModel === 'profile' ? prof || 'default' : String(a.email || '').toLowerCase().trim() || prof || 'default';
+  // workspaces on the computer's Hermes sign-in share one account: one queue, one limit pause
+  const who = a.computerLogin ? 'computer' : eng?.accountModel === 'profile' ? prof || 'default' : String(a.email || '').toLowerCase().trim() || prof || 'default';
   return `${runtime}:${who}`;
 }
 
@@ -257,6 +259,9 @@ export async function startRun(opts) {
     throw Object.assign(new Error(`${eng.label} isn't installed on this PC, so ${ws.name} can't run yet.${cmd ? ` Install it with: ${cmd}` : ''} Then start the task again.`), { status: 409, code: 'ENGINE_MISSING' });
   }
   if (health === 'broken') throw Object.assign(new Error(brokenMessage(eng, { then: 'start the task again' })), { status: 409, code: 'ENGINE_BROKEN' });
+  // a version Orchy can't hold behind the approvals (runRefusal): refused, with the way to one it can
+  const unsafe = runRefusal(eng);
+  if (unsafe) throw Object.assign(new Error(unsafe), { status: 409, code: 'ENGINE_UNSAFE' });
   // Orchy doesn't see every command an ungated engine runs, so it could reach the apps of whatever One login the CLI
   // falls back to: a workspace without its own One login never runs on one
   if (!eng.capabilities.gated && !backend && !oneScope(ws).own) throw Object.assign(new Error(`${ws.name} isn't signed in to its own One account yet, and ${eng.label}'s commands aren't all checked by Orchy, so it could reach another account's apps. Sign it in to One first (Workspaces → ${ws.name} → Sign in to One).`), { status: 409, code: 'ONE_SCOPE' });
@@ -569,8 +574,8 @@ function drainQueue(acctKey) {
 // The workspace's own setup (settings, hooks, skills, agents, instructions, MCP servers). acceptEdits takes edits in
 // the folder without asking anyone, so these are ask rules: they reach the gate, which asks the owner (policy.mjs#setupFile).
 // The AI Agent Builder writes agent files (and retires them), so .claude/agents and .jos/retired stay open to it.
-const SETUP_ASK = ['.claude/**', '.codex/**', '.agents/skills/**', '.one/**', '.jos/mcp.json', '.jos/retired/**', 'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', '.mcp.json'];
-const BUILDER_ASK = ['.claude/*', '.claude/skills/**', '.claude/hooks/**', '.claude/commands/**', '.claude/rules/**', '.claude/output-styles/**', '.codex/**', '.agents/skills/**', '.one/**', '.jos/mcp.json', 'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', '.mcp.json'];
+const SETUP_ASK = ['.claude/**', '.codex/**', '.cursor/**', '.agents/skills/**', '.one/**', '.jos/mcp.json', '.jos/retired/**', 'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', '.mcp.json'];
+const BUILDER_ASK = ['.claude/*', '.claude/skills/**', '.claude/hooks/**', '.claude/commands/**', '.claude/rules/**', '.claude/output-styles/**', '.codex/**', '.cursor/**', '.agents/skills/**', '.one/**', '.jos/mcp.json', 'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', '.mcp.json'];
 // image reads reach the gate too, so it can count them (gate.mjs: a run reading frame after frame asks after 60)
 const IMAGE_ASK = ['**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.webp', '**/*.gif'];
 const fwd = p => String(p).replace(/\\/g, '/');
@@ -661,7 +666,7 @@ async function hookDecide(run, th, tool, input, waitMs) {
 }
 
 /**
- * The hooks an engine whose adapter talks to a long-lived server (Codex, OpenCode) calls: the run's feed, its gate,
+ * The hooks an engine whose adapter talks to a long-lived process (Codex, Hermes) calls: the run's feed, its gate,
  * the owner's question box, usage, and the end. Same for every such engine.
  */
 function hooksFor(run, ws) {

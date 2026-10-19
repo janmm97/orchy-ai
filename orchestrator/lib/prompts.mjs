@@ -1,4 +1,4 @@
-// Prompt text the orchestrator gives agents (any engine: Claude Code, Codex, OpenCode…). Plain English on purpose: tweak freely.
+// Prompt text the orchestrator gives agents (any engine: Claude Code, Codex, Hermes…). Plain English on purpose: tweak freely.
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR, config, env, ownerName } from './env.mjs';

@@ -20,7 +20,6 @@
   "runtimes": {
     "claude": { "label": "Claude Code", "models": ["haiku", "sonnet", "opus"] },
     "codex": { "label": "Codex", "models": ["gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra"] },
-    "opencode": { "label": "OpenCode", "models": ["default", "default", "default"] },
     "hermes": { "label": "Hermes", "models": ["default", "default", "default"] }
   },
   "workspaces": [],

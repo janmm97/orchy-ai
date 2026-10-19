@@ -1,9 +1,11 @@
-// Engine registry. An engine is a coding-agent harness Orchy can run in a workspace (Claude Code, Codex, OpenCode…).
+// Engine registry. An engine is a coding-agent harness Orchy can run in a workspace (Claude Code, Codex, Hermes, Antigravity, Cursor).
 // Everything that used to compare `runtime === 'codex'` asks the registry instead.
 //
 // An engine module's default export has this shape:
 //   id, label, models: [quick, normal, strong], blurb
-//   fields: { account, profile }     the workspace keys in config.json (e.g. claudeAccount / claudeConfigDir)
+//   fields: { account, profile, computerLogin? }   the workspace keys in config.json (e.g. claudeAccount / claudeConfigDir);
+//                                    computerLogin (Hermes): the key for the owner's choice between this computer's
+//                                    sign-in (shared by every workspace set that way) and the profile's own
 //   accountModel: 'email' | 'profile'  'email' = a login with an email address; 'profile' = no account concept (API keys,
 //                                     provider logins): accountCheck needs a profile folder of its own, shared with no
 //                                     other workspace, and reports the provider(s) from account().label
@@ -20,7 +22,8 @@
 //                                    profile's sign-in) once `bin` runs; winRepair finishes a half-done Windows install
 //   bin() → path|null, version() → string|null, available() → boolean
 //   account(profileDir, { force, maxAge }) → Promise<{ loggedIn, email?, label, error?, subscription?, sandbox? }>
-//   profileEnv(profileDir) → { ENV_VAR: value }   the variables that pick the per-workspace profile
+//   profileEnv(profileDir, account?) → { ENV_VAR: value }   the variables that pick the per-workspace profile
+//                                    (account: accountFor's answer, for an engine whose login depends on computerLogin)
 //   loginCommand(account, { win }) → the harness's login command (the env prefix comes from profileEnv)
 //   loginAlt(account, ws) → a hint shown beside the command, or null
 //   mcpConfig({ servers, allowed, bridge }) → the harness's own MCP config for Orchy's bridge + the allowed servers
@@ -35,9 +38,9 @@
 //                                    engines using rt.hooks get both for free.
 import claude from './claude.mjs';
 import codex from './codex.mjs';
-import opencode from './opencode.mjs';
 import hermes from './hermes.mjs';
 import antigravity from './antigravity.mjs';
+import cursor from './cursor.mjs';
 import { env } from '../env.mjs';
 
 const REG = new Map();
@@ -59,7 +62,7 @@ export function registerEngine(def) {
   return () => { if (prev) REG.set(def.id, prev); else REG.delete(def.id); };
 }
 
-for (const e of [claude, codex, opencode, hermes, antigravity]) registerEngine(e);
+for (const e of [claude, codex, hermes, antigravity, cursor]) registerEngine(e);
 
 /** One registered engine, or null (an id that config.json mentions but this Orchy has no adapter for is not an engine). */
 export const engine = id => REG.get(id) || null;
@@ -93,6 +96,7 @@ export const engineInfo = e => ({
   id: e.id, label: e.label, blurb: e.blurb || '', accountModel: e.accountModel, fields: e.fields,
   instructionFile: e.instructionFile || null, capabilities: e.capabilities,
   offered: engineOffered(e), optIn: e.optIn || null, sharedLogin: !!e.sharedLogin,
+  computerLogin: !!e.fields.computerLogin, // a workspace may run on this computer's sign-in or one of its own
 });
 
 /** The command that installs this engine on this OS ('' when it has none). */
@@ -104,12 +108,22 @@ export function engineInstallCmd(e, { win = process.platform === 'win32' } = {})
 
 /**
  * 'ok' (its program answers --version), 'broken' (the program is there but won't start: an install that didn't finish,
- * e.g. npm left OpenCode's placeholder opencode.exe when its postinstall didn't run) or 'missing'.
+ * e.g. an npm package whose postinstall didn't run) or 'missing'.
  */
 export function engineHealth(e) {
   if (!e?.available()) return 'missing';
   if (!e.version) return 'ok';
   try { return e.version() ? 'ok' : 'broken'; } catch { return 'broken'; }
+}
+
+/**
+ * Why Orchy won't run this engine as it is installed here (a version it can't hold behind the owner's approvals),
+ * or null. An engine without a `runRefusal()` has nothing to refuse; one whose check throws is
+ * refused (fail closed).
+ */
+export function runRefusal(e) {
+  if (!e?.runRefusal) return null;
+  try { return e.runRefusal() || null; } catch (err) { return `Orchy couldn't check which ${e.label} this is (${String(err?.message || err).slice(0, 120)}), so it isn't running it.`; }
 }
 
 /** The command that finishes a half-done install: the engine's own repair on Windows, else installing it again. */

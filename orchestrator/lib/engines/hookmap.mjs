@@ -1,6 +1,7 @@
-// What a harness's pre-tool hook sends → the calls Orchy's gate judges ({ tool, input } in policy.mjs's words).
+// What a harness's pre-tool hook sends (Antigravity, Hermes, Cursor) → the calls Orchy's gate judges ({ tool, input } in policy.mjs's words).
 // Pure and dependency-free: the hook process (mcp/tool-hook.mjs) loads it on every tool call, and the adapters use it
 // for their feeds. Anything not recognised keeps a name policy.mjs doesn't know, which always asks the owner.
+import os from 'node:os';
 import path from 'node:path';
 
 // agy's tool calls in the names Orchy's feed, policy words and describeTool know
@@ -53,6 +54,67 @@ export function hermesCalls(name, args = {}, cwd = '.') {
 /** Hermes's pre_tool_call payload → { sessionId (its ACP session), calls }. */
 export function hermesHookCalls(payload = {}) {
   return { sessionId: payload.session_id || null, calls: hermesCalls(String(payload.tool_name || ''), payload.tool_input || {}, payload.cwd || '.') };
+}
+
+// ── Cursor (engines/cursor.mjs): its preToolUse and beforeMCPExecution hooks ──
+/** Orchy's plugin folder for a Cursor run: Cursor names the plugin's MCP servers plugin-<folder>-<server>. */
+export const CURSOR_PLUGIN = 'orchy';
+export const cursorServer = id => String(id || '').replace(new RegExp(`^plugin-${CURSOR_PLUGIN}-`), '') || 'mcp';
+/** Cursor's own folder for a workspace: ~/.cursor/projects/<the workspace path, each run of other characters one dash>. */
+export const cursorProjectSlug = dir => path.resolve(String(dir)).replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+/** A file Cursor spills a long tool result into (and reads back), in this workspace's own Cursor folder: bookkeeping. */
+export function cursorSpill(file, roots = [], home = os.homedir()) {
+  if (!file) return false;
+  const abs = path.resolve(String(file));
+  return roots.some(r => {
+    const rel = path.relative(path.join(home, '.cursor', 'projects', cursorProjectSlug(r), 'agent-tools'), abs);
+    return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel) && !/[\\/]/.test(rel) && /\.txt$/i.test(rel);
+  });
+}
+
+/** One Cursor tool call (its hook's tool name and input, the folder it runs in) → the gate's calls. */
+export function cursorCalls(name, args = {}, { cwd = '.', roots = [], home = os.homedir() } = {}) {
+  const a = args && typeof args === 'object' ? args : {};
+  const file = p => (typeof p === 'string' && p ? path.resolve(cwd, p) : '');
+  const f = file(a.file_path ?? a.path);
+  const here = path.resolve(cwd);
+  // a search with no folder covers Cursor's root: in a git repo that is the repo's top (this repo, for a workspace inside it)
+  const top = roots[0] ? path.resolve(roots[0]) : here;
+  const book = [{ tool: 'TodoWrite', input: {} }];
+  // judged in beforeMCPExecution, where Cursor also names the server (its preToolUse names only the tool)
+  if (name.startsWith('MCP:')) return book;
+  switch (name) {
+    case 'Shell': return [{ tool: 'Bash', input: { command: String(a.command ?? ''), cwd: a.cwd ? file(a.cwd) : here } }];
+    // typing into a shell it left running: judged like the command it is
+    case 'WriteShellStdin': return [{ tool: 'Bash', input: { command: String(a.chars ?? a.input ?? a.text ?? a.data ?? JSON.stringify(a)), cwd: here } }];
+    case 'Read': return cursorSpill(f, roots, home) ? book : [{ tool: 'Read', input: { file_path: f } }];
+    case 'Write': return cursorSpill(f, roots, home) ? book : [{ tool: 'Write', input: { file_path: f, ...(typeof a.content === 'string' ? { content: a.content } : {}) } }];
+    // a delete is judged as the command it would be, so the Deleting decision applies as for any harness
+    case 'Delete': return [{ tool: 'Bash', input: { command: `rm -f "${f}"`, cwd: f ? path.dirname(f) : here } }];
+    case 'Grep': return [{ tool: 'Grep', input: { pattern: String(a.pattern ?? a.query ?? ''), path: a.path ? file(a.path) : top } }];
+    case 'Glob': return [{ tool: 'Glob', input: { pattern: String(a.pattern ?? a.glob_pattern ?? ''), path: a.path || a.target_directory ? file(a.path ?? a.target_directory) : top } }];
+    case 'List': case 'LS': return [{ tool: 'LS', input: { path: file(a.path ?? a.target_directory) || top } }];
+    case 'ReadLints': return (Array.isArray(a.paths) && a.paths.length ? a.paths : ['.']).map(p => ({ tool: 'Read', input: { file_path: file(String(p)) } }));
+    // a subagent: its own tool calls come through these hooks too (checked on the real CLI)
+    case 'Task': return [{ tool: 'Task', input: { description: String(a.description ?? ''), prompt: String(a.prompt ?? ''), subagent_type: typeof a.subagent_type === 'string' ? a.subagent_type : '' } }];
+    case 'Fetch': return [{ tool: 'WebFetch', input: { url: String(a.url ?? '') } }];
+    case 'ListMcpResources': return [{ tool: 'ListMcpResourcesTool', input: a }];
+    case 'FetchMcpResource': return [{ tool: `mcp__${cursorServer(a.server)}__read_resource`, input: a }];
+    default: return [{ tool: `cursor:${String(name || 'tool').slice(0, 80)}`, input: a }];
+  }
+}
+
+/** Cursor's hook payload → { sessionId (its chat, = the stream's session_id), calls }. */
+export function cursorHookCalls(payload = {}, { home = os.homedir() } = {}) {
+  const sessionId = payload.conversation_id || payload.session_id || null;
+  const roots = Array.isArray(payload.workspace_roots) ? payload.workspace_roots.filter(r => typeof r === 'string' && r) : [];
+  let input = payload.tool_input;
+  if (typeof input === 'string') { try { input = JSON.parse(input); } catch { input = { value: input }; } }
+  const name = String(payload.tool_name || '');
+  if (payload.hook_event_name === 'beforeMCPExecution') {
+    return { sessionId, calls: [{ tool: `mcp__${cursorServer(payload.mcp_server_name)}__${name || 'tool'}`, input: input && typeof input === 'object' ? input : {} }] };
+  }
+  return { sessionId, calls: cursorCalls(name, input, { cwd: payload.cwd || roots[0] || '.', roots, home }) };
 }
 
 /** The kind of action a gate call is, so a hook's OK can be matched to the tool the harness then runs. */
