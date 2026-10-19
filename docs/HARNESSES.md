@@ -2,14 +2,14 @@
 
 A harness is the coding-agent CLI that does the work inside a workspace. Orchy starts it in the workspace folder, gives it the Orchy bridge (ask, approve, report) and answers its approval requests through the approval gate (`orchestrator/lib/gate.mjs`).
 
-Hermes, Antigravity and Cursor were run against their real binaries (Windows, 2026-10-19); the others are still "pending" or "implemented, unverified" until the maintainer updates this file after testing. "Unverified" means the adapter is covered only by tests with a fake harness (`npm test`) and by reading the harness's public docs; nobody has run it against the real binary.
+Every harness listed below has been run against its real program: Hermes, Antigravity and Cursor on Windows, and Claude Code and Codex on a fresh install by the maintainer (2026-10-19). A harness added later stays "pending" or "implemented, unverified" until the maintainer updates this file after testing. "Unverified" means the adapter is covered only by tests with a fake harness (`npm test`) and by reading the harness's public docs; nobody has run it against the real binary.
 
 ## Status
 
 | Harness | Gated (every risky action asks Orchy first) | Status |
 |---|---|---|
-| Claude Code | yes (permission-prompt MCP tool) | pending real-install test |
-| Codex | yes (`untrusted` policy, every approval request) | pending real-install test |
+| Claude Code | yes (permission-prompt MCP tool) | checked on a fresh install by the maintainer (2026-10-19): install, sign-in, runs with tool calls, creating agents, One CLI actions |
+| Codex | yes (`untrusted` policy, every approval request) | checked on a fresh install by the maintainer (2026-10-19): install, sign-in, runs with tool calls, creating agents, One CLI actions |
 | Hermes | yes, through its `pre_tool_call` hook (every tool call asks Orchy first) | checked against the real binary (Hermes 0.21.7, Windows) |
 | Antigravity | yes, through its `PreToolUse` hook (every tool call asks Orchy first) | checked against the real binary (agy 1.4.2, Windows). Off by default (`ORCHY_ANTIGRAVITY=1` in `.env`) |
 | Cursor | yes, through two hooks in a plugin Orchy writes for each run (`preToolUse` for every tool, `beforeMCPExecution` for every MCP call); it has no web search or fetch in Orchy | checked against the real binary (Cursor CLI 2026.10.16, Windows) |
