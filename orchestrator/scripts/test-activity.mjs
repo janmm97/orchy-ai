@@ -62,7 +62,7 @@ const codex = [
   [T('Edit', { file_path: 'C:\\work\\acme\\studio\\audio.mjs' }, 'Editing audio.mjs'), 'writing-code'],
   [T('Bash', { command: 'git status -sb' }, 'Running `git status -sb`'), 'running-command'],
   [T('Bash', { command: 'one --agent actions find logo-dev "retrieve a logo by domain" --task "logo retrieval"' }, 'Looking up logo-dev actions'), 'looking-up-actions'],
-  [T('Bash', { command: 'one --agent actions execute notion conn_mod_def::G live::notion::default::7afb' }, 'Running Retrieve a Page on notion'), 'using-app'],
+  [T('Bash', { command: 'one --agent actions execute notion conn_mod_def::G live::notion::default::1a2b' }, 'Running Retrieve a Page on notion'), 'using-app'],
   [T('Bash', { command: 'Get-Content -Raw C:/work/skills/one/SKILL.md' }, 'Running `Get-Content'), 'running-command'],
   [T('WebSearch', { query: 'remotion docs' }, 'Searching the web: remotion docs'), 'searching-web'],
 ];
@@ -182,7 +182,7 @@ for (const [name, [input, want]] of Object.entries(secrets)) {
 assert.ok(!redact(secrets.query[0]).includes('abc123def456'));
 assert.ok(!redact(secrets.ps[0]).includes('ts-live-123456'));
 // what must survive: One connection keys and action ids, plain words, PATH-like vars
-for (const keep of ['one --agent actions execute notion conn_mod_def::GJ5EntqNvy0::-VzfhSExTEGG live::notion::default::7afbc74a0e4342a2', 'K=live::notion::default::7afb; A=conn_mod_def::X', 'PATH=/usr/bin npm test', 'Searching the web: best skeleton keys', 'max_tokens=4000']) assert.equal(redact(keep), keep);
+for (const keep of ['one --agent actions execute notion conn_mod_def::GJ5EntqNvy0::-VzfhSExTEGG live::notion::default::1a2b3c4d5e6f7a8b', 'K=live::notion::default::1a2b; A=conn_mod_def::X', 'PATH=/usr/bin npm test', 'Searching the web: best skeleton keys', 'max_tokens=4000']) assert.equal(redact(keep), keep);
 const ev = redactEvent({ kind: 'tool', tool: 'Bash', summary: 'Running `GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789 gh pr list`', input: { command: 'GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789 gh pr list', headers: { Authorization: 'token abc', 'x-api-key': 'k-123' }, nested: [{ password: 'hunter2' }], max_tokens: 5 } });
 assert.ok(!JSON.stringify(ev).includes('ghp_abcdefghijklmnopqrstuvwxyz0123456789'));
 assert.equal(ev.input.headers.Authorization, '[redacted]'); assert.equal(ev.input.headers['x-api-key'], '[redacted]');
