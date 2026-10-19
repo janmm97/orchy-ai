@@ -2,7 +2,7 @@
 
 A harness is the coding-agent CLI that does the work inside a workspace. Orchy starts it in the workspace folder, gives it the Orchy bridge (ask, approve, report) and answers its approval requests through the approval gate (`orchestrator/lib/gate.mjs`).
 
-Hermes and Antigravity were run against their real binaries (Windows, 2026-10-19); the others are still "pending" or "implemented, unverified" until the maintainer updates this file after testing. "Unverified" means the adapter is covered only by tests with a fake harness (`npm test`) and by reading the harness's public docs; nobody has run it against the real binary.
+Hermes, Antigravity and OpenCode 1 were run against their real binaries (Windows, 2026-10-19); the others are still "pending" or "implemented, unverified" until the maintainer updates this file after testing. "Unverified" means the adapter is covered only by tests with a fake harness (`npm test`) and by reading the harness's public docs; nobody has run it against the real binary.
 
 ## Status
 
@@ -10,7 +10,7 @@ Hermes and Antigravity were run against their real binaries (Windows, 2026-10-19
 |---|---|---|
 | Claude Code | yes (permission-prompt MCP tool) | pending real-install test |
 | Codex | yes (`untrusted` policy, every approval request) | pending real-install test |
-| OpenCode | yes, by its own config: every tool set to `ask` | implemented, unverified against the real binary (fake-server tests only) |
+| OpenCode | yes, by its own config: every tool set to `ask` | OpenCode 1: checked against the real binary (1.19.3, Windows). OpenCode 2 is refused: its code mode reaches the network without asking (see OpenCode 2 below) |
 | Hermes | yes, through its `pre_tool_call` hook (every tool call asks Orchy first) | checked against the real binary (Hermes 0.21.7, Windows) |
 | Antigravity | yes, through its `PreToolUse` hook (every tool call asks Orchy first) | checked against the real binary (agy 1.4.2, Windows). Off by default (`ORCHY_ANTIGRAVITY=1` in `.env`) |
 
@@ -49,7 +49,7 @@ Ori Harness (`ori`) is a launcher, not a separate harness. See the end of this f
 
 ## OpenCode
 
-**Status: implemented, unverified against the real binary.** The adapter (`orchestrator/lib/engines/opencode*.mjs`) is tested only against a fake `opencode serve` (`npm test`: `test-engine-opencode.mjs`).
+**Status: OpenCode 1 checked against the real binary (1.19.3, Windows, 2026-10-19); OpenCode 2 refused (below).** The adapter (`orchestrator/lib/engines/opencode*.mjs`) is also tested against a fake `opencode serve` (`npm test`: `test-engine-opencode.mjs`).
 
 | | |
 |---|---|
@@ -68,9 +68,16 @@ Confirmed in the docs: `GET /event` (first event `server.connected`), `GET /doc`
 
 Changed because of the docs: `experimental.mcp_timeout` was removed (the docs do not list it) and `codesearch` was dropped from the permission list (not listed; `*` covers it). The `/doc` page is described as HTML: if it is not JSON, Orchy now uses the documented permission route instead of failing; a JSON `/doc` without a permission route still fails the run.
 
+### Evidence (real binary, OpenCode 1.19.3, Windows)
+
+Orchy's own adapter (`launchOpenCodeRun`) drove `opencode serve` with a free OpenCode Zen model (`opencode/big-pickle`) in a scratch folder:
+- A shell step's ask reached Orchy's gate as `Bash` with the exact command; allowed, it ran once and the run completed with the model's reply.
+- Refused (`whoami`), OpenCode got `reject`, the command never ran ("The user rejected permission to use this specific tool call"), and the run still finished.
+- With an `opencode.json` in the workspace saying `"permission": {"*": "allow", "bash": "allow"}`, the step still asked the gate: `OPENCODE_CONFIG_CONTENT` wins.
+- The permission event field names the adapter reads are the ones OpenCode sends; the session, the per-run server and its cleanup worked (no server left running).
+
 ### Still unconfirmed (assumptions in the adapter)
 
-- The field names inside permission events (`id`, `sessionID`, `permission` or `type`, `patterns` or `pattern`, `metadata`, `callID`) and the older event name `permission.updated`: the docs list the events but not their payloads.
 - That the prompt body accepts a `system` field (the SDK docs list `parts`, `model`, `noReply`, `format`).
 - That `XDG_DATA_HOME` moves `auth.json` (the providers page names only the default path) and that `opencode auth login` / `opencode auth list` write and read that file.
 - That `GET /config` returns the effective merged `permission` block (used for the "no `allow`" self-check; a missing answer only logs a note).
@@ -83,9 +90,18 @@ Changed because of the docs: `experimental.mcp_timeout` was removed (the docs do
 3. Run a task that tries a shell command (for example "run `ls` and then `git push`"). Confirm the approval pop-up appears for the outward one and the run feed shows the denied or approved step.
 4. While a run is going, check the `opencode serve` command line in Task Manager or `ps`: it must be exactly `serve --port N --hostname 127.0.0.1` (no `--auto`).
 5. Start `opencode serve` by hand with your own `OPENCODE_SERVER_PASSWORD` and read `GET /doc` and `GET /event` during an ask: confirm the permission route, the event name and the payload field names listed above.
-6. Put `"permission": {"*": "allow"}` in an `opencode.json` inside the workspace and confirm a run still asks (the `OPENCODE_CONFIG_CONTENT` guard wins).
+6. ~~Put `"permission": {"*": "allow"}` in an `opencode.json` inside the workspace and confirm a run still asks.~~ Done on 1.19.3 (Evidence above).
 7. Leave a `jos_ask_user` unanswered for longer than five minutes and confirm the run waits.
 8. When all of that holds, change the status above and keep the README's simple harness table in step.
+
+## OpenCode 2
+
+**Status: refused.** OpenCode 2 (`@opencode/cli` on npm, `opencode v2.x`) is a different program behind the same command: its server is a new API under `/api/...` (`/api/event`, `/api/session`, `/api/session/{id}/prompt`, `/api/session/{id}/permission/{requestID}/reply` with `{ decision, message }`, `/api/config`), so OpenCode 1's routes answer with the web app's HTML page. Checked on 2.0.28 and 2.0.32 (Windows, 2026-10-19):
+
+- What holds: every built-in tool asks (`permission.asked` with `action` `shell`, `read`, `external_directory`, MCP tools as `<server>_<tool>`); `OPENCODE_CONFIG_CONTENT` (loaded last) and a session's own `permissions` rules beat an `allow` in the workspace's `opencode.json`, its `.opencode/` folder or an agent's own rules; the server password is enforced on `/api`.
+- What doesn't: its **code mode**. The `execute` tool runs code the model writes, never asks, and that code can call `fetch`: a test reached a listener on 127.0.0.1 with every rule set to `ask`. Its sandbox blocks file access, but not the network, so an agent could send what it has read, or call a web hook, without the owner's OK. No config key, `experimental.policies` entry (`tool.use` only applies where a permission is evaluated), feature-flag switch (`OPENCODE_DISABLE_FFF`) or environment variable turns `execute` off.
+
+So Orchy doesn't run OpenCode 2: `startRun` refuses it (`ENGINE_UNSAFE`, with the way back to OpenCode 1), the brain passes it over, and the Add window, setup guide and `npm run setup` say why. Its sign-in and model list still show (`auth list`, `models` and `auth login` run with `--standalone`, a private server per profile, since the background service is the computer's). When a release lets `execute` be switched off (or makes it ask), the next step is an `/api` run adapter: the protocol above is what it needs.
 
 ## ACP (Agent Client Protocol) engines
 

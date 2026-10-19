@@ -14,7 +14,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { env, DATA_DIR } from './env.mjs';
-import { engine, engineHealth } from './engines/index.mjs';
+import { engine, engineHealth, runRefusal } from './engines/index.mjs';
 import { quickClaude } from './claude.mjs';
 import { launchCodexRun } from './codex.mjs';
 import { launchOpenCodeRun } from './engines/opencode-run.mjs';
@@ -30,8 +30,9 @@ const NO_TOOLS = 'You have no tools here, and you need none: answer only from th
 export function brainEngine() {
   const pick = String(env('ORCHY_BRAIN') || '').trim().toLowerCase();
   if (pick === 'off' || pick === 'none') return null;
-  // one that is there but won't start (an install that didn't finish) is passed over for the next that runs
-  const runs = id => engineHealth(engine(id)) === 'ok';
+  // one that is there but won't start (an install that didn't finish), or a version Orchy can't gate (OpenCode 2), is
+  // passed over for the next that runs
+  const runs = id => engineHealth(engine(id)) === 'ok' && !runRefusal(engine(id));
   if (BRAIN_ORDER.includes(pick)) return runs(pick) ? pick : null;
   return BRAIN_ORDER.find(runs) || null;
 }

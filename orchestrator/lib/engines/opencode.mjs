@@ -1,5 +1,5 @@
-// Engine adapter: OpenCode (`opencode serve` + its HTTP API). Status: implemented, unverified against the real binary
-// (docs/HARNESSES.md). The run adapter is opencode-run.mjs, the generated config opencode-config.mjs.
+// Engine adapter: OpenCode (`opencode serve` + its HTTP API). Status: OpenCode 1 checked against the real binary (1.19.3);
+// OpenCode 2 refused (runRefusal; docs/HARNESSES.md). The run adapter is opencode-run.mjs, the generated config opencode-config.mjs.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -51,7 +51,7 @@ export default {
     clientSafe: false,
     clientReason: 'Orchy has not verified that OpenCode can be kept inside a client’s folder yet.',
     huddles: false,
-    notes: 'opencode serve with every tool set to "ask"; each ask is answered through the permission endpoint by the Orchy gate (once / reject). Implemented, unverified against the real binary.',
+    notes: 'opencode serve with every tool set to "ask"; each ask is answered through the permission endpoint by the Orchy gate (once / reject). Checked against OpenCode 1.19.3; OpenCode 2 is refused.',
   },
   bin,
   version() {
@@ -61,6 +61,15 @@ export default {
     return probe.v;
   },
   available: () => !!bin(),
+  // OpenCode 2's code mode: its `execute` tool runs code the model writes, and that code can reach the network without
+  // any permission ask, even with every rule set to "ask" (checked on 2.0.28 and 2.0.32; no config, policy or switch
+  // turns it off). Orchy can't keep that behind the owner's approvals, so OpenCode 2 doesn't run; OpenCode 1 does.
+  runRefusal() {
+    const v = this.version();
+    if (openCodeMajor(v) < 2) return null;
+    const win = process.platform === 'win32';
+    return `OpenCode 2 (${v}) can't run in Orchy yet: its code mode (the execute tool) can reach the internet without asking first, and nothing in its settings turns that off, so Orchy can't keep it behind your approvals. Install OpenCode 1 instead: remove OpenCode 2 (from npm: npm uninstall -g @opencode/cli), then ${win ? 'npm install -g opencode-ai' : 'curl -fsSL https://opencode.ai/install | bash'}, and press Re-check.`;
+  },
   /** Which OAuth provider(s) and plan/tier this profile is logged in to, plus its tier-filtered model list. */
   async account(profileDir, { force = false, maxAge = 30_000 } = {}) {
     const key = profileDir ? profilePath(profileDir) : '__default__';

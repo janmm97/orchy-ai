@@ -112,6 +112,16 @@ export function engineHealth(e) {
   try { return e.version() ? 'ok' : 'broken'; } catch { return 'broken'; }
 }
 
+/**
+ * Why Orchy won't run this engine as it is installed here (a version it can't hold behind the owner's approvals,
+ * e.g. OpenCode 2), or null. An engine without a `runRefusal()` has nothing to refuse; one whose check throws is
+ * refused (fail closed).
+ */
+export function runRefusal(e) {
+  if (!e?.runRefusal) return null;
+  try { return e.runRefusal() || null; } catch (err) { return `Orchy couldn't check which ${e.label} this is (${String(err?.message || err).slice(0, 120)}), so it isn't running it.`; }
+}
+
 /** The command that finishes a half-done install: the engine's own repair on Windows, else installing it again. */
 export function engineRepairCmd(e, { win = process.platform === 'win32' } = {}) {
   return (win && e?.install?.winRepair) || engineInstallCmd(e, { win });

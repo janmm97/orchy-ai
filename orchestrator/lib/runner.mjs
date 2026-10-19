@@ -15,7 +15,7 @@ import { ROOT, ORCH_DIR, DATA_DIR, ownerName } from './env.mjs';
 import { db, save, id, runEventsPath } from './store.mjs';
 import { emit } from './bus.mjs';
 import { workspace, workspaces, accountCheck, readMcp, allConnections, modelFor, modelsFor, accountFor, engineFor, runtimeLabel, oneScope } from './workspaces.mjs';
-import { engine, engines, ungatedRefusal, offeredRefusal, engineInstallCmd, engineHealth, brokenMessage } from './engines/index.mjs';
+import { engine, engines, ungatedRefusal, offeredRefusal, engineInstallCmd, engineHealth, brokenMessage, runRefusal } from './engines/index.mjs';
 import { profilePath, shellLine } from './engines/shared.mjs';
 import { getAgent, listAgents, agentFingerprint, BUILDER_SLUG } from './agents.mjs';
 import { protocolFile, builderBrief, codexInstructions } from './prompts.mjs';
@@ -257,6 +257,9 @@ export async function startRun(opts) {
     throw Object.assign(new Error(`${eng.label} isn't installed on this PC, so ${ws.name} can't run yet.${cmd ? ` Install it with: ${cmd}` : ''} Then start the task again.`), { status: 409, code: 'ENGINE_MISSING' });
   }
   if (health === 'broken') throw Object.assign(new Error(brokenMessage(eng, { then: 'start the task again' })), { status: 409, code: 'ENGINE_BROKEN' });
+  // a version Orchy can't hold behind the approvals (OpenCode 2's code mode): refused, with the way to one it can
+  const unsafe = runRefusal(eng);
+  if (unsafe) throw Object.assign(new Error(unsafe), { status: 409, code: 'ENGINE_UNSAFE' });
   // Orchy doesn't see every command an ungated engine runs, so it could reach the apps of whatever One login the CLI
   // falls back to: a workspace without its own One login never runs on one
   if (!eng.capabilities.gated && !backend && !oneScope(ws).own) throw Object.assign(new Error(`${ws.name} isn't signed in to its own One account yet, and ${eng.label}'s commands aren't all checked by Orchy, so it could reach another account's apps. Sign it in to One first (Workspaces → ${ws.name} → Sign in to One).`), { status: 409, code: 'ONE_SCOPE' });

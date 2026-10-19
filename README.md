@@ -276,7 +276,7 @@ Putting them online (Cloudflare Tunnel, Access, and R2 for video) is in [docs/CO
 |---|---|---|
 | **Claude Code** (recommended) | `curl -fsSL https://claude.ai/install.sh \| bash`; Windows (PowerShell): `irm https://claude.ai/install.ps1 \| iex` | ✅ yes |
 | **Codex** | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh`; Windows: `powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 \| iex"` | ✅ yes |
-| **OpenCode** | `curl -fsSL https://opencode.ai/install \| bash`; on Windows `npm install -g opencode-ai` | ✅ yes |
+| **OpenCode** (version 1) | `curl -fsSL https://opencode.ai/install \| bash`; on Windows `npm install -g opencode-ai`. OpenCode 2 isn't supported yet: its code mode can reach the internet without asking ([why](docs/HARNESSES.md#opencode-2)) | ✅ yes |
 | **Hermes** | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash`; on Windows (PowerShell) `iex (irm https://hermes-agent.nousresearch.com/install.ps1)` | ✅ yes |
 | **Antigravity** (off by default) | Google's `agy` CLI (see antigravity.google), then `ORCHY_ANTIGRAVITY=1` in `.env` | ✅ yes |
 

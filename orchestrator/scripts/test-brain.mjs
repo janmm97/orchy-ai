@@ -83,6 +83,13 @@ const route = (text, opts = {}) => realRoute(text, { workspaces: ONE, agents: AG
   delete process.env.ORCHY_BRAIN;
   ok(brainEngine() !== 'claude', 'in order: a harness that won’t start is passed over');
   undo();
+  // OpenCode 2 starts, but Orchy can't gate it (its code mode reaches the network without asking): never the brain
+  const undo2 = registerEngine({ ...engine('opencode'), available: () => true, version: () => 'opencode v2.0.28' });
+  process.env.ORCHY_BRAIN = 'opencode';
+  ok(brainEngine() === null, 'ORCHY_BRAIN=opencode on OpenCode 2: no brain');
+  delete process.env.ORCHY_BRAIN;
+  ok(brainEngine() !== 'opencode', 'in order: OpenCode 2 is passed over');
+  undo2();
   if (keep === undefined) delete process.env.ORCHY_BRAIN; else process.env.ORCHY_BRAIN = keep;
   ok(['--safe-mode', '--oneshot', '-Q'].every(f => HERMES_BRAIN_ARGS.includes(f)) && HERMES_BRAIN_ARGS[HERMES_BRAIN_ARGS.indexOf('-t') + 1] === 'todo', 'Hermes as the brain: one-shot, safe mode, only its task-list toolset');
 }

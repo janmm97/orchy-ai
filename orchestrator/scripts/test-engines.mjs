@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { config } from '../lib/env.mjs';
-import { engine, engines, engineIds, registerEngine, ungatedRefusal, engineInstallCmd } from '../lib/engines/index.mjs';
+import { engine, engines, engineIds, registerEngine, ungatedRefusal, engineInstallCmd, runRefusal } from '../lib/engines/index.mjs';
 import { accountCheck, accountFor, runtimes, modelFor, modelsFor, loginHint, runtimeAvailability, profileClash, backendWorkspace, setBackendAccount } from '../lib/workspaces.mjs';
 import { startRun } from '../lib/runner.mjs';
 import { buildPromptBody } from '../lib/engines/opencode-run.mjs';
@@ -122,6 +122,26 @@ ok(loginHint({ runtime: 'codex', codexAccount: 'owner@example.com', codexHome: '
 {
   const a = await accountCheck({ id: 'm', name: 'M', runtime: 'mystery' }, {});
   ok(!a.ok && /adapter/.test(a.error), 'a runtime with no adapter is blocked');
+}
+
+// ── OpenCode 2 is refused (its code mode's execute tool reaches the network without asking); OpenCode 1 runs ──
+{
+  const undo2 = registerEngine({ ...engine('opencode'), available: () => true, version: () => 'opencode v2.0.28' });
+  const why = runRefusal(engine('opencode'));
+  ok(/OpenCode 2/.test(why || '') && /npm install -g opencode-ai|opencode\.ai\/install/.test(why || ''), 'opencode 2: refused, with the way back to OpenCode 1', why);
+  const w = { id: 'oc2', name: 'OC Two', folder: 'workspaces/__oc2', runtime: 'opencode', opencodeProfile: path.join(os.tmpdir(), 'orchy-oc2-never'), enabled: true, color: 'teal' };
+  config.workspaces.push(w);
+  const err = await rejects(startRun({ workspace: 'oc2', instruction: 'List the files' }));
+  ok(err?.code === 'ENGINE_UNSAFE' && /OpenCode 2/.test(err.message), 'opencode 2: startRun refuses it before anything launches', `${err?.code} ${err?.message}`);
+  config.workspaces.splice(config.workspaces.indexOf(w), 1);
+  undo2();
+  const undo1 = registerEngine({ ...engine('opencode'), version: () => '1.19.3' });
+  ok(runRefusal(engine('opencode')) === null, 'opencode 1: nothing to refuse');
+  undo1();
+  ok(runRefusal(engine('claude')) === null && runRefusal(engine('hermes')) === null, 'engines without the check refuse nothing');
+  const undoT = registerEngine({ ...engine('opencode'), runRefusal() { throw new Error('boom'); } });
+  ok(/couldn't check/.test(runRefusal(engine('opencode')) || ''), 'a refusal check that throws refuses (fail closed)');
+  undoT();
 }
 
 // ── Orchy fixing himself: a fresh install (config.example.json) has no Claude Code account for it yet ──

@@ -106,12 +106,17 @@ function hermesAuthProviders(auth, { storedOnly = false } = {}) {
   return out;
 }
 
+// *_API_KEY names Hermes itself files as tools or skills, not model providers (hermes_cli/config_defaults.py, 0.21.7:
+// its _tool and _skill entries): a FIRECRAWL_API_KEY alone is no sign-in. Any other key still counts, so a provider
+// Hermes adds later isn't refused.
+const HERMES_NON_PROVIDER_KEYS = new Set(['EXA', 'PARALLEL', 'FIRECRAWL', 'TAVILY', 'PERPLEXITY', 'KEENABLE', 'BRAVE_SEARCH', 'BROWSERBASE', 'BROWSER_USE', 'CAMOFOX', 'KREA', 'ELEVENLABS', 'MISTRAL', 'HONCHO', 'HINDSIGHT', 'SUPERMEMORY', 'MEM0', 'RETAINDB', 'BRV', 'OPENVIKING', 'NOTION', 'LINEAR', 'AIRTABLE', 'TENOR']);
+
 /** API-key providers Hermes reads from its home's .env (names only, values never read out). */
 function hermesEnvProviders(dir) {
   let text = '';
   try { text = fs.readFileSync(path.join(dir, '.env'), 'utf8'); } catch { return []; }
   const out = [];
-  for (const m of text.matchAll(/^\s*([A-Z][A-Z0-9_]*)_API_KEY\s*=\s*\S+/gm)) out.push(m[1].toLowerCase().replace(/_/g, '-'));
+  for (const m of text.matchAll(/^\s*([A-Z][A-Z0-9_]*)_API_KEY\s*=\s*\S+/gm)) if (!HERMES_NON_PROVIDER_KEYS.has(m[1])) out.push(m[1].toLowerCase().replace(/_/g, '-'));
   return out;
 }
 

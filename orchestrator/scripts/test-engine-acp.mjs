@@ -246,6 +246,13 @@ async function run(scenario, over = {}, { cfg = {}, io = {}, afterStart, takeHoo
   const loose = path.join(TMP, 'loose-profile');
   fs.mkdirSync(loose, { recursive: true });
   ok(!inspectHermesAccount(loose, { native: NATIVE }).loggedIn, 'hermes: a profile outside any Hermes home borrows nothing');
+  // a tool's key in a profile's own .env (Hermes files FIRECRAWL_API_KEY as a tool) is no sign-in; a provider's is
+  put(loose, '.env', 'FIRECRAWL_API_KEY=fc\nBRAVE_SEARCH_API_KEY=bs\nNOTION_API_KEY=n\n');
+  ok(!inspectHermesAccount(loose, { native: NATIVE }).loggedIn, 'hermes: tool and skill keys alone (Firecrawl, Brave Search, Notion) are no sign-in');
+  put(loose, '.env', 'FIRECRAWL_API_KEY=fc\nOPENROUTER_API_KEY=or\n');
+  const k = inspectHermesAccount(loose, { native: NATIVE });
+  ok(k.loggedIn && k.providers.join() === 'openrouter', 'hermes: a provider key signs the profile in, and only the provider shows', JSON.stringify(k.providers));
+  fs.rmSync(path.join(loose, '.env'));
   ok(!inspectHermesAccount(null).computerProviders.length, 'hermes: the PC’s own home reports no borrowed sign-ins');
 
   const custom = path.join(TMP, 'custom-home');

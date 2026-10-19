@@ -17,7 +17,7 @@ import { scaffoldWorkspace, ensureInstructions } from './lib/scaffold.mjs';
 import { listPlatforms } from './lib/one.mjs';
 import { toolStatus } from './lib/setupcheck.mjs';
 import { quickClaude } from './lib/claude.mjs';
-import { engine, engines, engineInstallCmd } from './lib/engines/index.mjs';
+import { engine, engines, engineInstallCmd, runRefusal } from './lib/engines/index.mjs';
 import { installHarness, installJob } from './lib/installer.mjs';
 import { listAgents, getAgent, saveAgent, deleteAgent, BUILDER_SLUG, departmentsOf } from './lib/agents.mjs';
 import { syncAllResources } from './lib/resources.mjs';
@@ -893,6 +893,7 @@ on('GET', '/api/runtimes', async () => {
       install: engineInstallCmd(e) || null, // what the Add window shows for an engine not on this PC yet
       installing: !have[e.id]?.available && !!installJob(e.id), // Orchy opened its install window (installer.mjs)
       version: have[e.id]?.available ? e.version?.() || null : null,
+      refusal: have[e.id]?.available ? runRefusal(e) : null, // installed, but a version Orchy won't run (OpenCode 2)
       defaultAccount: shared || a?.email || a?.label || null,
       loggedIn: !!a?.loggedIn,
       plan: a?.plan || a?.subscriptionType || a?.subscription || null,
@@ -1583,7 +1584,7 @@ on('GET', '/api/setup', async (req) => {
     owner: { name: (config.owner?.name || '').trim(), set: !!(config.owner?.name || '').trim() },
     timezone: config.timezone,
     os: process.platform,
-    tools, harness: tools.some(t => t.kind === 'harness' && t.found), keys,
+    tools, harness: tools.some(t => t.kind === 'harness' && t.found && !t.refusal), keys,
     workspaces: { count: list.length, list },
     backend: await backendSummary({ force }), // the account "Fix Orchy" runs under (the Tools step offers one)
     done: !!db().settings.setupDone,
