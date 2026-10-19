@@ -1,0 +1,12 @@
+# Cursor reads every AGENTS.md and CLAUDE.md in the folder it runs in and in each parent folder up to the drive root,
+# and a workspace's Cursor runs start inside this repo (workspaces/<name>). These lines keep Orchy's own instructions,
+# which are for agents working on Orchy, out of a workspace's agent runs, and keep Orchy's private files out of
+# Cursor's reach. Orchy refuses to start Cursor if the first three lines are missing (engines/cursor.mjs).
+# Working on Orchy itself with Cursor: read README.md and CLAUDE.md yourself; Cursor won't load them from here.
+/AGENTS.md
+/CLAUDE.md
+/CLAUDE.local.md
+/.env
+/orchestrator/config.json
+/orchestrator/voice-agents.json
+/orchestrator/data/

@@ -266,7 +266,7 @@ async function main() {
     const e = engines().find(x => x.id === t.id);
     let v = null;
     try { v = e?.available() ? e.version() : null; } catch {} // a probe that throws reads as "not found"
-    const refusal = v ? runRefusal(e) : null; // there and starts, but a version Orchy won't run (OpenCode 2)
+    const refusal = v ? runRefusal(e) : null; // there and starts, but a version Orchy won't run (runRefusal)
     found[t.id] = !!v && !refusal;
     const gate = t.gated ? 'approvals: yes' : 'approvals: NO (only runs where you allow it)';
     const label = `${t.label}${t.id === 'claude' ? ' (recommended)' : ''}`;

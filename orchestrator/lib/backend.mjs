@@ -172,6 +172,8 @@ export const GUARDED_GLOBS = [
   // sign-in tokens, and Resources/ (it moves skill folders and blanks secrets in MCP copies)
   'orchestrator/lib/engines/**', 'orchestrator/lib/codex.mjs', 'orchestrator/lib/claude.mjs', 'orchestrator/lib/mcpauth.mjs', 'orchestrator/lib/resources.mjs',
   'orchestrator/scripts/restart.mjs', 'orchestrator/config.json', '.env', '.claude/**', '.codex/**', '.one/**', '.mcp.json',
+  // the fence that keeps Orchy's own instructions and private files out of Cursor runs (engines/cursor.mjs)
+  '.cursorignore', '.cursor/**',
 ];
 const GUARDED = new RegExp(`^(${GUARDED_GLOBS.map(g => g.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\/\*\*$/, '(/.*)?')).join('|')})$`, 'i');
 // …and the same rules where they're wired into other files (the dashboard's origin lock, the account check before a

@@ -22,7 +22,7 @@ labels: bug
 
 - OS:
 - Node version (`node -v`):
-- Harness and version (Claude Code, Codex, OpenCode, ...):
+- Harness and version (Claude Code, Codex, Hermes, ...):
 - Jev provider (TypeSafe, OpenRouter, Vercel, OpenCode Zen, or off):
 
 **`npm run check` output**

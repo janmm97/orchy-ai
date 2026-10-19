@@ -45,7 +45,7 @@ export async function toolStatus({ force = false } = {}) {
       const e = !version && t.kind === 'harness' ? engines().find(x => x.id === t.id) : null;
       const broken = !!e?.available();
       return { id: t.id, label: t.label, kind: t.kind || 'harness', found: !!version, version: version || null, broken, repairCmd: broken ? engineRepairCmd(e) || null : null, installCmd: t.install, required: !!n.required, recommended: !!n.recommended, note: n.note || t.note || '', gated: t.gated ?? null,
-        // found, but a version Orchy won't run (OpenCode 2): why, and the way to one it does
+        // found, but a version Orchy won't run (runRefusal): why, and the way to one it does
         refusal: version && t.kind === 'harness' ? runRefusal(engines().find(x => x.id === t.id)) : null };
     }));
     cache = { at: Date.now(), tools };

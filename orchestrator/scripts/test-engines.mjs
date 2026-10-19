@@ -9,12 +9,9 @@ import { config } from '../lib/env.mjs';
 import { engine, engines, engineIds, registerEngine, ungatedRefusal, engineInstallCmd, runRefusal } from '../lib/engines/index.mjs';
 import { accountCheck, accountFor, runtimes, modelFor, modelsFor, loginHint, runtimeAvailability, profileClash, backendWorkspace, setBackendAccount } from '../lib/workspaces.mjs';
 import { startRun, accountKey } from '../lib/runner.mjs';
-import { buildPromptBody } from '../lib/engines/opencode-run.mjs';
 import { toClaudeMcp } from '../lib/engines/claude.mjs';
 import { toCodexMcp } from '../lib/engines/codex.mjs';
-import { OPENCODE_PERMISSION, permissionLooksSafe, mapTool, modelParts } from '../lib/engines/opencode-config.mjs';
 import { CODEX_ARGS } from '../lib/codex.mjs';
-import { setOpenCodeProbeForTests, parseOpenCodeAuthList, openCodeMajor, inspectOpenCodeAccount } from '../lib/engines/tier-catalog.mjs';
 
 let fail = 0;
 const ok = (cond, label, extra = '') => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${label}${cond ? '' : `  ${extra}`}`); if (!cond) fail++; };
@@ -23,7 +20,7 @@ const keep = { workspaces: [...config.workspaces] };
 process.on('exit', () => { config.workspaces = keep.workspaces; });
 
 // ── the registry ──
-ok(JSON.stringify(engineIds()) === JSON.stringify(['claude', 'codex', 'opencode', 'hermes', 'antigravity']), 'registry lists claude, codex, opencode, hermes, antigravity', JSON.stringify(engineIds()));
+ok(JSON.stringify(engineIds()) === JSON.stringify(['claude', 'codex', 'hermes', 'antigravity', 'cursor']), 'registry lists claude, codex, hermes, antigravity, cursor', JSON.stringify(engineIds()));
 ok('hermes' in config.runtimes && !!engine('hermes') && engine('hermes').capabilities.gated && engine('antigravity').capabilities.gated, 'hermes / antigravity are engines, gated through their pre-tool hooks');
 ok(ungatedRefusal({ name: 'H' }, engine('hermes')) === null && ungatedRefusal({ name: 'A' }, engine('antigravity')) === null, 'hermes / antigravity need no allowUngated');
 ok(JSON.stringify(Object.keys(runtimes())) === JSON.stringify(engineIds()), 'runtimes() lists registered engines only', JSON.stringify(Object.keys(runtimes())));
@@ -34,8 +31,8 @@ for (const e of engines()) {
 }
 ok(engine('claude').capabilities.clientSafe && engine('claude').capabilities.huddles, 'claude: client-safe, huddles');
 ok(!engine('codex').capabilities.clientSafe && !engine('codex').capabilities.huddles && !!engine('codex').capabilities.clientReason, 'codex: not client-safe, no huddles, says why');
-ok(engine('opencode').capabilities.gated && !engine('opencode').capabilities.clientSafe && engine('opencode').accountModel === 'profile', 'opencode: gated, not client-safe, profile account model');
-ok(Object.keys(runtimeAvailability()).join() === 'claude,codex,opencode,hermes,antigravity', 'runtimeAvailability asks every engine');
+ok(engine('hermes').capabilities.gated && !engine('hermes').capabilities.clientSafe && engine('hermes').accountModel === 'profile', 'hermes: gated, not client-safe, profile account model');
+ok(Object.keys(runtimeAvailability()).join() === 'claude,codex,hermes,antigravity,cursor', 'runtimeAvailability asks every engine');
 let bad = null;
 try { registerEngine({ id: 'half', label: 'Half' }); } catch (e) { bad = e; }
 ok(!!bad && !engine('half'), 'an incomplete engine is refused');
@@ -56,7 +53,7 @@ const fake = (id, over = {}) => ({
   config.workspaces.push(ws);
   ok(!!ungatedRefusal(ws, engine('wild')), 'ungated engine: refused by default');
   ok(ungatedRefusal({ ...ws, allowUngated: true }, engine('wild')) === null, 'ungated engine: allowed once the workspace opts in');
-  ok(ungatedRefusal(ws, engine('claude')) === null && ungatedRefusal(ws, engine('opencode')) === null, 'gated engines are never refused');
+  ok(ungatedRefusal(ws, engine('claude')) === null && ungatedRefusal(ws, engine('hermes')) === null, 'gated engines are never refused');
   const err = await rejects(startRun({ workspace: 'w1', instruction: 'Delete everything' }));
   ok(err?.code === 'UNGATED_ENGINE' && err.status === 409, 'startRun refuses the run before anything starts', err && `${err.code} ${err.message}`);
   ws.allowUngated = true;
@@ -73,8 +70,8 @@ const fake = (id, over = {}) => ({
 }
 // ── an engine that isn't installed: Windows gets a command that installs it where Orchy looks, a run says what to do ──
 {
-  ok(engineInstallCmd(engine('opencode'), { win: true }) === 'npm install -g opencode-ai' && /install\.ps1/.test(engineInstallCmd(engine('hermes'), { win: true })), 'opencode / hermes: native Windows install commands (not bash in WSL)');
-  ok(/^curl .*\| bash$/.test(engineInstallCmd(engine('opencode'), { win: false })) && /^curl .*\| bash$/.test(engineInstallCmd(engine('hermes'), { win: false })), 'opencode / hermes: the bash installers elsewhere');
+  ok(/install\.ps1/.test(engineInstallCmd(engine('hermes'), { win: true })), 'hermes: a native Windows install command (not bash in WSL)');
+  ok(/^curl .*\| bash$/.test(engineInstallCmd(engine('hermes'), { win: false })), 'hermes: the bash installer elsewhere');
   const undo = registerEngine(fake('absent', { capabilities: { ...fake('x').capabilities, gated: true }, available: () => false, install: { cmd: 'get-absent' } }));
   config.workspaces.push({ id: 'w2', name: 'Absent One', folder: 'workspaces/__engines-test', runtime: 'absent', enabled: true, absentProfile: '/tmp/orchy-absent-1', color: 'jade' });
   const err = await rejects(startRun({ workspace: 'w2', instruction: 'Do it' }));
@@ -82,7 +79,7 @@ const fake = (id, over = {}) => ({
   config.workspaces.pop();
   undo();
 }
-// ── an engine that is there but won't start (npm's placeholder opencode.exe): a run says how to finish its install ──
+// ── an engine that is there but won't start (an install that didn't finish): a run says how to finish its install ──
 {
   const undo = registerEngine(fake('halfdone', { capabilities: { ...fake('x').capabilities, gated: true }, version: () => null, install: { cmd: 'get-halfdone', winCmd: 'get-halfdone', winRepair: 'finish-halfdone' } }));
   config.workspaces.push({ id: 'w3', name: 'Half Done', folder: 'workspaces/__engines-test', runtime: 'halfdone', enabled: true, halfdoneProfile: '/tmp/orchy-halfdone-1', color: 'jade' });
@@ -114,8 +111,8 @@ for (const [id, fields] of [['claude', ['claudeAccount', 'claudeConfigDir']], ['
   a = await accountCheck(mk({ [fields[0]]: null }), {});
   ok(!a.ok && /no .* account set/i.test(a.error || ''), `${id}: a workspace with no account set is blocked`, a.error);
   undo();
-  a = await accountCheck(mk(), { runtime: 'opencode' });
-  ok(a.runtime === 'opencode' && !a.ok, `${id} workspace asked about OpenCode: checked for the engine the run uses`);
+  a = await accountCheck(mk(), { runtime: 'hermes' });
+  ok(a.runtime === 'hermes' && !a.ok, `${id} workspace asked about Hermes: checked for the engine the run uses`);
 }
 ok(loginHint({ runtime: 'claude', claudeAccount: 'owner@example.com', claudeConfigDir: '/tmp/prof-a' }).includes('CLAUDE_CONFIG_DIR') && /claude auth login --email/.test(loginHint({ runtime: 'claude', claudeAccount: 'owner@example.com' })), 'claude login hint pins the profile');
 ok(loginHint({ runtime: 'codex', codexAccount: 'owner@example.com', codexHome: '/tmp/prof-b' }).includes('CODEX_HOME') && / login$/.test(loginHint({ runtime: 'codex', codexAccount: 'owner@example.com' })), 'codex login hint pins the profile');
@@ -124,24 +121,28 @@ ok(loginHint({ runtime: 'codex', codexAccount: 'owner@example.com', codexHome: '
   ok(!a.ok && /adapter/.test(a.error), 'a runtime with no adapter is blocked');
 }
 
-// ── OpenCode 2 is refused (its code mode's execute tool reaches the network without asking); OpenCode 1 runs ──
+// ── an engine whose installed version Orchy won't run (runRefusal) is refused before anything launches ──
 {
-  const undo2 = registerEngine({ ...engine('opencode'), available: () => true, version: () => 'opencode v2.0.28' });
-  const why = runRefusal(engine('opencode'));
-  ok(/OpenCode 2/.test(why || '') && /npm install -g opencode-ai|opencode\.ai\/install/.test(why || ''), 'opencode 2: refused, with the way back to OpenCode 1', why);
-  const w = { id: 'oc2', name: 'OC Two', folder: 'workspaces/__oc2', runtime: 'opencode', opencodeProfile: path.join(os.tmpdir(), 'orchy-oc2-never'), enabled: true, color: 'teal' };
+  const gated = { ...fake('x').capabilities, gated: true };
+  const undo = registerEngine(fake('picky', { capabilities: gated, runRefusal: () => 'Picky 9 runs commands Orchy never sees. Install Picky 8.' }));
+  const why = runRefusal(engine('picky'));
+  ok(/Picky 9/.test(why || ''), 'runRefusal: the engine’s own reason, with the way back', why);
+  const w = { id: 'pk1', name: 'Picky One', folder: 'workspaces/__pk1', runtime: 'picky', pickyProfile: path.join(os.tmpdir(), 'orchy-picky-never'), enabled: true, color: 'teal' };
   config.workspaces.push(w);
-  const err = await rejects(startRun({ workspace: 'oc2', instruction: 'List the files' }));
-  ok(err?.code === 'ENGINE_UNSAFE' && /OpenCode 2/.test(err.message), 'opencode 2: startRun refuses it before anything launches', `${err?.code} ${err?.message}`);
-  config.workspaces.splice(config.workspaces.indexOf(w), 1);
-  undo2();
-  const undo1 = registerEngine({ ...engine('opencode'), version: () => '1.19.3' });
-  ok(runRefusal(engine('opencode')) === null, 'opencode 1: nothing to refuse');
-  undo1();
+  const err = await rejects(startRun({ workspace: 'pk1', instruction: 'List the files' }));
+  ok(err?.code === 'ENGINE_UNSAFE' && err.status === 409 && /Picky 9/.test(err.message) && !/never launch/.test(err.message), 'startRun refuses it before anything launches', `${err?.code} ${err?.message}`);
+  undo();
+  const undoOk = registerEngine(fake('picky', { capabilities: gated, runRefusal: () => null }));
+  ok(runRefusal(engine('picky')) === null, 'a version it accepts: nothing to refuse');
+  undoOk();
   ok(runRefusal(engine('claude')) === null && runRefusal(engine('hermes')) === null, 'engines without the check refuse nothing');
-  const undoT = registerEngine({ ...engine('opencode'), runRefusal() { throw new Error('boom'); } });
-  ok(/couldn't check/.test(runRefusal(engine('opencode')) || ''), 'a refusal check that throws refuses (fail closed)');
+  const undoT = registerEngine(fake('picky', { capabilities: gated, runRefusal() { throw new Error('boom'); } }));
+  ok(/couldn't check/.test(runRefusal(engine('picky')) || ''), 'a refusal check that throws refuses (fail closed)');
+  const errT = await rejects(startRun({ workspace: 'pk1', instruction: 'List the files' }));
+  ok(errT?.code === 'ENGINE_UNSAFE' && /couldn't check/.test(errT.message) && !/never launch/.test(errT.message), 'and startRun refuses it too, nothing launched', `${errT?.code} ${errT?.message}`);
   undoT();
+  config.workspaces.splice(config.workspaces.indexOf(w), 1);
+  ok(!engine('picky'), 'the test engine is gone again');
 }
 
 // ── Orchy fixing himself: a fresh install (config.example.json) has no Claude Code account for it yet ──
@@ -191,61 +192,6 @@ ok(loginHint({ runtime: 'codex', codexAccount: 'owner@example.com', codexHome: '
   undo();
 }
 {
-  // the real OpenCode engine: providers come from the profile's auth.json (OpenCode 1; the version is pinned so a PC
-  // with OpenCode 2 installed tests the same thing)
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orchy-oc-'));
-  const undoV1 = registerEngine({ ...engine('opencode'), version: () => '1.19.3' });
-  const oc = engine('opencode');
-  const w = { id: 'oc1', name: 'OC One', folder: 'workspaces/__oc1', runtime: 'opencode', opencodeAccount: null, opencodeProfile: dir, color: 'teal' };
-  config.workspaces.push(w);
-  // no real `opencode` here: the CLI probe answers what the profile's env would show. The probe only runs when an
-  // opencode program is found, so a stand-in file is "it" on a PC (or CI runner) without OpenCode
-  const keepCli = process.env.OPENCODE_CLI_PATH;
-  if (!oc.bin()) { fs.writeFileSync(path.join(dir, 'opencode-stand-in'), ''); process.env.OPENCODE_CLI_PATH = path.join(dir, 'opencode-stand-in'); }
-  process.on('exit', () => { if (keepCli === undefined) delete process.env.OPENCODE_CLI_PATH; else process.env.OPENCODE_CLI_PATH = keepCli; });
-  let cli = { providers: [], models: [] }, probedEnv = null;
-  const undoProbe = setOpenCodeProbeForTests(async (_bin, env) => { probedEnv = env; return cli; });
-  let a = await accountCheck(w, { force: true });
-  ok(!a.ok && !a.loggedIn && !a.profileProblem, 'opencode: a fresh profile is not logged in (the PC’s own OpenCode login never counts for it)');
-  fs.mkdirSync(path.join(dir, 'data', 'opencode'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'data', 'opencode', 'auth.json'), JSON.stringify({ anthropic: { type: 'api', key: 'sk-test' }, openrouter: { type: 'api', key: 'k' } }));
-  a = await accountCheck(w, { force: true });
-  ok(a.ok && a.actual === 'anthropic, openrouter' && a.availableModels === null && a.plan === 'Claude + OpenRouter', 'opencode: providers in auth.json make it logged in; no plan or model is made up', JSON.stringify(a));
-  ok(probedEnv?.XDG_DATA_HOME === path.join(dir, 'data'), 'opencode: the CLI is asked under the workspace’s profile', JSON.stringify(probedEnv?.XDG_DATA_HOME));
-  cli = { providers: ['OpenCode Console'], models: ['opencode/big-pickle', 'anthropic/claude-sonnet-5-5'] };
-  a = await accountCheck(w, { force: true });
-  ok(a.ok && a.actual === 'anthropic, openrouter, opencode' && JSON.stringify(a.availableModels) === JSON.stringify(cli.models), 'opencode: a CLI-only sign-in (OpenCode Console) counts, and the models are the ones `opencode models` lists', JSON.stringify(a));
-  undoProbe();
-  ok(JSON.stringify(parseOpenCodeAuthList('OpenCode Console  Default                     stored\r\n●  Anthropic  oauth\nEnvironment\nOpenAI  OPENAI_API_KEY\n')) === '["OpenCode Console","Anthropic"]', 'opencode: `auth list` parsing (with and without bullets; env keys skipped)');
-  ok(JSON.stringify(parseOpenCodeAuthList('●  Anthropic oauth\n●  OpenRouter api\n')) === '["Anthropic","OpenRouter"]', 'opencode 1: one space before the type still parses to the provider alone');
-  ok(openCodeMajor('opencode v2.0.28') === 2 && openCodeMajor('1.19.3') === 1 && openCodeMajor(null) === 0, 'opencode: major version read from `--version`');
-  // OpenCode 2 lists a profile's sign-ins and models through a private server (--standalone); OpenCode 1 refuses the flag
-  {
-    const seen = [];
-    const undo = setOpenCodeProbeForTests(async (_bin, env, standalone) => { seen.push({ standalone, env }); return { providers: [], models: [] }; });
-    const keepKey = process.env.ANTHROPIC_API_KEY;
-    process.env.ANTHROPIC_API_KEY = 'sk-computer';
-    const v2 = await inspectOpenCodeAccount(dir, { binPath: 'x', profileEnv: oc.profileEnv(dir), v2: true });
-    const v1 = await inspectOpenCodeAccount(dir, { binPath: 'x', profileEnv: oc.profileEnv(dir), v2: false });
-    await inspectOpenCodeAccount(null, { binPath: 'x', v2: true });
-    if (keepKey === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = keepKey;
-    undo();
-    ok(seen[0].standalone === true && seen[1].standalone === false && seen[2].standalone === false, 'opencode: a profile on OpenCode 2 is asked with --standalone; OpenCode 1 and the computer’s own login never are', JSON.stringify(seen.map(s => s.standalone)));
-    ok(!('ANTHROPIC_API_KEY' in seen[0].env) && seen[0].env.XDG_DATA_HOME === path.join(dir, 'data'), 'opencode: a profile is asked without the computer’s API keys (what its runs get)');
-    ok(!v2.loggedIn && v1.loggedIn, 'opencode 2: an auth.json it never reads doesn’t make the profile signed in; on OpenCode 1 it does', JSON.stringify([v2.loggedIn, v1.loggedIn]));
-  }
-  const env = oc.profileEnv(dir);
-  ok(env.XDG_DATA_HOME === path.join(dir, 'data') && env.OPENCODE_CONFIG_DIR === path.join(dir, 'config') && !!env.XDG_STATE_HOME, 'opencode: profileEnv pins data, state and config under the workspace profile');
-  const hint = loginHint(w);
-  ok(hint.includes('XDG_DATA_HOME') && hint.includes('OPENCODE_CONFIG_DIR') && (openCodeMajor(oc.version()) >= 2 ? /auth login --standalone$/ : /auth login$/).test(hint), 'opencode: login hint pins the profile and runs `auth login` (--standalone on OpenCode 2)', hint);
-  const undoV2 = registerEngine({ ...engine('opencode'), version: () => 'opencode v2.0.28' });
-  ok(/auth login --standalone$/.test(loginHint(w)), 'opencode 2: a profile signs in through a private server of its own (the background service is the computer’s)', loginHint(w));
-  undoV2();
-  undoV1();
-  config.workspaces.splice(config.workspaces.indexOf(w), 1);
-  fs.rmSync(dir, { recursive: true, force: true });
-}
-{
   // Hermes OAuth account + tier-dependent model selection
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orchy-hm-'));
   const w = { id: 'hm1', name: 'HM One', folder: 'workspaces/__hm1', runtime: 'hermes', hermesAccount: null, hermesProfile: dir, color: 'violet', allowUngated: true };
@@ -283,18 +229,15 @@ ok(loginHint({ runtime: 'codex', codexAccount: 'owner@example.com', codexHome: '
 
 // ── models: engines whose tiers are all "default" ──
 {
-  const ws = { id: 'm1', name: 'M', runtime: 'opencode' };
-  ok(modelsFor(ws).every(m => m === 'default'), 'opencode: every tier is "default"');
-  ok(modelFor(ws, 'sonnet') === 'default' && modelFor(ws, 'haiku') === 'default' && modelFor(ws, undefined) === 'default' && modelFor(ws, 'gpt-6-astra') === 'default', 'modelFor maps any tier name to "default" for opencode');
+  const ws = { id: 'm1', name: 'M', runtime: 'hermes' };
+  ok(modelsFor(ws).every(m => m === 'default'), 'hermes: every tier is "default"');
+  ok(modelFor(ws, 'sonnet') === 'default' && modelFor(ws, 'haiku') === 'default' && modelFor(ws, undefined) === 'default' && modelFor(ws, 'gpt-6-astra') === 'default', 'modelFor maps any tier name to "default" for hermes');
   ok(modelFor(ws, 'anthropic/claude-sonnet-4') === 'anthropic/claude-sonnet-4', 'a typed provider/model is kept');
+  ok(modelFor(ws, 'hermes-5') === 'hermes-5', 'a plain model id is kept on an engine that takes any model id (openModels)');
   ok(modelFor({ runtime: 'claude' }, 'gpt-6.1-sol') === 'sonnet' && modelFor({ runtime: 'codex' }, 'opus') === 'gpt-6-astra' && modelFor({ runtime: 'claude' }, undefined) === 'sonnet', 'claude/codex tier mapping is unchanged');
   ok(modelFor({ runtime: 'claude' }, 'default', 'claude') === 'sonnet' && modelFor({ runtime: 'codex' }, 'default') === 'gpt-6.1-sol', '"default" (the harness picks) on claude/codex is the middle tier, never the cheapest');
-  ok(modelFor(ws, 'inherit') === 'default' && modelFor({ runtime: 'hermes' }, 'inherit') === 'default' && modelFor({ runtime: 'claude' }, 'inherit') === 'sonnet' && modelFor({ runtime: 'antigravity' }, 'inherit') !== 'inherit',
+  ok(modelFor(ws, 'inherit') === 'default' && modelFor({ runtime: 'claude' }, 'inherit') === 'sonnet' && modelFor({ runtime: 'antigravity' }, 'inherit') !== 'inherit',
     '"inherit" (an agent file’s "the workspace’s model") is never sent to a harness as a model id');
-  const none = buildPromptBody({ prompt: 'hi', system: 's', model: 'default' });
-  ok(!('model' in none) && none.parts[0].text === 'hi' && none.system === 's', 'opencode prompt body omits the model for "default"');
-  ok(JSON.stringify(buildPromptBody({ prompt: 'hi', model: 'anthropic/claude-x/y' }).model) === JSON.stringify({ providerID: 'anthropic', modelID: 'claude-x/y' }), 'and passes provider/model split at the first slash');
-  ok(modelParts('sonnet') === null, 'a tier name that is not provider/model sends no model');
 }
 
 // ── MCP conversions ──
@@ -305,19 +248,11 @@ ok(loginHint({ runtime: 'codex', codexAccount: 'owner@example.com', codexHome: '
   ok(c.mcpServers.jos.type === 'stdio' && c.mcpServers.jos.timeout === 86_400_000 && c.mcpServers.notion.command === 'npx' && !c.mcpServers.off, 'claude: mcp config has the bridge with a long timeout and the enabled servers');
   const x = engine('codex').mcpConfig({ servers, allowed: null, bridge });
   ok(x.jos.tool_timeout_sec === 86400 && x.notion.tool_timeout_sec === 600 && x.web.http_headers.H === '1' && !x.legacy && !x.off, 'codex: mcp_servers has the bridge, no sse servers');
-  const o = engine('opencode').mcpConfig({ servers, allowed: ['notion'], bridge });
-  ok(o.mcp.jos.type === 'local' && o.mcp.jos.command.join(' ') === 'node bridge.mjs' && o.mcp.jos.environment.JOS_TOKEN === 't' && o.mcp.notion.command[0] === 'npx' && !o.mcp.web, 'opencode: mcp has the bridge as a local server and only the allowed servers');
-  ok(permissionLooksSafe(o.permission) && o.permission['*'] === 'ask' && o.permission.bash === 'ask' && o.permission.task === 'deny', 'opencode: everything asks, sub-agents and the question box are denied');
-  ok(!JSON.stringify(o.permission).includes('allow'), 'opencode: the generated config never says "allow"');
-  ok(!permissionLooksSafe({ '*': 'ask', bash: 'allow' }) && !permissionLooksSafe({ bash: 'ask' }) && !permissionLooksSafe(undefined) && !permissionLooksSafe({ '*': 'ask', read: { '*': 'allow' } }), 'an effective config with an allow (or no catch-all) is not safe');
-  ok(OPENCODE_PERMISSION.read['*.env'] === 'deny', '.env files stay denied for reads');
-  const names = ['jos', 'notion'];
-  ok(mapTool('bash', names) === 'Bash' && mapTool('edit', names) === 'Edit' && mapTool('webfetch', names) === 'WebFetch' && mapTool('jos_report_done', names) === 'mcp__jos__report_done' && mapTool('notion_create_page', names) === 'mcp__notion__create_page' && mapTool('mystery', names) === 'mystery', 'opencode tool names map to the names policy.mjs knows');
   ok(Object.keys(toClaudeMcp({}, null)).length === 0 && Object.keys(toCodexMcp({}, null)).length === 0, 'empty registries convert to nothing');
 }
 
 // ── protocol notes ──
-ok(engine('codex').protocolNotes({ ownerName: 'Sam' }).includes('## Working on Codex') && engine('opencode').protocolNotes({ ownerName: 'Sam' }).includes('## Working on OpenCode') && engine('claude').protocolNotes({ ownerName: 'Sam' }) === '', 'each engine adds its own protocol notes');
+ok(engine('codex').protocolNotes({ ownerName: 'Sam' }).includes('## Working on Codex') && engine('hermes').protocolNotes({ ownerName: 'Sam' }).includes('## Working on Hermes') && engine('claude').protocolNotes({ ownerName: 'Sam' }) === '', 'each engine adds its own protocol notes');
 
 // ── AGENTS.md: Codex reads it only in the run's own folder (workspaces sit inside Orchy's repo, whose AGENTS.md isn't theirs) ──
 ok(CODEX_ARGS.join(' ') === '-c project_root_markers=[] app-server', 'codex app-server starts with project_root_markers=[] (no AGENTS.md from the folders above)');

@@ -219,10 +219,10 @@ export function pickModels(id, agent = null) {
   return wsModels(id);
 }
 // Engines that take any model id (provider/model): the server passes a typed one through (workspaces.mjs#modelFor)
-const OPEN_MODEL_ENGINES = new Set(['hermes', 'opencode']);
-/** Hermes and OpenCode: a dropdown of the models their account lists, plus a box to type any model id. */
+const OPEN_MODEL_ENGINES = new Set(['hermes', 'cursor']);
+/** Hermes and Cursor: a dropdown of the models their account lists, plus a box to type any model id. */
 export const takesModelId = (id, agent = null) => OPEN_MODEL_ENGINES.has(agent?.engine || findWs(id)?.runtime);
-/** Hermes and OpenCode expose tier-dependent model lists via a dropdown instead of 3 segmented buttons. */
+/** Hermes and Cursor expose their account's model list via a dropdown instead of 3 segmented buttons. */
 export function wsUsesModelDropdown(id, agent = null) {
   return takesModelId(id, agent) || pickModels(id, agent).length > 3;
 }

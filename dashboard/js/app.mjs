@@ -698,7 +698,7 @@ function fillRoute(el, p) {
   const wsId = ch.workspace || defaultWs();
   const models = pickModels(wsId, pinned);
   const useDropdown = wsUsesModelDropdown(wsId, pinned);
-  const typeable = takesModelId(wsId, pinned); // Hermes, OpenCode: any provider/model id, listed or not
+  const typeable = takesModelId(wsId, pinned); // Hermes: any provider/model id, listed or not
   const plan = wsPlan(wsId, pinned);
   const agentBars = Object.entries(pr.agent || {}).sort((a, b) => b[1] - a[1]).slice(0, 3);
 
