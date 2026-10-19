@@ -31,7 +31,7 @@ Orchy is a local AI-agent orchestrator. You tell Orchy what you need, by text or
 
 - 💬 **Text or voice.** Type a task, or talk to Orchy and call your agents. Voice is optional and off until you switch it on (ElevenLabs or Deepgram).
 - 🧭 **Smart routing, optional.** Jev picks the workspace, agent and model, and shows you its pick first. Without it, Orchy matches each message by its words.
-- 🧰 **Bring your own harness.** Claude Code, Codex, OpenCode, Hermes or Antigravity, each signed in with the account you pick for that workspace, and every one held behind your approvals.
+- 🧰 **Bring your own harness.** Claude Code, Codex, Hermes, Antigravity or Cursor, each signed in with the account you pick for that workspace, and every one held behind your approvals.
 - 🔌 **Your real apps.** Gmail, Slack, Notion, Stripe and 1000+ more through the [One CLI](https://withone.ai).
 - ✋ **Asks before it acts.** Money, sending, calendar changes, deleting and sharing wait for your OK in the dashboard.
 - 🗂️ **Workspaces that never mix.** One folder per business or client, with its own logins, agents and instructions.
@@ -50,6 +50,7 @@ Orchy is a local AI-agent orchestrator. You tell Orchy what you need, by text or
 - [Getting started with One](#getting-started-with-one)
 - [Core ideas](#core-ideas)
 - [Supported harnesses](#supported-harnesses)
+  - [Sign-in, not API keys](#sign-in-not-api-keys)
 - [Troubleshooting](#troubleshooting)
 - [Project structure](#project-structure)
 - [Contributing](#contributing)
@@ -100,12 +101,12 @@ Each key is checked once with its service and saved in `.env` on your PC. Keys a
 | `DEEPGRAM_API_KEY` | Orchy's spoken replies with Deepgram (or the backup voice when both keys are set) | The browser's voice |
 | `VOICE_PROVIDER` | Which service speaks: `elevenlabs` or `deepgram` | ElevenLabs first, Deepgram as backup |
 
-`JEV_PROVIDER` picks one provider when several keys are set (`typesafe`, `openrouter`, `vercel`, `opencode`, or `off`). With Jev off, the harness you installed stands in: it answers Jev's routing questions (10 to 30 seconds a message, on that harness's own sign-in), and keyword matching is the last resort. The same harness answers when you talk to Orchy if Claude Code isn't installed: Codex, OpenCode or Hermes, without tools (it can't open files you attach; Claude Code can). `ORCHY_BRAIN` picks one (`claude`, `codex`, `opencode`, `hermes`) or `off`. `VOICE_ENABLED=0` switches voice off: nothing speaks, nothing rings, and nothing goes to ElevenLabs or Deepgram.
+`JEV_PROVIDER` picks one provider when several keys are set (`typesafe`, `openrouter`, `vercel`, `opencode`, or `off`). With Jev off, the harness you installed stands in: it answers Jev's routing questions (10 to 30 seconds a message, on that harness's own sign-in), and keyword matching is the last resort. The same harness answers when you talk to Orchy if Claude Code isn't installed: Codex or Hermes, without tools (it can't open files you attach; Claude Code can). `ORCHY_BRAIN` picks one (`claude`, `codex`, `hermes`) or `off`. `VOICE_ENABLED=0` switches voice off: nothing speaks, nothing rings, and nothing goes to ElevenLabs or Deepgram.
 
 ## If you are an AI agent setting this up or working in this repo: read this first
 
 > [!IMPORTANT]
-> This applies to Claude Code, Codex, OpenCode, Hermes, Antigravity and any other agent. Read this whole README before you change anything.
+> This applies to Claude Code, Codex, Cursor, Hermes, Antigravity and any other agent. Read this whole README before you change anything.
 >
 > - **Never mix accounts.** Each workspace runs under exactly one login per harness (`claudeAccount`, `codexAccount` and so on in `orchestrator/config.json`). `accountCheck` in `orchestrator/lib/workspaces.mjs` checks it before every run. Do not weaken it.
 > - **One login per workspace.** Each workspace has its own One login (`one init --auth browser --project`, run inside that workspace folder). Never run a `one` action for one workspace from another workspace's folder. A workspace without its own login must not run `one`.
@@ -185,7 +186,7 @@ Orchy runs on your PC, but these services see some of your data when you use the
 - **Paired browsers.** Only a paired browser can make changes in Orchy (send tasks, answer approvals, change settings). See Pairing under [First run](#first-run).
 - **An approval gate on every harness.** Agents do routine work alone and stop for decisions: money, sending, calendar changes, deleting, sharing. The full rules are under [Approval gate and policy](docs/CONCEPTS.md#approval-gate-and-policy).
 - **Accounts never mix.** Every run is checked against the workspace's own harness login before it starts, and each workspace has its own One login.
-- **Every harness asks first.** Claude Code, Codex and OpenCode send their own approval requests to Orchy, and Hermes and Antigravity go through a pre-tool hook Orchy writes into each run. See [Supported harnesses](#supported-harnesses).
+- **Every harness asks first.** Claude Code and Codex send their own approval requests to Orchy. Hermes, Antigravity and Cursor go through hooks Orchy writes into each run. See [Supported harnesses](#supported-harnesses).
 - **Never tunnel port 8008.** The dashboard refuses Cloudflare traffic. Only [client pages](#client-pages) (port 8009) go online, through a Cloudflare Tunnel with Cloudflare Access.
 
 Report security problems privately: see [SECURITY.md](docs/SECURITY.md).
@@ -276,15 +277,29 @@ Putting them online (Cloudflare Tunnel, Access, and R2 for video) is in [docs/CO
 |---|---|---|
 | **Claude Code** (recommended) | `curl -fsSL https://claude.ai/install.sh \| bash`; Windows (PowerShell): `irm https://claude.ai/install.ps1 \| iex` | ✅ yes |
 | **Codex** | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh`; Windows: `powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 \| iex"` | ✅ yes |
-| **OpenCode** (version 1) | `curl -fsSL https://opencode.ai/install \| bash`; on Windows `npm install -g opencode-ai`. OpenCode 2 isn't supported yet: its code mode can reach the internet without asking ([why](docs/HARNESSES.md#opencode-2)) | ✅ yes |
 | **Hermes** | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash`; on Windows (PowerShell) `iex (irm https://hermes-agent.nousresearch.com/install.ps1)` | ✅ yes |
 | **Antigravity** (off by default) | `curl -fsSL https://antigravity.google/cli/install.sh \| bash`; on Windows (PowerShell) `irm https://antigravity.google/cli/install.ps1 \| iex`; then `ORCHY_ANTIGRAVITY=1` in `.env`. Google doesn't support running `agy` from another app on personal plans ([details](docs/HARNESSES.md#antigravity)) | ✅ yes |
+| **Cursor** | `curl https://cursor.com/install -fsS \| bash`; on Windows (PowerShell) `irm 'https://cursor.com/install?win32=true' \| iex`; then sign in with `agent login`. No web search or web fetch in Orchy, and one sign-in for the whole computer, shared by every Cursor workspace ([details](docs/HARNESSES.md#cursor)) | ✅ yes |
 
-"Gated" means every risky action asks Orchy first. How far each one has been tested against its real program is in [docs/HARNESSES.md](docs/HARNESSES.md). OpenCode and Hermes offer the models their sign-in lists, and take any model id you type. You don't have to type these: **Install** in the dashboard (Add workspace, or Set up Orchy → Tools) runs the right one for your computer in a terminal window, then the sign-in. A harness whose program is there but won't start (an install that didn't finish) shows as **won't start**, with the command that fixes it.
+OpenCode is no longer supported: OpenCode 2 can reach the internet without asking, and nothing switches that off ([why](docs/HARNESSES.md#status)). The OpenCode Zen Jev provider (`OPENCODE_API_KEY`) is a separate service and still works.
+
+"Gated" means every risky action asks Orchy first. How far each one has been tested against its real program is in [docs/HARNESSES.md](docs/HARNESSES.md). Hermes and Cursor offer the models their sign-in lists, and take any model id you type. You don't have to type these: **Install** in the dashboard (Add workspace, or Set up Orchy → Tools) runs the right one for your computer in a terminal window, then the sign-in. A harness whose program is there but won't start (an install that didn't finish) shows as **won't start**, with the command that fixes it.
 
 Details, headless commands, config locations, the evidence behind each "gated" answer, [which instructions an agent run reads](docs/HARNESSES.md#which-instructions-an-agent-run-reads) and manual verification checklists are in [docs/HARNESSES.md](docs/HARNESSES.md).
 
-**Platforms:** Windows, macOS and Linux. Windows is the most tested (Hermes and Antigravity were checked on Windows only); on macOS and Linux, report what breaks.
+**Platforms:** Windows, macOS and Linux. Windows is the most tested (Hermes, Antigravity and Cursor were checked on Windows only); on macOS and Linux, report what breaks.
+
+### Sign-in, not API keys
+
+Every harness signs in with your own account in the browser. You don't need an API key to run one.
+
+- **Claude Code:** `claude auth login` (your Claude plan).
+- **Codex:** `codex login` (your ChatGPT account).
+- **Hermes:** `hermes portal`, or `hermes auth add <provider> --type oauth`. When you add a Hermes workspace you pick **This computer's Hermes sign-in** (sign in once; every workspace set this way uses, and bills, that account) or **Its own sign-in**.
+- **Antigravity:** start `agy` once and sign in with your Google account. Google's FAQ says running `agy` inside another app isn't supported on personal Google plans. That's why it's off by default: `ORCHY_ANTIGRAVITY=1` in `.env` turns it on.
+- **Cursor:** `agent login`.
+
+API keys stay optional, for Jev routing and voice only (see [Keys](#keys)).
 
 ## Troubleshooting
 
@@ -300,8 +315,9 @@ This health check tests each workspace's accounts, the One CLI, Jev, voice, agen
 | The dashboard says it can't make changes | The browser isn't paired: see Pairing under [First run](#first-run). |
 | A workspace says it is not signed in to One | Workspaces, the workspace, "Sign in to One". |
 | A run is refused for an account mismatch | The harness profile for that workspace is logged into the wrong account: sign in again with the right one. |
-| A workspace "isn't logged in", but you signed in to the harness in a terminal | A plain terminal signs in the computer's profile, not the workspace's. A Hermes workspace set to "This computer's sign-in" (the default) uses it on its own; one set to "Its own sign-in" needs **Log in**. For OpenCode, or a Claude Code or Codex workspace with its own profile, press **Log in** on the workspace: the window it opens signs in that workspace's profile. Then press Re-check. |
-| A harness shows **won't start**, or Windows says "This version of … opencode.exe is not compatible with the version of Windows you're running" | Its install didn't finish. For OpenCode on Windows, npm skipped the package's setup step (often `npm config get ignore-scripts` is `true`), so a placeholder `opencode.exe` is left in place of the real one. Press **Install** (it installs again and finishes that step itself), or run `cd "$env:APPDATA\npm\node_modules\opencode-ai"; node postinstall.mjs`. Then press Re-check. |
+| A workspace "isn't logged in", but you signed in to the harness in a terminal | A plain terminal signs in the computer's profile, not the workspace's. A Hermes workspace set to "This computer's sign-in" (the default) uses it on its own; one set to "Its own sign-in" needs **Log in**. For a Claude Code or Codex workspace with its own profile, press **Log in** on the workspace: the window it opens signs in that workspace's profile. Cursor has one sign-in for the whole computer: run `agent login` in any terminal. Then press Re-check. |
+| A harness shows **won't start** | Its install didn't finish. Press **Install** to install it again, or run the command shown next to it. Then press Re-check. |
+| A Cursor task fails with "Orchy's .cursorignore is missing…" | Run `git checkout .cursorignore` in the Orchy folder. That file keeps Orchy's own instructions out of Cursor runs. |
 
 ## Project structure
 
