@@ -1,4 +1,4 @@
-// Engine registry. An engine is a coding-agent harness Orchy can run in a workspace (Claude Code, Codex, OpenCode…).
+// Engine registry. An engine is a coding-agent harness Orchy can run in a workspace (Claude Code, Codex, Hermes, Antigravity, Cursor).
 // Everything that used to compare `runtime === 'codex'` asks the registry instead.
 //
 // An engine module's default export has this shape:
@@ -38,9 +38,9 @@
 //                                    engines using rt.hooks get both for free.
 import claude from './claude.mjs';
 import codex from './codex.mjs';
-import opencode from './opencode.mjs';
 import hermes from './hermes.mjs';
 import antigravity from './antigravity.mjs';
+import cursor from './cursor.mjs';
 import { env } from '../env.mjs';
 
 const REG = new Map();
@@ -62,7 +62,7 @@ export function registerEngine(def) {
   return () => { if (prev) REG.set(def.id, prev); else REG.delete(def.id); };
 }
 
-for (const e of [claude, codex, opencode, hermes, antigravity]) registerEngine(e);
+for (const e of [claude, codex, hermes, antigravity, cursor]) registerEngine(e);
 
 /** One registered engine, or null (an id that config.json mentions but this Orchy has no adapter for is not an engine). */
 export const engine = id => REG.get(id) || null;
@@ -108,7 +108,7 @@ export function engineInstallCmd(e, { win = process.platform === 'win32' } = {})
 
 /**
  * 'ok' (its program answers --version), 'broken' (the program is there but won't start: an install that didn't finish,
- * e.g. npm left OpenCode's placeholder opencode.exe when its postinstall didn't run) or 'missing'.
+ * e.g. an npm package whose postinstall didn't run) or 'missing'.
  */
 export function engineHealth(e) {
   if (!e?.available()) return 'missing';
@@ -117,8 +117,8 @@ export function engineHealth(e) {
 }
 
 /**
- * Why Orchy won't run this engine as it is installed here (a version it can't hold behind the owner's approvals,
- * e.g. OpenCode 2), or null. An engine without a `runRefusal()` has nothing to refuse; one whose check throws is
+ * Why Orchy won't run this engine as it is installed here (a version it can't hold behind the owner's approvals),
+ * or null. An engine without a `runRefusal()` has nothing to refuse; one whose check throws is
  * refused (fail closed).
  */
 export function runRefusal(e) {

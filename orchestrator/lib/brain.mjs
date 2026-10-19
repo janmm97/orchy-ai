@@ -1,13 +1,12 @@
 // Orchy's brain: the harness Orchy thinks with when he answers by himself (chat replies, report-backs, the greeting,
 // the weekly usage review) and, when Jev is off, the one that reads each message to route it (router.mjs).
 // Claude Code when it is installed (orchy.mjs keeps its session memory and the Uploads reads); otherwise the first
-// harness this PC has: Codex, OpenCode, Hermes. ORCHY_BRAIN=claude|codex|opencode|hermes picks one, =off none.
+// harness this PC has: Codex, Hermes. ORCHY_BRAIN=claude|codex|hermes picks one, =off none.
 //
 // Every brain runs on the harness's DEFAULT profile (the owner's own sign-in, as Orchy's Claude replies always did),
 // in an empty folder of its own, and is text-only: it answers from what the prompt tells it.
 //   claude    quickClaude with no tools (`--tools ""`)
 //   codex     codex app-server, read-only sandbox, every approval declined, any tool it starts stops the turn
-//   opencode  opencode serve with every tool on "ask", every ask refused, any tool it starts stops the turn
 //   hermes    `hermes chat --oneshot --safe-mode -t todo` (no files, shell, MCP, plugins or hooks; checked on 0.21.7)
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,12 +16,10 @@ import { env, DATA_DIR } from './env.mjs';
 import { engine, engineHealth, runRefusal } from './engines/index.mjs';
 import { quickClaude } from './claude.mjs';
 import { launchCodexRun } from './codex.mjs';
-import { launchOpenCodeRun } from './engines/opencode-run.mjs';
-import { buildOpenCodeConfig } from './engines/opencode-config.mjs';
 import { hermesEnv } from './engines/hermes.mjs';
 import { SYSTEM, FENCE, buildSchema, mapAnswers } from './jev.mjs';
 
-export const BRAIN_ORDER = ['claude', 'codex', 'opencode', 'hermes'];
+export const BRAIN_ORDER = ['claude', 'codex', 'hermes'];
 
 const NO_TOOLS = 'You have no tools here, and you need none: answer only from the text you are given. Never try to read files, run commands, search the web or call a tool. If something you would need is missing, say so in one short line.';
 
@@ -30,7 +27,7 @@ const NO_TOOLS = 'You have no tools here, and you need none: answer only from th
 export function brainEngine() {
   const pick = String(env('ORCHY_BRAIN') || '').trim().toLowerCase();
   if (pick === 'off' || pick === 'none') return null;
-  // one that is there but won't start (an install that didn't finish), or a version Orchy can't gate (OpenCode 2), is
+  // one that is there but won't start (an install that didn't finish), or a version Orchy won't run (runRefusal), is
   // passed over for the next that runs
   const runs = id => engineHealth(engine(id)) === 'ok' && !runRefusal(engine(id));
   if (BRAIN_ORDER.includes(pick)) return runs(pick) ? pick : null;
@@ -91,7 +88,7 @@ export async function askViaHarness(state, questions, { purpose = 'routing', tim
   return { model: brainLabel(via), answers: mapAnswers(questions, parsed), ms: Date.now() - t0, via: `harness:${via}` };
 }
 
-// Codex and OpenCode: the run adapters Orchy already drives, with a gate that refuses everything
+// Codex: the run adapter Orchy already drives, with a gate that refuses everything
 function viaServer(id, system, prompt, timeoutMs) {
   return new Promise((resolve, reject) => {
     let handle = null, settled = false;
@@ -115,13 +112,6 @@ function viaServer(id, system, prompt, timeoutMs) {
     const cwd = emptyDir();
     if (id === 'codex') {
       handle = launchCodexRun({ cwd, codexHome: null, prompt, developerInstructions: system, mcpServers: {}, sandbox: 'read-only' }, hooks);
-    } else if (id === 'opencode') {
-      const runDir = path.join(DATA_DIR, 'brain', `opencode-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`);
-      handle = launchOpenCodeRun({
-        cwd, bin: engine('opencode').bin(), profileEnv: {}, runDir, config: buildOpenCodeConfig({ servers: {}, allowed: [], bridge: null }),
-        model: 'default', prompt, system, title: 'Orchy',
-        cleanup: () => { try { fs.rmSync(runDir, { recursive: true, force: true }); } catch {} },
-      }, hooks);
     } else finish(new Error(`${id} can't be Orchy's brain`));
   });
 }

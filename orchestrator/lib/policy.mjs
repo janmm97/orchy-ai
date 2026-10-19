@@ -10,6 +10,7 @@ import { db, save } from './store.mjs';
 import { expandPath, ROOT, env, ownerName, readText } from './env.mjs';
 import { workspaces, RETIRED_DIR } from './workspaces.mjs';
 import { agyRoot } from './engines/antigravity.mjs';
+import { cursorRoot } from './engines/cursor.mjs';
 import { fencedDirs, guardedFile, rootRel, LOCK_MARKERS } from './backend.mjs';
 
 const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS', 'WebSearch', 'WebFetch', 'TodoWrite', 'Task', 'Agent', 'NotebookRead', 'ToolSearch', 'Skill', 'ListMcpResourcesTool', 'ReadMcpResourceTool', 'SendUserMessage']);
@@ -782,7 +783,7 @@ function deleteInWork(seg, cwd, command, ws, ctx) {
     const abs = realPath(t, cwd);
     const root = roots.find(r => insideDir(abs, r));
     if (!root || tildeBelow(abs, root)) return false;
-    if (/(^|[\\/])(\.clients|\.git|\.claude|\.jos|\.codex)([\\/]|$)/i.test(path.relative(ws.dir, abs)) || setupFile(abs, ws, ctx)) return false;
+    if (/(^|[\\/])(\.clients|\.git|\.claude|\.jos|\.codex|\.cursor)([\\/]|$)/i.test(path.relative(ws.dir, abs)) || setupFile(abs, ws, ctx)) return false;
     return !/[*?[]/.test(t) || path.basename(t).replace(/[*?[\]]/g, '').replace(/[^A-Za-z0-9]/g, '').length >= 2;
   });
 }
@@ -1196,9 +1197,9 @@ function writeWordWhy(words, cwd, roots, ws, ctx, shell) {
 // and GEMINI.md is an instructions file like CLAUDE.md. Resources/ (the workspace's skills, MCP servers and CLIs in one
 // place) is setup too. .one/flows are flows an agent writes for its work: what they run is judged when they run
 // (oneOtherDecision), so they aren't setup.
-const SETUP_FILES = /^(\.claude|\.codex|\.one(?!\/flows(\/|$))|\.agents\/(skills|plugins|rules)|\.agents\/(hooks|plugins|skills)\.json)(\/|$)|^\.jos\/(mcp\.json|retired)(\/|$)|^(CLAUDE|CLAUDE\.local|AGENTS|GEMINI)\.md$|^\.mcp\.json$|^Resources(\/|$)/i;
+const SETUP_FILES = /^(\.claude|\.codex|\.cursor|\.one(?!\/flows(\/|$))|\.agents\/(skills|plugins|rules)|\.agents\/(hooks|plugins|skills)\.json)(\/|$)|^\.jos\/(mcp\.json|retired)(\/|$)|^(CLAUDE|CLAUDE\.local|AGENTS|GEMINI)\.md$|^\.mcp\.json$|^Resources(\/|$)/i;
 const BUILDER_FILES = /^\.claude\/agents(\/[^/]*)?$|^\.jos\/retired(\/|$)|^Resources(\/|$)/i;
-const SETUP_NAMES = /\bResources\b|\.claude\b|\.codex\b|\.agents\b|\.jos\b|(^|[\s'"\\/])\.one\b|\bCLAUDE(\.local)?\.md\b|\bAGENTS\.md\b|\bGEMINI\.md\b|\bmcp\.json\b|\bsettings(\.local)?\.json\b|\bretired\b/i;
+const SETUP_NAMES = /\bResources\b|\.claude\b|\.codex\b|\.cursor\b|\.agents\b|\.jos\b|(^|[\s'"\\/])\.one\b|\bCLAUDE(\.local)?\.md\b|\bAGENTS\.md\b|\bGEMINI\.md\b|\bmcp\.json\b|\bsettings(\.local)?\.json\b|\bretired\b/i;
 const SETUP_WHY = ws => `changes ${ws.name}'s own setup (its settings, skills, agents, instructions or connections)`;
 /** A path inside the folder as Windows reads it ("CLAUDE.md ", ".claude./x" and "x::$DATA" name the same files), or null. */
 function wsRel(p, dir) {
@@ -1216,7 +1217,7 @@ function setupFile(p, ws, ctx) {
 // The setup a name could reach once the shell or Windows fills it in: a wildcard (.clau?e, CLAU*.md, AGENT[S].md), an
 // expansion (.clau$()de, .clau${x}de), braces (.clau{de,}) or a short name (CLAUDE~1). A part that is one whole
 // variable ("$f", "$OUT/x.md") is judged as written, as it always was.
-const SETUP_TOPS = ['.claude', '.codex', '.one', '.agents/skills', '.agents/plugins', '.agents/rules', '.agents/hooks.json', '.agents/plugins.json', '.agents/skills.json', '.jos/mcp.json', '.jos/retired', 'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', 'GEMINI.md', '.mcp.json', 'Resources'].map(t => t.split('/'));
+const SETUP_TOPS = ['.claude', '.codex', '.cursor', '.one', '.agents/skills', '.agents/plugins', '.agents/rules', '.agents/hooks.json', '.agents/plugins.json', '.agents/skills.json', '.jos/mcp.json', '.jos/retired', 'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', 'GEMINI.md', '.mcp.json', 'Resources'].map(t => t.split('/'));
 const ANY = '\u0001';
 const FILLED = /\$\([^)]*\)?|\$\{[^}]*\}?|\$(?:[\w:]+|[@*#?!$-]|$)/g;
 const SHORT_NAME = /(^|\/)[^/~]{1,6}~\d+(\.[^./]{0,3})?(\/|$)/i;
@@ -1288,7 +1289,7 @@ function freeDelete(seg, cwd, ws, ctx) {
     const abs = path.resolve(cwd, t);
     const rel = path.relative(path.resolve(own), abs);
     if (!rel || rel.startsWith('..') || path.isAbsolute(rel) || /~/.test(rel)) return false;
-    if (/(^|[\\/])(\.clients|\.git|\.claude|\.jos|\.codex)([\\/]|$)/i.test(rel) || setupFile(abs, ws, ctx)) return false;
+    if (/(^|[\\/])(\.clients|\.git|\.claude|\.jos|\.codex|\.cursor)([\\/]|$)/i.test(rel) || setupFile(abs, ws, ctx)) return false;
     const wild = /[*?[]/.test(t);
     if (wild && path.basename(t).replace(/[*?[\]]/g, '').replace(/[^A-Za-z0-9]/g, '').length < 2) return false;
     if (recursive && (wild || rel.split(/[\\/]/).length < 2)) return false;
@@ -1297,8 +1298,9 @@ function freeDelete(seg, cwd, ws, ctx) {
 }
 
 // ── Sign-ins on this PC: another workspace's Claude or Codex profile, any Claude or Codex login file, One's logins ──
-// (each workspace's Antigravity folders too: its agents' agy settings and conversations, engines/antigravity.mjs)
-const profileDirs = w => [w.claudeConfigDir ? expandPath(w.claudeConfigDir) : path.join(os.homedir(), '.claude'), w.codexHome ? expandPath(w.codexHome) : path.join(os.homedir(), '.codex'), agyRoot(w)];
+// (each workspace's Antigravity and Cursor folders too: its agents' settings, hooks and MCP servers, engines/antigravity.mjs,
+// engines/cursor.mjs), Cursor's sign-in file and its own folder (~/.cursor: every workspace's Cursor chats)
+const profileDirs = w => [w.claudeConfigDir ? expandPath(w.claudeConfigDir) : path.join(os.homedir(), '.claude'), w.codexHome ? expandPath(w.codexHome) : path.join(os.homedir(), '.codex'), agyRoot(w), cursorRoot(w)];
 const samePath = (a, b) => path.relative(path.resolve(a), path.resolve(b)) === '';
 /** Which sign-in a path reaches, or null. */
 function signInArea(p, ws, ctx) {
@@ -1306,7 +1308,9 @@ function signInArea(p, ws, ctx) {
   const own = profileDirs(ws);
   const base = path.basename(abs).toLowerCase();
   if (base === '.credentials.json' || (base === 'auth.json' && (/^\.codex/i.test(path.basename(path.dirname(abs))) || samePath(own[1], path.dirname(abs))))) return 'a sign-in file';
+  if (base === 'auth.json' && /^cursor$/i.test(path.basename(path.dirname(abs)))) return 'a sign-in file';
   if (inRoots(abs, [path.join(ctx.oneHome ?? (env('ONE_HOME') || os.homedir()), '.one')])) return 'One’s sign-ins';
+  if (inRoots(abs, [path.join(ctx.home ?? os.homedir(), '.cursor')])) return 'Cursor’s own folder (its sign-in state and every workspace’s Cursor chats)';
   const other = (ctx.profileDirs ?? workspaces().filter(w => w.id !== ws.id).flatMap(profileDirs))
     .find(d => !own.some(o => samePath(o, d)) && inRoots(abs, [d]));
   return other ? `another workspace’s sign-in profile (${path.basename(other)})` : null;
@@ -1354,8 +1358,8 @@ function josArea(p, ws, ctx) {
 // It never hands work to the workspace's agents that aren't shared with the client, and never changes the
 // workspace's own setup (agents, instructions, connections): that waits for the owner (rule keys outside one:/conn:/mcp:
 // go to the owner, see clients.mjs#askFields). Claude Code runs also get matching deny rules (clients.mjs#clientDenyRules).
-const SETUP_REL = /(^|\/)(\.claude|\.codex|\.agents|\.jos|\.one)(\/|$)|(^|\/)(CLAUDE|AGENTS|GEMINI)\.md$|^\.mcp\.json$/i;
-const SETUP_WORDS = /\.claude\b|\.codex\b|\.agents\b|\.jos\b|(^|[\s'"\\/])\.one\b|CLAUDE\.md|AGENTS\.md|GEMINI\.md|\.mcp\.json/i;
+const SETUP_REL = /(^|\/)(\.claude|\.codex|\.cursor|\.agents|\.jos|\.one)(\/|$)|(^|\/)(CLAUDE|AGENTS|GEMINI)\.md$|^\.mcp\.json$/i;
+const SETUP_WORDS = /\.claude\b|\.codex\b|\.cursor\b|\.agents\b|\.jos\b|(^|[\s'"\\/])\.one\b|CLAUDE\.md|AGENTS\.md|GEMINI\.md|\.mcp\.json/i;
 function setupPath(p, ws) {
   const rel = wsRel(p, ws.dir);
   return !!rel && SETUP_REL.test(rel);

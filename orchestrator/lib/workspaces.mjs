@@ -1,4 +1,4 @@
-// Workspace registry: folders, runtimes (the registered engines: Claude Code, Codex, OpenCode…), their accounts, One connections
+// Workspace registry: folders, runtimes (the registered engines: Claude Code, Codex, Hermes…), their accounts, One connections
 // and external MCP servers. config.json is the source of truth; Orchy adds, disables and retires
 // workspaces from the dashboard.
 import fs from 'node:fs';
@@ -148,7 +148,7 @@ export function modelsFor(ws, runtime = ws.runtime) { return config.runtimes?.[r
 export function tierModel(ws, i, runtime = ws.runtime) { const m = modelsFor(ws, runtime); return m[Math.max(0, Math.min(m.length - 1, i))]; }
 /**
  * Map any model name onto an engine (sonnet ↔ gpt-6.1-sol by tier), defaulting to the middle tier.
- * An engine whose tiers are all "default" (OpenCode) answers "default": its adapter then passes no model at all.
+ * An engine whose tiers are all "default" (Hermes) answers "default": its adapter then passes no model at all.
  */
 export function modelFor(ws, model, runtime = ws.runtime) {
   const mine = modelsFor(ws, runtime);
@@ -157,12 +157,12 @@ export function modelFor(ws, model, runtime = ws.runtime) {
   if (model && mine.includes(model)) return model;
   if (mine.every(m => m === 'default')) {
     const s = String(model || '').trim();
-    if (/^[^/\s]+\/\S+$/.test(s)) return s; // OpenCode / Hermes provider/model
+    if (/^[^/\s]+\/\S+$/.test(s)) return s; // a provider/model id (Hermes)
     const isOtherTier = Object.values(runtimes()).some(rt => rt.models.includes(s));
     if (!isOtherTier && engine(runtime)?.openModels && /^[\w][\w.:-]{1,79}$/.test(s)) return s;
     return 'default';
   }
-  // "default" (OpenCode's and Hermes's "the harness picks") on an engine with real tiers is its middle one, not the
+  // "default" (Hermes's "the harness picks") on an engine with real tiers is its middle one, not the
   // cheapest (every tier of those engines is "default", so the loop below would read it as tier 0)
   if (model === 'default') return mine[1] || mine[0];
   for (const rt of Object.values(runtimes())) {
@@ -205,7 +205,7 @@ export function profileClash(ws, runtime = ws.runtime) {
 /**
  * Hard guard: never run a workspace under the wrong account (checked for the engine the run uses).
  * 'email' engines (Claude Code, Codex, Antigravity): the profile must be logged in as the workspace's email.
- * 'profile' engines (Hermes, OpenCode): the workspace has its own profile folder (and OAuth login), reporting
+ * 'profile' engines (Hermes): the workspace has its own profile folder (and OAuth login), reporting
  * its provider(s), detected plan/tier, and tier-scoped `availableModels`.
  * A workspace profile that isn't signed in on a computer that is gets `hint`, saying so: only its own sign-in counts.
  */
@@ -732,7 +732,7 @@ export function updateWorkspace(id, patch = {}) {
       else entry[eng.fields.profile] = patch.ownProfile ? profileDir(eng.id, id) : null;
     }
   }
-  // a profile-only engine (OpenCode) always has a profile folder of its own, made when the engine is picked
+  // a profile-only engine (Hermes) always has a profile folder of its own, made when the engine is picked
   if (profileOnly && !entry[eng.fields.profile]) entry[eng.fields.profile] = profileDir(eng.id, id);
   if (eng.fields.computerLogin && patch.ownProfile !== undefined) entry[eng.fields.computerLogin] = patch.ownProfile !== true;
   // running a harness Orchy can't gate is the owner's explicit, per-workspace choice

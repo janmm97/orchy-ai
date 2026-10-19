@@ -276,7 +276,7 @@ export async function openAgent(ws, slug, { from, isNew } = {}) {
       const choices = modelChoices(ms);
       const pick = choices.includes(a.model) ? a.model : choices[1] || choices[0];
       const useDropdown = wsUsesModelDropdown(a.workspace, a);
-      const typeable = takesModelId(a.workspace, a); // Hermes, OpenCode: any provider/model id, listed or not
+      const typeable = takesModelId(a.workspace, a); // Hermes: any provider/model id, listed or not
       const plan = wsPlan(a.workspace, a);
       const cur = startModel(a.model); // "inherit" is no model: the dropdown starts on Default
       panel.innerHTML = `<div style="display:grid;gap:var(--s3)"><div class="field" data-zone><label for="task-${id}">What should ${esc(nm())} do?</label><textarea class="textarea" id="task-${id}" placeholder="Describe the task… (drop or paste files here too)" autofocus></textarea>${tray.chips()}</div>

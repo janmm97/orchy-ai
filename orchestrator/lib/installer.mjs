@@ -19,13 +19,13 @@ const jobs = new Map(); // engine id → { startedAt, cmd }
 export function installBinDirs({ win = process.platform === 'win32', home = os.homedir(), appData = process.env.APPDATA, localAppData = process.env.LOCALAPPDATA } = {}) {
   if (win) {
     return [path.join(home, '.local', 'bin'), appData && path.join(appData, 'npm'), localAppData && path.join(localAppData, 'Programs', 'OpenAI', 'Codex', 'bin'),
-      localAppData && path.join(localAppData, 'hermes', 'bin'), path.join(home, '.opencode', 'bin')].filter(Boolean);
+      localAppData && path.join(localAppData, 'hermes', 'bin'), localAppData && path.join(localAppData, 'agy', 'bin'), localAppData && path.join(localAppData, 'cursor-agent')].filter(Boolean);
   }
-  return ['$HOME/.local/bin', '$HOME/.opencode/bin', '$HOME/.hermes/bin', '$HOME/.npm-global/bin', '/opt/homebrew/bin', '/usr/local/bin'];
+  return ['$HOME/.local/bin', '$HOME/.hermes/bin', '$HOME/.npm-global/bin', '/opt/homebrew/bin', '/usr/local/bin'];
 }
 
 // the variables that would point a sign-in at another profile than the default one
-const PROFILE_VARS = ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'HERMES_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME', 'OPENCODE_CONFIG_DIR', 'OPENCODE_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'CLAUDECODE'];
+const PROFILE_VARS = ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'HERMES_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME', 'CLAUDECODE'];
 
 /**
  * The install script for this OS: install, refresh the PATH, then sign in once the program runs (answers --version).

@@ -1,20 +1,18 @@
-// Plan / tier and model lists for Hermes Agent and OpenCode, read from what the harness itself keeps: its auth.json
-// (stored plan fields, OAuth token claims), Hermes's provider model cache, and `opencode auth list` / `opencode models`.
+// Plan / tier and model lists for Hermes Agent, read from what Hermes itself keeps: its auth.json (stored plan fields,
+// OAuth token claims) and its provider model cache.
 // Nothing is guessed: an unknown plan stays null and an unknown model list stays empty (the dashboard then offers
 // "default", and the harness picks).
 //
 // The account fence: a workspace's own profile folder is where Orchy looks for that workspace. The PC's default login
-// (~/.hermes, ~/.local/share/opencode, …) is read when no profile is given (the Add window's "default" row), and for
-// Hermes only, the way Hermes itself reads it: a profile inside Hermes's home with no sign-in of its own for a provider
-// uses the home's auth.json for that provider (Hermes 0.21 profile mode). OpenCode keeps each profile's sign-ins apart.
+// (~/.hermes, %LOCALAPPDATA%\hermes) is read when no profile is given (the Add window's "default" row), and for a
+// profile the way Hermes itself reads it: a profile inside Hermes's home with no sign-in of its own for a provider uses
+// the home's auth.json for that provider (Hermes 0.21 profile mode).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
 import YAML from 'yaml';
 import { expandPath } from '../env.mjs';
 import { parseHermesStatus } from './hermes-config.mjs';
-import { openCodeEnv } from './opencode-run.mjs';
 
 const WIN = process.platform === 'win32';
 const MAX_MODELS = 120; // a provider like OpenRouter lists hundreds; the dropdown keeps the first ones
@@ -210,74 +208,4 @@ export function inspectHermesAccount(profileDir, { statusText = '', native, borr
     models: loggedIn ? [...new Set(models)].slice(0, MAX_MODELS) : [],
     homeDir: home,
   };
-}
-
-// ── OpenCode ──
-
-const OC_AUTH_TYPES = /\s(stored|oauth|api|wellknown|token)\s*$/i;
-/** `opencode auth list` → provider names ("OpenCode Console  Default   stored" → "OpenCode Console"). */
-export function parseOpenCodeAuthList(text) {
-  const out = [];
-  for (const raw of String(text || '').split(/\r?\n/)) {
-    const line = raw.replace(/\x1b\[[0-9;]*m/g, '').replace(/^[\s●•*✓✔│├└─┌┐┘┴┬]+/, '').trimEnd();
-    if (!OC_AUTH_TYPES.test(line)) continue;
-    // OpenCode 2 pads columns ("OpenCode Console  Default   stored"); OpenCode 1 puts one space before the type ("Anthropic oauth")
-    const name = line.replace(OC_AUTH_TYPES, '').split(/\s{2,}/)[0].trim();
-    if (name && !/^(credentials|provider|environment)\b/i.test(name)) out.push(name);
-  }
-  return [...new Set(out)];
-}
-// the CLI's display names → auth.json keys
-const ocKey = name => (/^opencode/i.test(name) ? 'opencode' : String(name).toLowerCase().replace(/\s+/g, '-'));
-
-function execText(bin, args, env, timeout) {
-  return new Promise(resolve => {
-    const shell = /\.(cmd|bat)$/i.test(bin);
-    // a .cmd shim needs a shell; the arguments are fixed words, never input
-    execFile(shell ? `"${bin}" ${args.join(' ')}` : bin, shell ? [] : args, { env, timeout, windowsHide: true, shell }, (err, out) => resolve(err ? '' : String(out || '').replace(/\x1b\[[0-9;]*m/g, '')));
-  });
-}
-
-/** OpenCode's major version from `opencode --version` ("opencode v2.0.28" → 2, "1.19.3" → 1), 0 when unknown. */
-export const openCodeMajor = v => Number(String(v || '').match(/(\d+)\.\d+/)?.[1]) || 0;
-
-let ocProbe = async (bin, env, standalone) => {
-  // OpenCode 2 answers through a background service signed in as the computer: a profile asks a private server of its
-  // own (`--standalone`; without it the service's port clashes and nothing is listed). OpenCode 1 has neither the
-  // service nor the flag, and its strict parser refuses an unknown flag.
-  const own = standalone ? ['--standalone'] : [];
-  const [auth, models] = await Promise.all([
-    execText(bin, ['auth', 'list', ...own], env, standalone ? 20000 : 8000),
-    execText(bin, ['models', ...own], env, standalone ? 20000 : 10000),
-  ]);
-  return { providers: parseOpenCodeAuthList(auth), models: models.split(/\r?\n/).map(l => l.trim()).filter(l => /^[a-z0-9][\w.-]*\/\S+$/i.test(l)) };
-};
-/** Tests swap the CLI probe for a stub (no real `opencode` is spawned). */
-export function setOpenCodeProbeForTests(fn) { const prev = ocProbe; ocProbe = fn; return () => { ocProbe = prev; }; }
-
-/** OpenCode sign-in, plan/tier and model list for one profile (or the PC's default login when profileDir is null). */
-export async function inspectOpenCodeAccount(profileDir, { authPath = null, binPath = null, profileEnv = {}, v2 = false } = {}) {
-  // OpenCode 2 keeps sign-ins in its own database and never reads auth.json: only its CLI's answer counts there
-  const standalone = !!profileDir && v2;
-  const files = v2 ? [] : profileDir
-    ? [authPath || path.join(expandPath(profileDir), 'data', 'opencode', 'auth.json')]
-    : [process.env.XDG_DATA_HOME && path.join(process.env.XDG_DATA_HOME, 'opencode', 'auth.json'), path.join(os.homedir(), '.local', 'share', 'opencode', 'auth.json'), WIN && process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'opencode', 'auth.json')].filter(Boolean);
-  let auth = {};
-  for (const f of files) { const j = readJson(f); if (j && typeof j === 'object' && Object.values(j).some(Boolean)) { auth = j; break; } }
-
-  // a profile is asked with the environment its runs get (opencode-run.mjs#openCodeEnv: no computer API keys or
-  // OPENCODE_* settings), so the list shows what its runs can actually use
-  const probeEnv = profileDir ? openCodeEnv(profileEnv) : { ...process.env, ...profileEnv };
-  const cli = binPath ? await ocProbe(binPath, probeEnv, standalone).catch(() => ({ providers: [], models: [] })) : { providers: [], models: [] };
-  const providers = [...new Set([...Object.keys(auth).filter(k => auth[k]), ...cli.providers.map(ocKey)])];
-  if (!providers.length) return { loggedIn: false, email: null, label: null, providers: [], plan: null, tier: null, subscription: null, models: [] };
-
-  let email = null, tier = null;
-  const plans = providers.map(p => {
-    const info = credentialPlan(auth[p]);
-    email ||= info.email; tier ||= info.tier;
-    return planLabel(p, info.tier);
-  });
-  const plan = [...new Set(plans)].join(' + ') || null;
-  return { loggedIn: true, email, label: providers.join(', '), providers, plan, tier, subscription: plan, models: [...new Set(cli.models)].slice(0, MAX_MODELS) };
 }

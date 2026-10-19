@@ -95,10 +95,10 @@ export async function agyAccount({ force = false, maxAge = 60_000 } = {}) {
 // ── the agent's agy folder: settings (permissions) and MCP servers, rewritten every run ──
 const slash = p => path.resolve(p).replace(/\\/g, '/');
 // a workspace's own setup: agents, instructions, connections, Resources/. The builder may still write agent files.
-const SETUP = ['.claude/', '.codex/', '.agents/', '.gemini/', '.one/', '.jos/mcp.json', '.jos/retired/', '.clients/', 'Resources/', 'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', 'GEMINI.md', '.mcp.json'];
+const SETUP = ['.claude/', '.codex/', '.cursor/', '.agents/', '.gemini/', '.one/', '.jos/mcp.json', '.jos/retired/', '.clients/', 'Resources/', 'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', 'GEMINI.md', '.mcp.json'];
 const BUILDER_SETUP = ['.claude/settings.json', '.claude/settings.local.json', '.claude/skills/', '.claude/hooks/', '.claude/commands/', '.claude/rules/', '.claude/output-styles/', ...SETUP.filter(s => s !== '.claude/' && s !== 'Resources/')];
 // the sign-in folders of the harnesses and of One, in the home folder
-const SIGN_INS = ['.one', '.gemini', '.codex', '.claude', '.claude.json', '.hermes', '.config/opencode', '.local/share/opencode', '.deepseek'];
+const SIGN_INS = ['.one', '.gemini', '.codex', '.claude', '.claude.json', '.hermes', '.cursor', '.config/cursor', 'AppData/Roaming/Cursor', '.cursor-orchy', '.config/opencode', '.local/share/opencode', '.deepseek'];
 
 /**
  * The run's deny rules (a second fence behind the hook). Writes: its own workspace's setup. Reads (and so writes): every

@@ -893,7 +893,7 @@ on('GET', '/api/runtimes', async () => {
       install: engineInstallCmd(e) || null, // what the Add window shows for an engine not on this PC yet
       installing: !have[e.id]?.available && !!installJob(e.id), // Orchy opened its install window (installer.mjs)
       version: have[e.id]?.available ? e.version?.() || null : null,
-      refusal: have[e.id]?.available ? runRefusal(e) : null, // installed, but a version Orchy won't run (OpenCode 2)
+      refusal: have[e.id]?.available ? runRefusal(e) : null, // installed, but a version Orchy won't run (runRefusal)
       defaultAccount: shared || a?.email || a?.label || null,
       loggedIn: !!a?.loggedIn,
       plan: a?.plan || a?.subscriptionType || a?.subscription || null,
@@ -1571,7 +1571,7 @@ on('GET', '/api/setup', async (req) => {
   const keys = [
     { id: 'jev', label: 'Jev routing (a TypeSafe, OpenRouter, Vercel AI Gateway or OpenCode Zen key)', set: jevMode() !== 'none', envKeys: ['TYPESAFE_API_KEY', 'OPENROUTER_API_KEY', 'AI_GATEWAY_API_KEY', 'OPENCODE_API_KEY'],
       unlocks: 'Jev reads each message and picks the business, agent and model, and plans which app actions a task needs.',
-      withoutIt: 'Your agent harness (Claude Code, Codex, OpenCode or Hermes) reads each message instead: it works, but takes 10 to 30 seconds a message and uses that harness’s own plan. With no harness, keyword matching.' },
+      withoutIt: 'Your agent harness (Claude Code, Codex or Hermes) reads each message instead: it works, but takes 10 to 30 seconds a message and uses that harness’s own plan. With no harness, keyword matching.' },
     { id: 'elevenlabs', label: 'ElevenLabs', set: !!env('ELEVENLABS_API_KEY'), envKeys: ['ELEVENLABS_API_KEY'],
       unlocks: 'Orchy and your agents speak in natural voices, and you can call them from the dashboard.',
       withoutIt: 'Orchy speaks with your browser’s built-in voice, and voice calls are off.' },
