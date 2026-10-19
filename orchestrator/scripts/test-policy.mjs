@@ -126,7 +126,7 @@ const cases = [
   ['Bash', { command: 'git push origin main' }, 'ask', D],
   ['Write', { file_path: 'C:/orchy-test/workspaces/Beta Labs/secret.md' }, 'ask', D],
   // the owner's pop-up (2026-10-06): a read-only action lookup parked in the temp folder must just run
-  ['PowerShell', { command: String.raw`$out = one --agent actions find notion "search pages and databases" notion "append block children" notion "list users" --task "Build pages and databases in the One Systems Notion workspace"; $out | Out-File -Encoding utf8 "$env:TEMP\notion2.json"; $j = $out | Out-String | ConvertFrom-Json; foreach ($a in $j.answers) { "== $($a.intent) : $($a.status)"; foreach ($s in $a.selected) { "  SELECTED $($s.actionId) | $($s.title) | $($s.method) $($s.path)" } }` }, 'allow', D],
+  ['PowerShell', { command: String.raw`$out = one --agent actions find notion "search pages and databases" notion "append block children" notion "list users" --task "Build pages and databases in the client's Notion workspace"; $out | Out-File -Encoding utf8 "$env:TEMP\notion2.json"; $j = $out | Out-String | ConvertFrom-Json; foreach ($a in $j.answers) { "== $($a.intent) : $($a.status)"; foreach ($s in $a.selected) { "  SELECTED $($s.actionId) | $($s.title) | $($s.method) $($s.path)" } }` }, 'allow', D],
   ['PowerShell', { command: String.raw`one --agent actions load conn::x --full | Out-File "$env:TMP\doc.md"; Get-Content "$env:TMP\doc.md" -TotalCount 40` }, 'allow', D],
   // …but a One call tucked behind a variable, call operator or sub-expression is still judged
   ['PowerShell', { command: String.raw`$r = one --agent actions execute gmail send live::gmail::default::SUPPORT -d '{"to":"a@b.c"}'` }, 'ask', D],

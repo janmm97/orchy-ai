@@ -66,7 +66,7 @@ export async function runPreview({ state, view, upsertProposal, toast, mode = ''
     agent: { slug: 'support-triage', displayName: 'Support Triage' },
     title: 'Send Email — Alpha Support (gmail)',
     message: 'POST request changes data',
-    detail: 'one --agent actions execute gmail conn_mod_def::…::send-email live::gmail::default::8769… -d \'{"to":"customer@example.com","subject":"Re: Billing question"}\'',
+    detail: 'one --agent actions execute gmail conn_mod_def::…::send-email live::gmail::default::a1b2… -d \'{"to":"customer@example.com","subject":"Re: Billing question"}\'',
   });
 }
 

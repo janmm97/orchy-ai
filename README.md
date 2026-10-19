@@ -12,49 +12,11 @@
 
 </div>
 
----
-
-Orchy is a local AI-agent orchestrator. You tell Orchy what you need, by text or voice. A small routing model (Jev, made by [TypeSafe](https://typesafe.ai), a separate company with no affiliation to Orchy) picks the workspace, the agent and the model. The work runs in that workspace, under that workspace's own account, using a coding-agent CLI (a "harness"). Orchy reports back and keeps a log of every finished task. It runs on your own machine, with a dashboard at http://localhost:8008.
-
-**Why Orchy?** You keep one business or client per workspace, each with its own logins, so accounts never mix. Your agents use your real apps through [One](https://withone.ai), and Orchy stops for your OK before anything outward-facing: sending, posting, deleting, spending.
-
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/images/readme/live-night.png">
-    <img src="assets/images/readme/live-day.png" alt="Orchy's Live view: running agents on the left, the selected run's steps in the middle, and the files it made on the right" width="100%">
-  </picture>
+  <img src="assets/images/readme/orchy-preview.gif" alt="A 16-second loop: a task typed into Orchy, Jev's routing card picking the workspace, agent and model, an approval pop-up that waits for your OK before an email is sent, and the Live view with agents at work" width="100%">
   <br>
-  <sub>The Live view, with the dashboard's built-in sample data (<code>?open=live&amp;preview=live</code>). Nothing in it is real.</sub>
+  <sub>Real screens from a clean install, using the dashboard's built-in sample data (<code>?preview</code>), shown in Orchy's 1-bit greys. Nothing in them is real and nothing was sent. The title and end cards are illustrations.</sub>
 </p>
-
-## ✨ Highlights
-
-- 💬 **Text or voice.** Type a task, or talk to Orchy and call your agents. Voice is optional and off until you switch it on (ElevenLabs or Deepgram).
-- 🧭 **Smart routing, optional.** Jev picks the workspace, agent and model, and shows you its pick first. Without it, Orchy matches each message by its words.
-- 🧰 **Bring your own harness.** Claude Code, Codex, Hermes, Antigravity or Cursor, each signed in with the account you pick for that workspace, and every one held behind your approvals.
-- 🔌 **Your real apps.** Gmail, Slack, Notion, Stripe and 1000+ more through the [One CLI](https://withone.ai).
-- ✋ **Asks before it acts.** Money, sending, calendar changes, deleting and sharing wait for your OK in the dashboard.
-- 🗂️ **Workspaces that never mix.** One folder per business or client, with its own logins, agents and instructions.
-- 🤝 **Huddles and missions.** Agents talk a task through together, or hand work along a chain of steps.
-- 📺 **Live view and file viewer.** Watch every run step by step and open what it made, right in the dashboard.
-- 🏠 **Local only.** The dashboard listens on 127.0.0.1 and takes changes only from a browser you paired.
-
-## 📖 Contents
-
-- [Quick start](#quick-start)
-- [If you are an AI agent](#if-you-are-an-ai-agent-setting-this-up-or-working-in-this-repo-read-this-first)
-- [How it works](#how-it-works)
-- [What leaves your machine](#what-leaves-your-machine)
-- [Security](#security)
-- [First run](#first-run)
-- [Getting started with One](#getting-started-with-one)
-- [Core ideas](#core-ideas)
-- [Supported harnesses](#supported-harnesses)
-  - [Sign-in, not API keys](#sign-in-not-api-keys)
-- [Troubleshooting](#troubleshooting)
-- [Project structure](#project-structure)
-- [Contributing](#contributing)
-- [License](#license)
 
 ## Quick start
 
@@ -67,6 +29,14 @@ npm run setup
 That's it. Setup checks your tools, asks three questions, starts Orchy and opens the dashboard in your browser.
 
 **Rather not use a terminal?** Open the `launchers` folder and double-click the one for your computer: `Start Orchy.cmd` (Windows), `Start Orchy.command` (macOS) or `Start Orchy.sh` (Linux). It runs setup too. Setup also puts that launcher in the Orchy folder, so from then on you double-click it to start Orchy.
+
+<p align="center">
+  ⭐ <b>Like it?</b> <a href="https://github.com/janmm97/orchy-ai">Star Orchy</a> so more people find it. &nbsp;·&nbsp; 🛠️ <b>Want to help?</b> PRs welcome: run <code>npm test</code> first and read <a href="docs/CONTRIBUTING.md">docs/CONTRIBUTING.md</a>.
+</p>
+
+<p align="center">
+  🔌 <a href="https://withone.ai"><b>Orchy now works with One.</b></a> Your agents use Gmail, Slack, Notion, Stripe and 1000+ more apps through the One CLI.
+</p>
 
 <details>
 <summary><b>What setup asks</b></summary>
@@ -102,6 +72,51 @@ Each key is checked once with its service and saved in `.env` on your PC. Keys a
 | `VOICE_PROVIDER` | Which service speaks: `elevenlabs` or `deepgram` | ElevenLabs first, Deepgram as backup |
 
 `JEV_PROVIDER` picks one provider when several keys are set (`typesafe`, `openrouter`, `vercel`, `opencode`, or `off`). With Jev off, the harness you installed stands in: it answers Jev's routing questions (10 to 30 seconds a message, on that harness's own sign-in), and keyword matching is the last resort. The same harness answers when you talk to Orchy if Claude Code isn't installed: Codex or Hermes, without tools (it can't open files you attach; Claude Code can). `ORCHY_BRAIN` picks one (`claude`, `codex`, `hermes`) or `off`. `VOICE_ENABLED=0` switches voice off: nothing speaks, nothing rings, and nothing goes to ElevenLabs or Deepgram.
+
+## What Orchy is
+
+Orchy is a local AI-agent orchestrator. You tell Orchy what you need, by text or voice. A small routing model (Jev, made by [TypeSafe](https://typesafe.ai), a separate company with no affiliation to Orchy) picks the workspace, the agent and the model. The work runs in that workspace, under that workspace's own account, using a coding-agent CLI (a "harness"). Orchy reports back and keeps a log of every finished task. It runs on your own machine, with a dashboard at http://localhost:8008.
+
+**Why Orchy?** You keep one business or client per workspace, each with its own logins, so accounts never mix. Your agents use your real apps through [One](https://withone.ai), and Orchy stops for your OK before anything outward-facing: sending, posting, deleting, spending.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/images/readme/live-night.png">
+    <img src="assets/images/readme/live-day.png" alt="Orchy's Live view: running agents on the left, the selected run's steps in the middle, and the files it made on the right" width="100%">
+  </picture>
+  <br>
+  <sub>The Live view, with the dashboard's built-in sample data (<code>?open=live&amp;preview=live</code>). Nothing in it is real.</sub>
+</p>
+
+## ✨ Highlights
+
+- 💬 **Text or voice.** Type a task, or talk to Orchy and call your agents. Voice is optional and off until you switch it on (ElevenLabs or Deepgram).
+- 🧭 **Smart routing, optional.** Jev picks the workspace, agent and model, and shows you its pick first. Without it, Orchy matches each message by its words.
+- 🧰 **Bring your own harness.** Claude Code, Codex, Hermes, Antigravity or Cursor, each signed in with the account you pick for that workspace, and every one held behind your approvals.
+- 🔌 **Your real apps.** Gmail, Slack, Notion, Stripe and 1000+ more through the [One CLI](https://withone.ai).
+- ✋ **Asks before it acts.** Money, sending, calendar changes, deleting and sharing wait for your OK in the dashboard.
+- 🗂️ **Workspaces that never mix.** One folder per business or client, with its own logins, agents and instructions.
+- 🤝 **Huddles and missions.** Agents talk a task through together, or hand work along a chain of steps.
+- 📺 **Live view and file viewer.** Watch every run step by step and open what it made, right in the dashboard.
+- 🏠 **Local only.** The dashboard listens on 127.0.0.1 and takes changes only from a browser you paired.
+
+## 📖 Contents
+
+- [Quick start](#quick-start)
+- [What Orchy is](#what-orchy-is)
+- [If you are an AI agent](#if-you-are-an-ai-agent-setting-this-up-or-working-in-this-repo-read-this-first)
+- [How it works](#how-it-works)
+- [What leaves your machine](#what-leaves-your-machine)
+- [Security](#security)
+- [First run](#first-run)
+- [Getting started with One](#getting-started-with-one)
+- [Core ideas](#core-ideas)
+- [Supported harnesses](#supported-harnesses)
+  - [Sign-in, not API keys](#sign-in-not-api-keys)
+- [Troubleshooting](#troubleshooting)
+- [Project structure](#project-structure)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## If you are an AI agent setting this up or working in this repo: read this first
 
