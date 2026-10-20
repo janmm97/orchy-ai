@@ -10,7 +10,9 @@ import { findBinary, probeVersion } from './claude.mjs';
 function resolveCli() {
   const explicit = env('ONE_CLI_PATH');
   if (explicit && fs.existsSync(explicit)) return { cmd: process.execPath, pre: [explicit] };
+  const found = findBinary('one');
   const candidates = [
+    found && path.join(path.dirname(found), 'node_modules', '@withone', 'cli', 'bin', 'cli.js'),
     process.env.APPDATA && path.join(process.env.APPDATA, 'npm', 'node_modules', '@withone', 'cli', 'bin', 'cli.js'),
     process.env.npm_config_prefix && path.join(process.env.npm_config_prefix, 'node_modules', '@withone', 'cli', 'bin', 'cli.js'),
     '/usr/local/lib/node_modules/@withone/cli/bin/cli.js',
@@ -19,9 +21,8 @@ function resolveCli() {
   ].filter(Boolean);
   for (const c of candidates) if (fs.existsSync(c)) return { cmd: process.execPath, pre: [c] };
   // last resort: the `one` on PATH or in a standard folder (Homebrew, ~/.local/bin...). On Windows that's npm's one.cmd, which only a shell can start
-  const found = findBinary('one');
   if (found && process.platform !== 'win32') return { cmd: found, pre: [] };
-  return process.platform === 'win32' ? { cmd: 'one', pre: [], shell: true } : { cmd: 'one', pre: [] };
+  return process.platform === 'win32' ? { cmd: found || 'one', pre: [], shell: true } : { cmd: 'one', pre: [] };
 }
 const CLI = resolveCli();
 
