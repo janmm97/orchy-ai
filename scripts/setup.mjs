@@ -175,11 +175,13 @@ export async function questions(env, setEnv, io = { yesNo, choose, askKey: (...a
 
 /** The One CLI step. Missing, or a failed install, is a warning and never stops setup: Orchy runs without it and
  *  only app connections wait for it. io is swapped for fakes in test-setup.mjs. Returns whether One is there. */
-export async function oneStep({ version, interactive, yesNo, install, log = console.log }) {
+export async function oneStep({ version, interactive, yesNo, install, auto = false, log = console.log }) {
   if (version) { log(`  ${OK} ${ONE_TOOL.label.padEnd(28)} ${version}`); return true; }
   log(`  ${NO} ${ONE_TOOL.label.padEnd(28)} not found. It connects your agents to your apps (Gmail, Slack, Notion and more).`);
   let found = false;
-  if (interactive && await yesNo(`  Install it now (${ONE_TOOL.install})?`, true)) {
+  const shouldInstall = auto || (interactive && await yesNo(`  Install it now (${ONE_TOOL.install})?`, true));
+  if (shouldInstall) {
+    if (auto) log(`  Installing One CLI globally (${ONE_TOOL.install})...`);
     try { found = !!install(); } catch {}
     log(found ? `  ${OK} One CLI installed` : `  ${NO} The install didn't finish. If it did install, open a new terminal so the PATH updates.`);
   }
@@ -259,6 +261,7 @@ async function main() {
   //    None is fatal: a tester may have one harness (or none yet) and no One CLI. Orchy starts and says what's missing.
   const { engines, engineTools, brokenMessage, runRefusal } = await import(pathToFileURL(path.join(ROOT, 'orchestrator/lib/engines/index.mjs')).href);
   const { oneVersion } = await import(pathToFileURL(path.join(ROOT, 'orchestrator/lib/one.mjs')).href);
+  const { ensureStandardPath } = await import(pathToFileURL(path.join(ROOT, 'orchestrator/lib/claude.mjs')).href);
   const harnesses = engineTools();
   console.log('\n  Tools');
   const found = {};
@@ -279,8 +282,12 @@ async function main() {
     console.log(`\n  ! No agent harness yet. Orchy starts, but agents can't run until you install one. Claude Code is recommended:\n      ${harnesses[0].install}${mac ? '\n      (then open a new Terminal window so the PATH updates)' : ''}`);
   }
   found.one = await oneStep({
-    version: oneVersion(), interactive, yesNo,
-    install: () => sh('npm', ['install', '-g', '@withone/cli']).status === 0 && hasOne(),
+    version: oneVersion(), interactive, yesNo, auto: true,
+    install: () => {
+      const res = sh('npm', ['install', '-g', '@withone/cli']);
+      ensureStandardPath();
+      return res.status === 0 && (hasOne() || !!oneVersion());
+    },
   });
 
   // 4b. the Claude Code account Orchy fixes his own code under (Fix Orchy)
