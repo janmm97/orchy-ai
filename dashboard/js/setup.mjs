@@ -162,15 +162,16 @@ export async function openSetup({ step, from } = {}) {
     tools() {
       const rows = data.tools;
       const missingHarness = !data.harness;
-      // "Fix Orchy": the Claude Code account Orchy works on his own code under (a fresh install has none)
+      // "Fix Orchy": the account Orchy works on his own code under (a fresh install has none)
       const fixAcct = () => {
         const a = data.backend?.account;
-        if (!a || !rows.find(t => t.id === 'claude')?.found) return '';
-        if (a.expected) return `<p class="hint">${icon('check')} “Fix Orchy” (Orchy working on his own code) runs as <b>${esc(a.expected)}</b>. Settings → Accounts changes it.</p>`;
+        if (!a || !rows.some(t => t.found)) return '';
+        const rt = a.runtimeLabel || 'Claude Code';
+        if (a.expected) return `<p class="hint">${icon('check')} “Fix Orchy” (Orchy working on his own code) runs as <b>${esc(a.expected)}</b> on ${esc(rt)}. Settings → Accounts changes it.</p>`;
         return `<section class="setup-card"><h4>Fix Orchy</h4>
-          <p class="hint">Tell Orchy what’s broken and, after your OK, he works on his own code with Claude Code. Which Claude Code account should he use?</p>
-          ${a.suggested ? `<div class="btnrow"><button class="btn sm primary" type="button" data-backend-use="${esc(a.suggested)}">${icon('check')}Use ${esc(a.suggested)}</button><span class="hint">this computer’s Claude Code sign-in. Another account: Settings → Accounts.</span></div>`
-            : '<p class="hint">Sign in to Claude Code first (in a terminal: <code class="data">claude auth login</code>), press Re-check, then pick it here or in Settings → Accounts.</p>'}</section>`;
+          <p class="hint">Tell Orchy what’s broken and, after your OK, he works on his own code with ${esc(rt)}. Which account should he use?</p>
+          ${a.suggested ? `<div class="btnrow"><button class="btn sm primary" type="button" data-backend-use="${esc(a.suggested)}">${icon('check')}Use ${esc(a.suggested)}</button><span class="hint">this computer’s ${esc(rt)} sign-in. Another harness or account: Settings → Accounts.</span></div>`
+            : `<p class="hint">Sign in to ${esc(rt)} first, press Re-check, or pick another harness in Settings → Accounts.</p>`}</section>`;
       };
       return {
         html: `<h3 class="px caps">Tools</h3>

@@ -189,19 +189,29 @@ export async function oneStep({ version, interactive, yesNo, install, auto = fal
   return found;
 }
 
-/** The Claude Code account "Fix Orchy" runs under (Orchy working on his own code): a fresh install has none. This
- *  computer's Claude Code sign-in is offered; Settings → Accounts changes it later. Never asked with --yes.
+/** The account "Fix Orchy" runs under (Orchy working on his own code): a fresh install has none. This
+ *  computer's harness sign-in is offered; Settings → Accounts changes it later. Never asked with --yes.
  *  io is swapped for fakes in test-setup.mjs. Returns the account set, or null. */
-export async function backendAccountStep({ config, saveConfig, signedInAs, interactive, yesNo, log = console.log }) {
-  const set = config.orchy?.claudeAccount;
+export async function backendAccountStep({ config, saveConfig, signedInAs, engineId = 'claude', interactive, yesNo, log = console.log }) {
+  let engList = [];
+  try {
+    const m = await import(pathToFileURL(path.join(ROOT, 'orchestrator/lib/engines/index.mjs')).href);
+    engList = m.engines?.() || [];
+  } catch {}
+  const eng = engList.find(e => e.id === engineId) || { label: 'Claude Code', fields: { account: 'claudeAccount', profile: 'claudeConfigDir' } };
+  const label = eng.label || 'Claude Code';
+  const acctKey = eng.fields?.account || 'claudeAccount';
+  const profKey = eng.fields?.profile || 'claudeConfigDir';
+  const set = config.orchy?.[acctKey];
   if (set) { log(`  ${OK} "Fix Orchy" runs as ${set}`); return set; }
-  if (!signedInAs) { log('  - "Fix Orchy" (Orchy working on his own code) needs a Claude Code account: sign in with `claude auth login`, then pick it in Settings → Accounts.'); return null; }
-  if (!interactive || !(await yesNo(`  "Fix Orchy" lets Orchy work on his own code with Claude Code. Use ${signedInAs} for that?`, true))) {
+  if (!signedInAs) { log(`  - "Fix Orchy" (Orchy working on his own code) needs a ${label} account: sign in with \`claude auth login\` or your harness, then pick it in Settings → Accounts.`); return null; }
+  if (!interactive || !(await yesNo(`  "Fix Orchy" lets Orchy work on his own code with ${label}. Use ${signedInAs} for that?`, true))) {
     log('  - "Fix Orchy" account not set: pick it later in Settings → Accounts, or on the Fix Orchy card.');
     return null;
   }
-  (config.orchy ||= {}).claudeAccount = signedInAs;
-  config.orchy.claudeConfigDir = null; // this computer's own Claude Code profile, the one signed in as that account
+  (config.orchy ||= {})[acctKey] = signedInAs;
+  config.orchy[profKey] = null;
+  config.orchy.runtime = engineId;
   saveConfig();
   log(`  ${OK} "Fix Orchy" runs as ${signedInAs}`);
   return signedInAs;
@@ -290,12 +300,13 @@ async function main() {
     },
   });
 
-  // 4b. the Claude Code account Orchy fixes his own code under (Fix Orchy)
-  if (found.claude) {
+  // 4b. the account Orchy fixes his own code under (Fix Orchy)
+  const harnessId = found.claude ? 'claude' : harnesses.find(t => found[t.id])?.id;
+  if (harnessId) {
     const { config, saveConfig } = await import(pathToFileURL(path.join(ROOT, 'orchestrator/lib/env.mjs')).href);
     let signedInAs = null;
-    try { const a = await engines().find(e => e.id === 'claude').account(null, { force: true }); signedInAs = a?.loggedIn ? a.email || null : null; } catch {}
-    await backendAccountStep({ config, saveConfig, signedInAs, interactive, yesNo });
+    try { const a = await engines().find(e => e.id === harnessId)?.account(null, { force: true }); signedInAs = a?.loggedIn ? a.email || a.label || null : null; } catch {}
+    await backendAccountStep({ config, saveConfig, signedInAs, engineId: harnessId, interactive, yesNo });
   }
 
   // 5. Voice, Jev and scripts

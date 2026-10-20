@@ -53,7 +53,7 @@ import * as huddles from './lib/huddle.mjs';
 import * as standingRules from './lib/rules.mjs';
 import { COACH } from './lib/huddlecoach.mjs';
 import * as backend from './lib/backend.mjs';
-import { BACKEND_ID, backendWorkspace, setBackendAccount } from './lib/workspaces.mjs';
+import { BACKEND_ID, backendWorkspace, setBackendAccount, tierModel } from './lib/workspaces.mjs';
 import { fixRouting, unroutedModel } from './lib/router.mjs';
 import * as owner from './lib/owner.mjs';
 import * as missions from './lib/missions.mjs';
@@ -438,21 +438,33 @@ async function workspaceSummary(ws, { force = false } = {}) {
     mcpCount: Object.keys(readMcp(ws)).length,
   };
 }
-/** Orchy's own backend for the dashboard: its models and the Claude Code account he fixes himself under. With none
- * picked yet, `suggested` is who this computer's Claude Code is signed in as (the Fix Orchy card offers it). */
+/** Orchy's own backend for the dashboard: its models and the account he fixes himself under. With none
+ * picked yet, `suggested` is who this computer's sign-in is (the Fix Orchy card offers it). */
 async function backendSummary({ force = false } = {}) {
   const ws = backendWorkspace();
+  const eng = engine(ws.runtime);
   const a = await accountCheck(ws, { force }).catch(e => ({ ok: false, error: e.message }));
-  // this computer's own Claude Code sign-in (the default profile): the account check's when Orchy uses that profile
-  const pc = ws.claudeConfigDir ? await engine('claude').account(null, { force }).catch(() => null) : { loggedIn: a.loggedIn, email: a.actual };
-  const computerAccount = pc?.loggedIn && pc.email ? pc.email : null;
+  // this computer's sign-in for the active engine
+  const profKey = eng?.fields?.profile;
+  const pc = profKey && ws[profKey] && eng ? await eng.account(null, { force }).catch(() => null) : { loggedIn: a.loggedIn, email: a.actual };
+  const computerAccount = pc?.loggedIn && (pc.email || pc.label) ? (pc.email || pc.label) : null;
   return {
-    id: BACKEND_ID, name: ws.name, client: ws.client, models: modelsFor(ws), pendingRestart: backend.pendingRestart()?.runId || null,
+    id: BACKEND_ID, name: ws.name, client: ws.client,
+    runtime: ws.runtime, runtimeLabel: runtimeLabel(ws.runtime),
+    models: modelsFor(ws),
+    customCommand: ws.customCommand || null,
+    pendingRestart: backend.pendingRestart()?.runId || null,
     account: {
       ok: !!a.ok, expected: a.expected || null, actual: a.actual || null, loggedIn: !!a.loggedIn, configDir: a.configDir || null,
-      ownProfile: !!ws.claudeConfigDir, error: a.ok ? null : a.error || null, fix: a.ok || !a.expected ? null : a.fix || null,
+      runtime: ws.runtime, runtimeLabel: runtimeLabel(ws.runtime),
+      ownProfile: !!(profKey && ws[profKey]), error: a.ok ? null : a.error || null, fix: a.ok || !a.expected ? null : a.fix || null,
       computerAccount, suggested: a.expected ? null : computerAccount,
     },
+    accounts: Object.fromEntries(engines().map(e => [e.id, {
+      account: ws[e.fields?.account] || null,
+      ownProfile: !!(e.fields?.profile && ws[e.fields.profile]),
+      ...(e.fields?.computerLogin ? { computerLogin: ws[e.fields.computerLogin] !== false } : {})
+    }])),
   };
 }
 const retiredSummary = () => listRetired().map(r => ({ id: r.id, name: r.name, client: r.client, color: r.color || null, runtime: r.runtime || 'claude', runtimeLabel: runtimeLabel(r.runtime || 'claude'), archivedFolder: r.archivedFolder, retiredAt: r.retiredAt, dirExists: r.dirExists }));
@@ -696,7 +708,7 @@ on('PATCH', '/api/routing/:id', async (req, _res, { id: pid }) => {
   if (!p || p.status !== 'proposed') throw Object.assign(new Error('That routing card is no longer open'), { status: 404 });
   const body = await readBody(req);
   // fixing Orchy is its own kind of work: picking it (or Orchy as the client) sets both; a client or another kind leaves it
-  if (body.intent === 'fix_orchy' || body.workspace === BACKEND_ID) Object.assign(body, { intent: 'fix_orchy', workspace: BACKEND_ID, agent: null, ...('model' in body ? {} : { model: 'opus' }) });
+  if (body.intent === 'fix_orchy' || body.workspace === BACKEND_ID) Object.assign(body, { intent: 'fix_orchy', workspace: BACKEND_ID, agent: null, ...('model' in body ? {} : { model: tierModel(backendWorkspace(), 2) }) });
   else if (p.choice.intent === 'fix_orchy' && (body.intent || body.workspace)) Object.assign(body, { intent: body.intent || 'task', workspace: body.workspace || null });
   if (p.choice.intent === 'fix_orchy' && body.intent !== 'fix_orchy' && !('model' in body) && body.workspace) body.model = remodel(backendWorkspace(), workspace(body.workspace), p.choice.model);
   if (body.workspace && !workspace(body.workspace).enabled) throw Object.assign(new Error(`${workspace(body.workspace).name} is switched off`), { status: 409 });
@@ -1627,10 +1639,10 @@ on('POST', '/api/accounts/refresh', async () => {
   emit('workspaces.changed', { workspaces: list, retired: retiredSummary(), backend: back });
   return list;
 });
-// The Claude Code account Orchy fixes himself under (Settings → Accounts, or "Use …" on the Fix Orchy card)
+// The account Orchy fixes himself under (Settings → Accounts, or "Use …" on the Fix Orchy card)
 on('POST', '/api/backend/account', async (req) => {
   const b = await readBody(req);
-  setBackendAccount({ account: b.account, ownProfile: b.ownProfile === true });
+  setBackendAccount({ runtime: b.runtime, account: b.account, ownProfile: b.ownProfile === true, customCommand: b.customCommand });
   const back = await backendSummary({ force: true });
   emit('workspaces.changed', { backend: back });
   return back;

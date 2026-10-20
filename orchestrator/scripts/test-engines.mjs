@@ -5,22 +5,28 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { config } from '../lib/env.mjs';
+import { config, ORCH_DIR, saveConfig } from '../lib/env.mjs';
 import { engine, engines, engineIds, registerEngine, ungatedRefusal, engineInstallCmd, runRefusal } from '../lib/engines/index.mjs';
 import { accountCheck, accountFor, runtimes, modelFor, modelsFor, loginHint, runtimeAvailability, profileClash, backendWorkspace, setBackendAccount } from '../lib/workspaces.mjs';
 import { startRun, accountKey } from '../lib/runner.mjs';
 import { toClaudeMcp } from '../lib/engines/claude.mjs';
 import { toCodexMcp } from '../lib/engines/codex.mjs';
 import { CODEX_ARGS } from '../lib/codex.mjs';
+import { saveAgent, getAgent } from '../lib/agents.mjs';
 
 let fail = 0;
 const ok = (cond, label, extra = '') => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${label}${cond ? '' : `  ${extra}`}`); if (!cond) fail++; };
 const rejects = async (p) => { try { await p; return null; } catch (e) { return e; } };
-const keep = { workspaces: [...config.workspaces] };
-process.on('exit', () => { config.workspaces = keep.workspaces; });
+const keep = { workspaces: [...config.workspaces], orchy: JSON.parse(JSON.stringify(config.orchy || {})) };
+const origConfigText = fs.existsSync(path.join(ORCH_DIR, 'config.json')) ? fs.readFileSync(path.join(ORCH_DIR, 'config.json'), 'utf8') : null;
+process.on('exit', () => {
+  config.workspaces = keep.workspaces;
+  config.orchy = keep.orchy;
+  if (origConfigText !== null) fs.writeFileSync(path.join(ORCH_DIR, 'config.json'), origConfigText);
+});
 
 // ── the registry ──
-ok(JSON.stringify(engineIds()) === JSON.stringify(['claude', 'codex', 'hermes', 'antigravity', 'cursor']), 'registry lists claude, codex, hermes, antigravity, cursor', JSON.stringify(engineIds()));
+ok(JSON.stringify(engineIds()) === JSON.stringify(['claude', 'codex', 'hermes', 'antigravity', 'cursor', 'aider', 'opencode', 'custom']), 'registry lists claude, codex, hermes, antigravity, cursor, aider, opencode, custom', JSON.stringify(engineIds()));
 ok('hermes' in config.runtimes && !!engine('hermes') && engine('hermes').capabilities.gated && engine('antigravity').capabilities.gated, 'hermes / antigravity are engines, gated through their pre-tool hooks');
 ok(ungatedRefusal({ name: 'H' }, engine('hermes')) === null && ungatedRefusal({ name: 'A' }, engine('antigravity')) === null, 'hermes / antigravity need no allowUngated');
 ok(JSON.stringify(Object.keys(runtimes())) === JSON.stringify(engineIds()), 'runtimes() lists registered engines only', JSON.stringify(Object.keys(runtimes())));
@@ -32,7 +38,7 @@ for (const e of engines()) {
 ok(engine('claude').capabilities.clientSafe && engine('claude').capabilities.huddles, 'claude: client-safe, huddles');
 ok(!engine('codex').capabilities.clientSafe && !engine('codex').capabilities.huddles && !!engine('codex').capabilities.clientReason, 'codex: not client-safe, no huddles, says why');
 ok(engine('hermes').capabilities.gated && !engine('hermes').capabilities.clientSafe && engine('hermes').accountModel === 'profile', 'hermes: gated, not client-safe, profile account model');
-ok(Object.keys(runtimeAvailability()).join() === 'claude,codex,hermes,antigravity,cursor', 'runtimeAvailability asks every engine');
+ok(Object.keys(runtimeAvailability()).join() === 'claude,codex,hermes,antigravity,cursor,aider,opencode,custom', 'runtimeAvailability asks every engine');
 let bad = null;
 try { registerEngine({ id: 'half', label: 'Half' }); } catch (e) { bad = e; }
 ok(!!bad && !engine('half'), 'an incomplete engine is refused');
@@ -165,6 +171,86 @@ ok(loginHint({ runtime: 'codex', codexAccount: 'owner@example.com', codexHome: '
   ok(!a.ok && a.loggedIn && a.actual === 'owner@example.com', 'backend: a different sign-in is still blocked');
   undo();
   config.orchy = keepOrchy;
+}
+
+// ── Orchy fixing himself on other engines: Codex, Aider, Custom CLI ──
+{
+  const keepOrchy = JSON.parse(JSON.stringify(config.orchy || {}));
+
+  // Codex
+  const undoCodex = registerEngine({ ...engine('codex'), available: () => true, version: () => 'fake 1.0', account: async () => ({ loggedIn: true, email: 'codex-dev@example.com' }) });
+  setBackendAccount({ runtime: 'codex', account: 'codex-dev@example.com' });
+  let bw = backendWorkspace();
+  ok(bw.runtime === 'codex' && bw.codexAccount === 'codex-dev@example.com', 'backend: runtime switched to codex');
+  let a = await accountCheck(bw, {});
+  ok(a.ok && a.runtime === 'codex' && a.actual === 'codex-dev@example.com', 'backend: codex account check passes');
+  undoCodex();
+
+  // Aider
+  const undoAider = registerEngine({ ...engine('aider'), available: () => true, version: () => 'fake 1.0', account: async () => ({ loggedIn: true, email: null, label: 'OpenAI API key' }) });
+  setBackendAccount({ runtime: 'aider', account: 'sk-aider-key' });
+  bw = backendWorkspace();
+  ok(bw.runtime === 'aider' && bw.aiderAccount === 'sk-aider-key', 'backend: runtime switched to aider');
+  a = await accountCheck(bw, {});
+  ok(a.ok && a.runtime === 'aider' && a.actual === 'OpenAI API key', 'backend: aider account check passes');
+  undoAider();
+
+  // Custom CLI
+  const undoCustom = registerEngine({ ...engine('custom'), available: () => true, version: () => 'fake 1.0', account: async () => ({ loggedIn: true, email: null, label: 'Custom CLI' }) });
+  setBackendAccount({ runtime: 'custom', customCommand: 'my-custom-cli --run' });
+  bw = backendWorkspace();
+  ok(bw.runtime === 'custom' && bw.customCommand === 'my-custom-cli --run', 'backend: runtime switched to custom CLI');
+  a = await accountCheck(bw, {});
+  ok(a.ok && a.runtime === 'custom', 'backend: custom CLI account check passes');
+  undoCustom();
+
+  // Restore config.orchy
+  config.orchy = keepOrchy;
+  saveConfig();
+}
+
+// ── pinned agents with aider and custom CLI ──
+{
+  const pinDir = fs.mkdtempSync(path.join(os.tmpdir(), 'orchy-pin-'));
+  const wPin = { id: 'w-pin', name: 'Pin WS', folder: 'workspaces/__w-pin', dir: pinDir, runtime: 'claude', enabled: true, color: 'jade' };
+  config.workspaces.push(wPin);
+
+  const aiderMd = `---
+name: aider-agent
+description: An aider coder
+engine: aider
+---
+## Protocol
+Do coding.
+`;
+  saveAgent('w-pin', 'aider-agent', aiderMd);
+  const agAider = getAgent('w-pin', 'aider-agent');
+  ok(agAider.engine === 'aider' && agAider.engineLabel === 'Aider', 'pinned agent with engine: aider parsed and labeled');
+
+  const customMd = `---
+name: custom-agent
+description: A custom tool agent
+engine: custom
+---
+## Protocol
+Run custom.
+`;
+  saveAgent('w-pin', 'custom-agent', customMd);
+  const agCustom = getAgent('w-pin', 'custom-agent');
+  ok(agCustom.engine === 'custom' && agCustom.engineLabel === 'Custom CLI', 'pinned agent with engine: custom parsed and labeled');
+
+  const badMd = `---
+name: bad-agent
+description: Bad engine
+engine: non-existent-engine
+---
+`;
+  let badErr = null;
+  try { saveAgent('w-pin', 'bad-agent', badMd); } catch (e) { badErr = e; }
+  ok(badErr?.status === 400 && /Unknown engine/.test(badErr.message), 'saving agent with unknown engine is rejected with 400');
+
+  config.workspaces.pop();
+  fs.rmSync(pinDir, { recursive: true, force: true, maxRetries: 4, retryDelay: 100 });
 }
 
 // ── accountCheck: engines with no account concept need a profile folder of their own ──

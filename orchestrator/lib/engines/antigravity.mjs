@@ -110,7 +110,7 @@ export function denyRules(ws, { isBuilder = false, others = [], profiles = [] } 
   let homeNames = [];
   try { homeNames = fs.readdirSync(home).filter(n => /^\.(claude|codex|hermes|opencode|deepseek)-/i.test(n)); } catch {}
   const reads = [
-    ...others.map(w => w.dir), path.join(ROOT, 'Retired'), path.join(ROOT, 'orchestrator'), path.join(ROOT, '.env'),
+    ...others.map(w => w.dir), path.join(ROOT, 'Retired'), ...(ws.builtin ? [] : [path.join(ROOT, 'orchestrator')]), path.join(ROOT, '.env'),
     path.join(ROOT, 'Uploads'), path.join(ROOT, 'Reports'), LOGS_PATH,
     ...SIGN_INS.map(n => path.join(home, ...n.split('/'))), ...homeNames.map(n => path.join(home, n)),
     ...profiles.filter(Boolean).map(p => expandPath(p)), ...others.map(agyRoot),

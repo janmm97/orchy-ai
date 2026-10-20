@@ -94,29 +94,58 @@ function checkAliases(aliases, selfId) {
 
 // ── Orchy's own backend (backend.mjs): the owner reports a problem in the chat and Orchy fixes his own code in a run
 // in the Orchy folder. Built in, never in workspaces(): no client, no pane, no agents, no One. It runs as Orchy's own
-// Claude Code account (config.json orchy.claudeAccount), checked like any workspace's.
+// account for the chosen runtime (config.json orchy.claudeAccount, orchy.codexAccount…), checked like any workspace's.
 export const BACKEND_ID = 'orchy';
 export function backendWorkspace() {
-  return {
+  const runtime = config.orchy?.runtime || 'claude';
+  const ws = {
     id: BACKEND_ID, name: 'Orchy', client: `Orchy itself (${ownerName()}’s orchestrator)`, builtin: true, enabled: true,
     blurb: 'Orchy’s own code: the server, the dashboard and the scripts in the Orchy folder.',
-    folder: '.', dir: ROOT, runtime: 'claude', aliases: [],
-    claudeAccount: config.orchy?.claudeAccount || null, claudeConfigDir: config.orchy?.claudeConfigDir || null,
-    codexAccount: null, codexHome: null,
+    folder: '.', dir: ROOT, runtime, aliases: [],
+    customCommand: config.orchy?.customCommand || null,
   };
+  for (const e of engines()) {
+    if (e.fields?.account) ws[e.fields.account] = config.orchy?.[e.fields.account] || null;
+    if (e.fields?.profile) ws[e.fields.profile] = config.orchy?.[e.fields.profile] || null;
+    if (e.fields?.computerLogin) ws[e.fields.computerLogin] = config.orchy?.[e.fields.computerLogin] !== false;
+  }
+  return ws;
 }
 
 /**
- * The owner picks the Claude Code account Orchy fixes himself under (Settings → Accounts, or the Fix Orchy card).
+ * The owner picks the account Orchy fixes himself under (Settings → Accounts, or the Fix Orchy card).
+ * Can switch runtime (Claude Code, Codex, Aider, OpenCode, Custom CLI, etc.).
  * `ownProfile`: a profile folder of his own (an account other than this computer's sign-in), else the default profile.
  * Only sets which account is expected: accountCheck still compares it with the actual sign-in before every fix.
  */
-export function setBackendAccount({ account, ownProfile = false } = {}) {
-  const email = String(account || '').trim();
-  if (!EMAIL.test(email)) throw bad('Give the Claude Code account as an email address');
+export function setBackendAccount({ runtime, account, ownProfile = false, customCommand } = {}) {
   config.orchy ||= {};
-  config.orchy.claudeAccount = email;
-  config.orchy.claudeConfigDir = ownProfile ? (config.orchy.claudeConfigDir || profileDir('claude', BACKEND_ID)) : null;
+  const rt = runtime || config.orchy.runtime || 'claude';
+  const eng = engine(rt);
+  if (!eng) throw bad(`Unknown engine "${rt}"`);
+  if (!engineOffered(eng)) throw bad(offeredRefusal(eng));
+  config.orchy.runtime = rt;
+
+  if (customCommand !== undefined) {
+    config.orchy.customCommand = typeof customCommand === 'string' && customCommand.trim() ? customCommand.trim() : null;
+  }
+
+  const profileOnly = eng.accountModel === 'profile';
+  if (account !== undefined) {
+    const email = String(account || '').trim();
+    if (!profileOnly && email && !EMAIL.test(email)) throw bad(`Which ${runtimeLabel(rt)} account should Orchy fix himself under? Give an email address.`);
+    config.orchy[eng.fields.account] = profileOnly ? (email.slice(0, 80) || null) : (email || null);
+    if (!profileOnly && !eng.sharedLogin) {
+      config.orchy[eng.fields.profile] = ownProfile ? (config.orchy[eng.fields.profile] || profileDir(eng.id, BACKEND_ID)) : null;
+    }
+  }
+
+  if (profileOnly && !config.orchy[eng.fields.profile] && !eng.sharedLogin && rt !== 'custom' && rt !== 'aider') {
+    config.orchy[eng.fields.profile] = ownProfile ? profileDir(eng.id, BACKEND_ID) : null;
+  }
+  if (eng.fields.computerLogin && ownProfile !== undefined) {
+    config.orchy[eng.fields.computerLogin] = ownProfile !== true;
+  }
   saveConfig();
   return backendWorkspace();
 }
@@ -221,8 +250,10 @@ export async function accountCheck(ws, { force = false, runtime = ws.runtime } =
   if (e.accountModel === 'profile') {
     let problem = null;
     const clash = a.profileDir ? profileClash(ws, e.id) : null;
-    if (ws.builtin) problem = `Orchy's own backend can't run on ${e.label}`;
-    else if (!a.profileDir) problem = `${ws.name} has no ${e.label} profile folder of its own (${e.fields.profile} in config.json). ${e.label} workspaces must not share logins.`;
+    if (ws.builtin) {
+      // Backend workspace on a profile-based engine: supported
+    }
+    else if (!a.profileDir && !e.sharedLogin && e.id !== 'custom' && e.id !== 'aider') problem = `${ws.name} has no ${e.label} profile folder of its own (${e.fields.profile} in config.json). ${e.label} workspaces must not share logins.`;
     else if (clash) problem = `${ws.name} and ${clash.name} point at the same ${e.label} profile folder (${configDir}). Give each its own, so their logins never mix.`;
     const status = problem ? { loggedIn: false } : await e.account(a.profileDir, { force, ...(a.computerLogin === false ? { computerLogin: false } : {}) });
     // on its own sign-in, a config that would still reach the computer's is refused (tier-catalog.mjs#ownLoginProblem)
@@ -261,7 +292,7 @@ export async function accountCheck(ws, { force = false, runtime = ws.runtime } =
     tier: status.tier || null,
     availableModels: Array.isArray(status.models) && status.models.length ? status.models : null,
     sandbox: status.sandbox ?? null,
-    error: status.error || (a.email ? null : ws.builtin ? 'Orchy has no Claude Code account set for fixing himself yet. Pick one in Settings → Accounts' : `${ws.name} has no ${runtimeLabel(e.id)} account set (${e.fields.account} in config.json)`),
+    error: status.error || (a.email ? null : ws.builtin ? `Orchy has no ${runtimeLabel(e.id)} account set for fixing himself yet. Pick one in Settings → Accounts` : `${ws.name} has no ${runtimeLabel(e.id)} account set (${e.fields.account} in config.json)`),
     fix: ok ? null : loginHint(ws, e.id),
     fixAlt: ok ? null : loginAlt(ws, e.id),
   };

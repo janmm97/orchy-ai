@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { config, env, ROOT, ORCH_DIR } from '../lib/env.mjs';
-import { workspaces, accountCheck, oneScope, listRetired } from '../lib/workspaces.mjs';
+import { workspaces, backendWorkspace, accountCheck, oneScope, listRetired } from '../lib/workspaces.mjs';
 import { listConnections, one, oneVersion } from '../lib/one.mjs';
 import { jevMode, jevLabel, models, PROVIDERS } from '../lib/jev.mjs';
 import { CLAUDE_BIN, claudeVersion } from '../lib/claude.mjs';
@@ -66,6 +66,14 @@ for (const ws of workspaces()) {
     if (a.ok) ok(`${tag} → ${a.actual}${a.sandbox && a.sandbox !== 'ready' ? ` · Windows sandbox ${a.sandbox}: every command goes through Orchy approvals` : ''}`);
     else bad(`${tag} needs ${a.expected || 'an account'} (now: ${a.actual || 'not logged in'})`, a.error && /install|account set/i.test(a.error) ? a.error : `In PowerShell: ${a.fix}${a.fixAlt ? `\n      → ${a.fixAlt}` : ''}`);
   }
+}
+{
+  const bw = backendWorkspace();
+  const ba = await accountCheck(bw, { force: true });
+  const btag = `Fix Orchy [${ba.runtimeLabel}]`;
+  if (ba.ok) ok(`${btag} → ${ba.actual || 'configured'}`);
+  else if (!ba.expected) warn(`${btag}: no account set yet (Fix Orchy is off until one is chosen)`, 'Settings → Accounts → Fix Orchy');
+  else bad(`${btag} needs ${ba.expected || 'an account'} (now: ${ba.actual || 'not logged in'})`, ba.error && /install|account set/i.test(ba.error) ? ba.error : `In PowerShell: ${ba.fix}${ba.fixAlt ? `\n      → ${ba.fixAlt}` : ''}`);
 }
 
 console.log('\nOne connections per folder');

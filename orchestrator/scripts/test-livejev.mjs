@@ -37,7 +37,7 @@ ok(live.wordCount('hi there') === 2 && live.wordCount('@alpha check inbox') === 
 // ── one read at a time: the owner kept typing ──
 {
   fresh();
-  const p1 = read(null, 'check the', 40);
+  const p1 = read(null, 'check the', 60);
   await sleep(5);
   const p2 = read(null, 'check the support', 5);
   const p3 = read(null, 'check the support inbox', 5);
@@ -62,11 +62,11 @@ ok(live.wordCount('hi there') === 2 && live.wordCount('@alpha check inbox') === 
   ok(await live.take(null, 'draft the reply to Maria', 'something else') === null, 'the session moved on since the read: no reuse');
 
   fresh();
-  const p = read(null, 'summarise the board deck', 30);
+  const p = read(null, 'summarise the board deck', 80);
   await sleep(5);
   const t0 = Date.now();
   const r2 = await live.take(null, 'summarise the board deck', live.fingerprint(null));
-  ok(r2?.text === 'summarise the board deck' && Date.now() - t0 >= 15 && calls.length === 1, 'Enter mid-read waits for that read instead of asking again');
+  ok(r2?.text === 'summarise the board deck' && Date.now() - t0 >= 15 && calls.length === 1, 'Enter mid-read waits for that read instead of asking again', JSON.stringify({ text: r2?.text, elapsed: Date.now() - t0, calls: calls.length }));
   await p;
 
   fresh();

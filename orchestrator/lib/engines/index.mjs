@@ -41,6 +41,9 @@ import codex from './codex.mjs';
 import hermes from './hermes.mjs';
 import antigravity from './antigravity.mjs';
 import cursor from './cursor.mjs';
+import aider from './aider.mjs';
+import opencode from './opencode.mjs';
+import custom from './custom.mjs';
 import { env } from '../env.mjs';
 
 const REG = new Map();
@@ -62,7 +65,7 @@ export function registerEngine(def) {
   return () => { if (prev) REG.set(def.id, prev); else REG.delete(def.id); };
 }
 
-for (const e of [claude, codex, hermes, antigravity, cursor]) registerEngine(e);
+for (const e of [claude, codex, hermes, antigravity, cursor, aider, opencode, custom]) registerEngine(e);
 
 /** One registered engine, or null (an id that config.json mentions but this Orchy has no adapter for is not an engine). */
 export const engine = id => REG.get(id) || null;
