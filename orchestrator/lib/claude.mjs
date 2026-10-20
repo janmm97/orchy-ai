@@ -23,26 +23,6 @@ export function standardBinDirs() {
   return dirs;
 }
 
-/** Ensure standard CLI directories (like npm global bin) are present in process.env.PATH so subagents and shells find them. */
-export function ensureStandardPath() {
-  const current = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
-  const currentNorm = new Set(current.map(p => path.resolve(p).toLowerCase()));
-  const missing = [];
-  for (const d of standardBinDirs()) {
-    try {
-      if (d && fs.existsSync(d) && !currentNorm.has(path.resolve(d).toLowerCase())) {
-        missing.push(d);
-        currentNorm.add(path.resolve(d).toLowerCase());
-      }
-    } catch {}
-  }
-  if (missing.length) {
-    process.env.PATH = [...missing, ...current].join(path.delimiter);
-  }
-  return process.env.PATH;
-}
-ensureStandardPath();
-
 /** Find a command: PATH first, then the standard folders and `extraPaths`. Returns an absolute path or null. */
 export function findBinary(name, extraPaths = []) {
   const exts = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
