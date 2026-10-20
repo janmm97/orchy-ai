@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { env, expandPath } from '../env.mjs';
+import { env, expandPath, ROOT } from '../env.mjs';
 import { findBinary, probeVersion } from '../claude.mjs';
 import { psq, sq, killTree, profilePath, scrubbedEnv } from './shared.mjs';
 
@@ -41,6 +41,8 @@ const PROVIDER_KEYS = [
   'ANTHROPIC_API_KEY',
   'OPENAI_API_KEY',
   'OPENROUTER_API_KEY',
+  'ORCA_API_KEY',
+  'OPENAI_API_BASE',
   'GEMINI_API_KEY',
   'DEEPSEEK_API_KEY',
   'GROQ_API_KEY',
@@ -100,16 +102,20 @@ export default {
     }
     const found = PROVIDER_KEYS.find(k => (pEnv[k] && pEnv[k].length > 4) || (process.env[k] && process.env[k].length > 4));
     if (found) {
-      return { loggedIn: true, label: found.replace(/_API_KEY$/, ''), subscription: 'API Key' };
+      const label = found === 'OPENAI_API_BASE' ? 'OpenAI Base' : found.replace(/_API_KEY$/, '');
+      return { loggedIn: true, label, subscription: 'API Key' };
     }
     return {
       loggedIn: false,
-      error: 'Aider needs an API key: set ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY in .env.',
+      error: 'Aider needs an API key: set OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENAI_API_BASE in .env.',
     };
   },
-  profileEnv: profileDir => (profileDir ? { AIDER_ENV_FILE: path.join(profilePath(profileDir), '.env') } : {}),
+  profileEnv: profileDir => {
+    const envFile = profileDir ? path.join(profilePath(profileDir), '.env') : path.join(ROOT, '.env');
+    return fs.existsSync(envFile) ? { AIDER_ENV_FILE: envFile } : {};
+  },
   loginCommand: (a, { win }) => (win ? `& ${psq(aiderBin() || 'aider')} --version` : `${sq(aiderBin() || 'aider')} --version`),
-  loginAlt: () => 'Set ANTHROPIC_API_KEY, OPENAI_API_KEY or OPENROUTER_API_KEY in .env, then Re-check accounts.',
+  loginAlt: () => 'Set OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENAI_API_BASE in .env, then Re-check accounts.',
   mcpConfig: () => ({}),
   protocolNotes: ({ ownerName }) => `
 ## Working on Aider
@@ -140,12 +146,14 @@ export default {
 
       let child;
       try {
+        const extraEnv = {
+          NO_COLOR: '1',
+          GIT_TERMINAL_PROMPT: '0',
+        };
+        if (process.env.OPENAI_API_BASE) extraEnv.OPENAI_API_BASE = process.env.OPENAI_API_BASE;
         child = spawn(bin, args, {
           cwd: ws.dir,
-          env: scrubbedEnv(this.profileEnv(ws.aiderProfile), {
-            NO_COLOR: '1',
-            GIT_TERMINAL_PROMPT: '0',
-          }),
+          env: scrubbedEnv(this.profileEnv(ws.aiderProfile), extraEnv),
           windowsHide: true,
           shell: isWin && /\.(cmd|bat)$/i.test(bin),
         });

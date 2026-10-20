@@ -71,14 +71,18 @@ export default {
     if (key) {
       return { loggedIn: true, label: 'OpenCode Zen', subscription: 'API Key' };
     }
-    // Also check standard provider keys
-    const alt = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'].find(k => !!env(k));
+    if (env('OPENROUTER_API_KEY')) {
+      return { loggedIn: true, label: 'OpenRouter', subscription: 'Router' };
+    }
+    // Also check standard provider keys and router endpoints
+    const alt = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENAI_API_BASE'].find(k => !!env(k));
     if (alt) {
-      return { loggedIn: true, label: alt.replace(/_API_KEY$/, ''), subscription: 'Provider' };
+      const label = alt === 'OPENAI_API_BASE' ? 'Custom Router' : alt.replace(/_API_KEY$/, '');
+      return { loggedIn: true, label, subscription: 'Provider' };
     }
     return {
       loggedIn: false,
-      error: 'OpenCode needs an API key: set OPENCODE_API_KEY or run `opencode auth login`.',
+      error: 'OpenCode needs an API key: set OPENCODE_API_KEY, OPENROUTER_API_KEY, or run `opencode auth login`.',
     };
   },
   profileEnv: profileDir => (profileDir ? { OPENCODE_CONFIG_DIR: path.join(profilePath(profileDir), 'config') } : {}),
@@ -111,11 +115,15 @@ export default {
 
       let child;
       try {
+        const extraEnv = { NO_COLOR: '1' };
+        if (process.env.OPENCODE_API_KEY) extraEnv.OPENCODE_API_KEY = process.env.OPENCODE_API_KEY;
+        if (process.env.OPENROUTER_API_KEY) extraEnv.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+        if (process.env.ANTHROPIC_API_KEY) extraEnv.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+        if (process.env.OPENAI_API_KEY) extraEnv.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+        if (process.env.OPENAI_API_BASE) extraEnv.OPENAI_API_BASE = process.env.OPENAI_API_BASE;
         child = spawn(bin, args, {
           cwd: ws.dir,
-          env: scrubbedEnv(this.profileEnv(ws.opencodeProfile), {
-            NO_COLOR: '1',
-          }),
+          env: scrubbedEnv(this.profileEnv(ws.opencodeProfile), extraEnv),
           windowsHide: true,
           shell: isWin && /\.(cmd|bat)$/i.test(bin),
         });
