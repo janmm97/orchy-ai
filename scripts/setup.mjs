@@ -98,8 +98,13 @@ export const CHECKS = {
   // Zen's model list is public, so a one-token reply is the check
   OPENCODE_API_KEY: (k, model) => probe('https://opencode.ai/zen/v1/chat/completions', {
     method: 'POST', headers: { Authorization: `Bearer ${k}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+    body: JSON.stringify({ model: model || 'jev-1.13', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
   }),
+  ANTHROPIC_API_KEY: k => probe('https://api.anthropic.com/v1/models', { headers: { 'x-api-key': k, 'anthropic-version': '2023-06-01' } }),
+  OPENAI_API_KEY: (k, baseUrl) => probe(`${(baseUrl && /^https?:\/\//i.test(baseUrl) ? baseUrl : 'https://api.openai.com/v1').replace(/\/+$/, '')}/models`, bearer(k)),
+  GEMINI_API_KEY: k => probe(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(k)}`),
+  DEEPSEEK_API_KEY: k => probe('https://api.deepseek.com/models', bearer(k)),
+  GROQ_API_KEY: k => probe('https://api.groq.com/openai/v1/models', bearer(k)),
 };
 
 /** Ask for one key and check it. Returns the key to save, or null (skipped, or kept as it was). */
@@ -217,6 +222,259 @@ export async function backendAccountStep({ config, saveConfig, signedInAs, engin
   return signedInAs;
 }
 
+export const CLI_OPTIONS = [
+  'Claude Code (Anthropic’s coding harness)',
+  'Codex (OpenAI’s coding harness)',
+  'Hermes (Open-source agent for open models and ACP)',
+  'Antigravity (Google Gemini coding harness)',
+  'Cursor (Cursor editor harness)',
+  'Aider (Git-integrated coding agent; works with OpenRouter, Orca, OpenAI, Anthropic, etc.)',
+  'OpenCode (OpenCode AI terminal agent with Zen or custom keys)',
+  'Custom CLI (Run your own command or agent binary)',
+];
+
+export const CLI_IDS = [
+  'claude',
+  'codex',
+  'hermes',
+  'antigravity',
+  'cursor',
+  'aider',
+  'opencode',
+  'custom',
+];
+
+/** The interactive CLI selection step. Guides the user to pick an engine and set up required keys or routers. */
+export async function cliStep({
+  config = {},
+  saveConfig = () => {},
+  env = () => '',
+  setEnv = () => {},
+  interactive = true,
+  engines = [],
+  found = {},
+  io = { yesNo, choose, askKey: (...a) => askKey(env, ...a), ask, log: console.log },
+}) {
+  const { yesNo, choose, askKey, log = console.log } = io;
+  const askFn = io.ask || ask;
+  if (!interactive) return null;
+
+  log('\n  Coding CLI');
+  log('  Orchy coordinates coding agents. Which CLI harness would you like to use?');
+  const picked = await choose('  Pick a CLI:', CLI_OPTIONS);
+  const id = CLI_IDS[picked] || 'claude';
+  (config.orchy ||= {}).runtime = id;
+
+  if (engines.length && !found[id] && id !== 'custom') {
+    const eng = engines.find(e => e.id === id);
+    if (eng) {
+      log(`  ! ${eng.label} was not found on this machine.`);
+      const inst = win ? eng.install?.winCmd : eng.install?.cmd;
+      if (inst) log(`    Install command: ${inst}`);
+    }
+  }
+
+  if (id === 'aider') {
+    log('\n  Aider Setup');
+    log('  Aider connects to models via API keys or 3rd-party routers.');
+    const prov = await choose('  Which provider or router will you use for Aider?', [
+      'OpenRouter (access Claude, GPT, DeepSeek through openrouter.ai)',
+      'Orca Router (OpenAI-compatible router at api.orcarouter.com)',
+      'Custom OpenAI-compatible Router / Gateway',
+      'Anthropic (Claude 3.5 Sonnet, 3 Opus, 3.7)',
+      'OpenAI (GPT-4o, o1, o3-mini)',
+      'Google Gemini (Gemini 2.0 / 1.5 Pro)',
+      'DeepSeek (DeepSeek V3 / R1)',
+      'Groq (Fast open models)',
+      'Ollama (Local models on your own machine)',
+    ]);
+    if (prov === 0) {
+      const k = await askKey('OPENROUTER_API_KEY', 'OpenRouter', 'openrouter.ai → Keys');
+      if (k) setEnv('OPENROUTER_API_KEY', k);
+      config.orchy.aiderAccount = 'OpenRouter';
+      if (await yesNo('  Configure Claude 3 Opus / 3.5 Sonnet as default Aider models in config?', true)) {
+        (config.runtimes ||= {}).aider = {
+          label: 'Aider',
+          models: ['openrouter/anthropic/claude-3.5-haiku', 'openrouter/anthropic/claude-3.5-sonnet', 'openrouter/anthropic/claude-3-opus'],
+        };
+      }
+    } else if (prov === 1) {
+      const baseUrl = (await askFn('  Orca Router Base URL [https://api.orcarouter.com/v1]: ')) || 'https://api.orcarouter.com/v1';
+      setEnv('OPENAI_API_BASE', baseUrl);
+      const k = await askKey('OPENAI_API_KEY', 'Orca Router', 'orcarouter.com', baseUrl);
+      if (k) {
+        setEnv('OPENAI_API_KEY', k);
+        setEnv('ORCA_API_KEY', k);
+      }
+      config.orchy.aiderAccount = 'Orca Router';
+    } else if (prov === 2) {
+      const baseUrl = ((await askFn('  Router Base URL (e.g. https://my-gateway.com/v1): ')) || '').trim();
+      if (baseUrl) setEnv('OPENAI_API_BASE', baseUrl);
+      const k = await askKey('OPENAI_API_KEY', 'Router', 'your gateway dashboard', baseUrl);
+      if (k) setEnv('OPENAI_API_KEY', k);
+      config.orchy.aiderAccount = 'Router';
+    } else if (prov === 3) {
+      const k = await askKey('ANTHROPIC_API_KEY', 'Anthropic', 'console.anthropic.com → API keys');
+      if (k) setEnv('ANTHROPIC_API_KEY', k);
+      config.orchy.aiderAccount = 'Anthropic';
+    } else if (prov === 4) {
+      const k = await askKey('OPENAI_API_KEY', 'OpenAI', 'platform.openai.com → API keys');
+      if (k) setEnv('OPENAI_API_KEY', k);
+      config.orchy.aiderAccount = 'OpenAI';
+    } else if (prov === 5) {
+      const k = await askKey('GEMINI_API_KEY', 'Google Gemini', 'aistudio.google.com → Get API key');
+      if (k) setEnv('GEMINI_API_KEY', k);
+      config.orchy.aiderAccount = 'Gemini';
+    } else if (prov === 6) {
+      const k = await askKey('DEEPSEEK_API_KEY', 'DeepSeek', 'platform.deepseek.com → API keys');
+      if (k) setEnv('DEEPSEEK_API_KEY', k);
+      config.orchy.aiderAccount = 'DeepSeek';
+    } else if (prov === 7) {
+      const k = await askKey('GROQ_API_KEY', 'Groq', 'console.groq.com → API keys');
+      if (k) setEnv('GROQ_API_KEY', k);
+      config.orchy.aiderAccount = 'Groq';
+    } else if (prov === 8) {
+      const url = ((await askFn('  Ollama endpoint URL [http://localhost:11434]: ')) || '').trim() || 'http://localhost:11434';
+      setEnv('OLLAMA_API_BASE', url);
+      config.orchy.aiderAccount = 'Ollama';
+    }
+  } else if (id === 'opencode') {
+    log('\n  OpenCode Setup');
+    log('  OpenCode connects to models via OpenCode Zen, 3rd-party routers, or direct provider keys.');
+    const prov = await choose('  How do you reach models with OpenCode?', [
+      'OpenCode Zen (opencode.ai Zen API key)',
+      'OpenRouter (access Claude, GPT, DeepSeek through openrouter.ai)',
+      'Orca Router / Custom OpenAI-compatible Gateway',
+      'Anthropic (ANTHROPIC_API_KEY)',
+      'OpenAI (OPENAI_API_KEY)',
+      'Browser OAuth / terminal login (`opencode auth login`)',
+    ]);
+    let openCodeModel = null;
+    if (prov === 0) {
+      const k = await askKey('OPENCODE_API_KEY', 'OpenCode Zen', 'opencode.ai → Zen → API keys');
+      if (k) setEnv('OPENCODE_API_KEY', k);
+      config.orchy.opencodeAccount = 'Zen';
+      const mChoice = await choose('  Which Zen model should OpenCode use?', [
+        'Claude 3.5 Sonnet (zen/claude-3-5-sonnet)',
+        'GPT-4o (zen/gpt-4o)',
+        'DeepSeek V3 (deepseek-ai/DeepSeek-V3)',
+        'Gemini 2.0 Flash (zen/gemini-2.0-flash)',
+        'Default (OpenCode harness default)',
+        'Custom model name',
+      ]);
+      if (mChoice === 0) openCodeModel = 'zen/claude-3-5-sonnet';
+      else if (mChoice === 1) openCodeModel = 'zen/gpt-4o';
+      else if (mChoice === 2) openCodeModel = 'deepseek-ai/DeepSeek-V3';
+      else if (mChoice === 3) openCodeModel = 'zen/gemini-2.0-flash';
+      else if (mChoice === 5) openCodeModel = ((await askFn('  Enter model name: ')) || '').trim();
+    } else if (prov === 1) {
+      const k = await askKey('OPENROUTER_API_KEY', 'OpenRouter', 'openrouter.ai → Keys');
+      if (k) setEnv('OPENROUTER_API_KEY', k);
+      config.orchy.opencodeAccount = 'OpenRouter';
+      const mChoice = await choose('  Which OpenRouter model should OpenCode use?', [
+        'Claude 3.5 Sonnet (openrouter/anthropic/claude-3.5-sonnet)',
+        'Claude 3 Opus (openrouter/anthropic/claude-3-opus)',
+        'GPT-4o (openrouter/openai/gpt-4o)',
+        'DeepSeek V3 (openrouter/deepseek/deepseek-chat)',
+        'Custom model name',
+      ]);
+      if (mChoice === 0) openCodeModel = 'openrouter/anthropic/claude-3.5-sonnet';
+      else if (mChoice === 1) openCodeModel = 'openrouter/anthropic/claude-3-opus';
+      else if (mChoice === 2) openCodeModel = 'openrouter/openai/gpt-4o';
+      else if (mChoice === 3) openCodeModel = 'openrouter/deepseek/deepseek-chat';
+      else if (mChoice === 4) openCodeModel = ((await askFn('  Enter model name: ')) || '').trim();
+    } else if (prov === 2) {
+      const baseUrl = (await askFn('  Router Base URL [https://api.orcarouter.com/v1]: ')) || 'https://api.orcarouter.com/v1';
+      setEnv('OPENAI_API_BASE', baseUrl);
+      const k = await askKey('OPENAI_API_KEY', 'Router', 'router dashboard', baseUrl);
+      if (k) setEnv('OPENAI_API_KEY', k);
+      config.orchy.opencodeAccount = 'Router';
+      openCodeModel = ((await askFn('  Model name to use with router [gpt-4o]: ')) || 'gpt-4o').trim();
+    } else if (prov === 3) {
+      const k = await askKey('ANTHROPIC_API_KEY', 'Anthropic', 'console.anthropic.com → API keys');
+      if (k) setEnv('ANTHROPIC_API_KEY', k);
+      config.orchy.opencodeAccount = 'Anthropic';
+      const mChoice = await choose('  Which Anthropic model should OpenCode use?', [
+        'Claude 3.5 Sonnet (claude-3-5-sonnet-20241022)',
+        'Claude 3 Opus (claude-3-opus-20240229)',
+        'Custom model name',
+      ]);
+      if (mChoice === 0) openCodeModel = 'claude-3-5-sonnet-20241022';
+      else if (mChoice === 1) openCodeModel = 'claude-3-opus-20240229';
+      else if (mChoice === 2) openCodeModel = ((await askFn('  Enter model name: ')) || '').trim();
+    } else if (prov === 4) {
+      const k = await askKey('OPENAI_API_KEY', 'OpenAI', 'platform.openai.com → API keys');
+      if (k) setEnv('OPENAI_API_KEY', k);
+      config.orchy.opencodeAccount = 'OpenAI';
+      openCodeModel = ((await askFn('  Which OpenAI model [gpt-4o]: ')) || 'gpt-4o').trim();
+    } else if (prov === 5) {
+      log('  - Run `opencode auth login` in a terminal to authenticate OpenCode via browser.');
+      config.orchy.opencodeAccount = 'Browser OAuth';
+    }
+
+    if (openCodeModel) {
+      (config.runtimes ||= {}).opencode = {
+        label: 'OpenCode',
+        models: [openCodeModel, openCodeModel, openCodeModel],
+      };
+      setEnv('OPENCODE_MODEL', openCodeModel);
+      log(`  ${OK} OpenCode model configured: ${openCodeModel}`);
+    }
+  } else if (id === 'custom') {
+    log('\n  Custom CLI Setup');
+    const cmd = ((await askFn('  Command to run (e.g. aider, goose, python agent.py): ')) || '').trim();
+    if (cmd) config.orchy.customCommand = cmd;
+  } else if (id === 'hermes') {
+    log('\n  Hermes Setup');
+    const prov = await choose('  Which provider for Hermes?', ['OpenRouter', 'Anthropic', 'Local ACP']);
+    if (prov === 0) {
+      const k = await askKey('OPENROUTER_API_KEY', 'OpenRouter', 'openrouter.ai → Keys');
+      if (k) setEnv('OPENROUTER_API_KEY', k);
+    } else if (prov === 1) {
+      const k = await askKey('ANTHROPIC_API_KEY', 'Anthropic', 'console.anthropic.com');
+      if (k) setEnv('ANTHROPIC_API_KEY', k);
+    }
+    const mChoice = await choose('  Which model should Hermes use?', [
+      'Hermes 3 Llama 3.1 70B (nousresearch/hermes-3-llama-3.1-70b)',
+      'Hermes 3 Llama 3.1 405B (nousresearch/hermes-3-llama-3.1-405b)',
+      'Claude 3.5 Sonnet (anthropic/claude-3.5-sonnet)',
+      'Claude 3 Opus (anthropic/claude-3-opus)',
+      'Default (Hermes harness default)',
+      'Custom model name',
+    ]);
+    let hermesModel = null;
+    if (mChoice === 0) hermesModel = 'nousresearch/hermes-3-llama-3.1-70b';
+    else if (mChoice === 1) hermesModel = 'nousresearch/hermes-3-llama-3.1-405b';
+    else if (mChoice === 2) hermesModel = 'anthropic/claude-3.5-sonnet';
+    else if (mChoice === 3) hermesModel = 'anthropic/claude-3-opus';
+    else if (mChoice === 5) hermesModel = ((await askFn('  Enter model name (e.g. provider/model): ')) || '').trim();
+
+    if (hermesModel) {
+      (config.runtimes ||= {}).hermes = {
+        label: 'Hermes',
+        models: [hermesModel, hermesModel, hermesModel],
+      };
+      setEnv('HERMES_MODEL', hermesModel);
+      log(`  ${OK} Hermes model configured: ${hermesModel}`);
+    }
+  } else if (id === 'antigravity') {
+    log('\n  Antigravity Setup');
+    const k = await askKey('GEMINI_API_KEY', 'Google Gemini', 'aistudio.google.com → Get API key');
+    if (k) setEnv('GEMINI_API_KEY', k);
+  } else if (id === 'claude' || id === 'codex' || id === 'cursor') {
+    let signedInAs = null;
+    try {
+      const eng = engines.find(e => e.id === id);
+      const a = await eng?.account(null, { force: true });
+      signedInAs = a?.loggedIn ? a.email || a.label || null : null;
+    } catch {}
+    await backendAccountStep({ config, saveConfig, signedInAs, engineId: id, interactive, yesNo, log });
+  }
+
+  saveConfig();
+  return id;
+}
+
 export const LAUNCHERS = { win32: 'Start Orchy.cmd', darwin: 'Start Orchy.command' }; // anything else: Start Orchy.sh
 
 /** Put this computer's launcher (from launchers/) in the Orchy folder, so there's one "Start Orchy" to double-click.
@@ -300,18 +558,22 @@ async function main() {
     },
   });
 
-  // 4b. the account Orchy fixes his own code under (Fix Orchy)
-  const harnessId = found.claude ? 'claude' : harnesses.find(t => found[t.id])?.id;
-  if (harnessId) {
-    const { config, saveConfig } = await import(pathToFileURL(path.join(ROOT, 'orchestrator/lib/env.mjs')).href);
-    let signedInAs = null;
-    try { const a = await engines().find(e => e.id === harnessId)?.account(null, { force: true }); signedInAs = a?.loggedIn ? a.email || a.label || null : null; } catch {}
-    await backendAccountStep({ config, saveConfig, signedInAs, engineId: harnessId, interactive, yesNo });
+  const { config, saveConfig, env, setEnv } = await import(pathToFileURL(path.join(ROOT, 'orchestrator/lib/env.mjs')).href);
+
+  // 4b. CLI selection & Setup
+  if (interactive) {
+    await cliStep({ config, saveConfig, env, setEnv, interactive, engines: engines(), found, io: { yesNo, choose, askKey: (...a) => askKey(env, ...a), ask, log: console.log } });
+  } else {
+    const harnessId = config.orchy?.runtime || (found.claude ? 'claude' : harnesses.find(t => found[t.id])?.id);
+    if (harnessId) {
+      let signedInAs = null;
+      try { const a = await engines().find(e => e.id === harnessId)?.account(null, { force: true }); signedInAs = a?.loggedIn ? a.email || a.label || null : null; } catch {}
+      await backendAccountStep({ config, saveConfig, signedInAs, engineId: harnessId, interactive: false, yesNo });
+    }
   }
 
   // 5. Voice, Jev and scripts
   if (interactive) {
-    const { env, setEnv } = await import(pathToFileURL(path.join(ROOT, 'orchestrator/lib/env.mjs')).href);
     await questions(env, setEnv);
   } else console.log('\n  (Not asking questions here: run `npm run setup` in a terminal to set up Voice and Jev.)');
 

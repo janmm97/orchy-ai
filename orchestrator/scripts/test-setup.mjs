@@ -118,6 +118,11 @@ const expect = {
   OPENROUTER_API_KEY: ['https://openrouter.ai/api/v1/key', i => i.headers.Authorization === 'Bearer K'],
   AI_GATEWAY_API_KEY: ['https://ai-gateway.vercel.sh/typesafe/v1/models', i => i.headers.Authorization === 'Bearer K'],
   OPENCODE_API_KEY: ['https://opencode.ai/zen/v1/chat/completions', i => i.headers.Authorization === 'Bearer K' && JSON.parse(i.body).model === 'jev-1.13' && JSON.parse(i.body).max_tokens === 1],
+  ANTHROPIC_API_KEY: ['https://api.anthropic.com/v1/models', i => i.headers['x-api-key'] === 'K' && i.headers['anthropic-version'] === '2023-06-01'],
+  OPENAI_API_KEY: ['https://api.openai.com/v1/models', i => i.headers.Authorization === 'Bearer K'],
+  GEMINI_API_KEY: ['https://generativelanguage.googleapis.com/v1beta/models?key=K', () => true],
+  DEEPSEEK_API_KEY: ['https://api.deepseek.com/models', i => i.headers.Authorization === 'Bearer K'],
+  GROQ_API_KEY: ['https://api.groq.com/openai/v1/models', i => i.headers.Authorization === 'Bearer K'],
 };
 const { CHECKS } = await import('../../scripts/setup.mjs');
 for (const [key, [url, good]] of Object.entries(expect)) {
@@ -129,6 +134,99 @@ status = 401; ok(await CHECKS.TYPESAFE_API_KEY('K') === 'bad', '401: the key is 
 status = 403; ok(await CHECKS.OPENROUTER_API_KEY('K') === 'bad', '403: the key is refused');
 status = 500; ok(/answered 500/.test(await CHECKS.DEEPGRAM_API_KEY('K')), 'a server error: couldn’t check (saved anyway)');
 status = 0; ok(/offline/.test(await CHECKS.ELEVENLABS_API_KEY('K')), 'no connection: couldn’t check (saved anyway)');
+
+// OpenAI key with router Base URL
+seen.length = 0; status = 200;
+await CHECKS.OPENAI_API_KEY('K', 'https://api.orcarouter.com/v1');
+ok(seen[0]?.url === 'https://api.orcarouter.com/v1/models', 'OPENAI_API_KEY with custom router baseUrl');
+
+// ── cliStep tests ──
+const { cliStep } = await import('../../scripts/setup.mjs');
+
+async function testCli({ answers = [], keys = {}, startConfig = {}, envStore = {}, engines = [], found = {} }) {
+  const config = { orchy: { ...startConfig } };
+  const envMap = { ...envStore };
+  const asked = [];
+  const queue = [...answers];
+  const next = q => { asked.push(q); if (!queue.length) throw new Error(`no scripted answer for: ${q}`); return queue.shift(); };
+  const io = {
+    yesNo: async q => next(q),
+    choose: async q => next(q),
+    askKey: async (envKey, label, where, extra) => { asked.push(`key:${envKey}${extra ? `:${extra}` : ''}`); return keys[envKey] ?? null; },
+    ask: async q => next(q),
+    log: () => {},
+  };
+  await cliStep({
+    config,
+    saveConfig: () => {},
+    env: k => envMap[k] || '',
+    setEnv: (k, v) => { envMap[k] = v; },
+    interactive: true,
+    engines,
+    found,
+    io,
+  });
+  return { config, envMap, asked };
+}
+
+// 1. Pick Aider with OpenRouter
+let c = await testCli({
+  answers: [5, 0, true], // 5=Aider, 0=OpenRouter, true=set opus/sonnet tier models
+  keys: { OPENROUTER_API_KEY: 'sk-or-test' },
+});
+ok(c.config.orchy.runtime === 'aider' && c.config.orchy.aiderAccount === 'OpenRouter', 'cliStep: Aider with OpenRouter runtime and account set');
+ok(c.envMap.OPENROUTER_API_KEY === 'sk-or-test', 'cliStep: OPENROUTER_API_KEY saved to env');
+ok(c.config.runtimes?.aider?.models?.includes('openrouter/anthropic/claude-3-opus'), 'cliStep: default Aider OpenRouter models configured');
+
+// 2. Pick Aider with Orca Router
+c = await testCli({
+  answers: [5, 1, 'https://api.orcarouter.com/v1'], // 5=Aider, 1=Orca, custom url
+  keys: { OPENAI_API_KEY: 'sk-orca-test' },
+});
+ok(c.config.orchy.runtime === 'aider' && c.config.orchy.aiderAccount === 'Orca Router', 'cliStep: Aider with Orca Router runtime and account set');
+ok(c.envMap.OPENAI_API_BASE === 'https://api.orcarouter.com/v1', 'cliStep: Orca Router OPENAI_API_BASE saved');
+ok(c.envMap.OPENAI_API_KEY === 'sk-orca-test' && c.envMap.ORCA_API_KEY === 'sk-orca-test', 'cliStep: Orca API key saved');
+
+// 3. Pick OpenCode with Zen and Claude 3.5 Sonnet model
+c = await testCli({
+  answers: [6, 0, 0], // 6=OpenCode, 0=Zen provider, 0=Claude 3.5 Sonnet model
+  keys: { OPENCODE_API_KEY: 'sk-zen-test' },
+});
+ok(c.config.orchy.runtime === 'opencode' && c.config.orchy.opencodeAccount === 'Zen', 'cliStep: OpenCode runtime and account set');
+ok(c.config.runtimes?.opencode?.models?.includes('zen/claude-3-5-sonnet'), 'cliStep: OpenCode model configured in runtimes');
+ok(c.envMap.OPENCODE_API_KEY === 'sk-zen-test' && c.envMap.OPENCODE_MODEL === 'zen/claude-3-5-sonnet', 'cliStep: OPENCODE_API_KEY and OPENCODE_MODEL saved');
+
+// 3a. Pick OpenCode with OpenRouter
+c = await testCli({
+  answers: [6, 1, 0], // 6=OpenCode, 1=OpenRouter provider, 0=Claude 3.5 Sonnet model
+  keys: { OPENROUTER_API_KEY: 'sk-or-oc' },
+});
+ok(c.config.orchy.runtime === 'opencode' && c.config.orchy.opencodeAccount === 'OpenRouter', 'cliStep: OpenCode with OpenRouter account set');
+ok(c.config.runtimes?.opencode?.models?.includes('openrouter/anthropic/claude-3.5-sonnet'), 'cliStep: OpenCode OpenRouter model configured in runtimes');
+ok(c.envMap.OPENROUTER_API_KEY === 'sk-or-oc' && c.envMap.OPENCODE_MODEL === 'openrouter/anthropic/claude-3.5-sonnet', 'cliStep: OpenCode OpenRouter key and model saved');
+
+// 3b. Pick Hermes with Hermes 3 70B model
+c = await testCli({
+  answers: [2, 0, 0], // 2=Hermes, 0=OpenRouter, 0=Hermes 70B
+  keys: { OPENROUTER_API_KEY: 'sk-hermes-or' },
+});
+ok(c.config.orchy.runtime === 'hermes', 'cliStep: Hermes runtime set');
+ok(c.config.runtimes?.hermes?.models?.includes('nousresearch/hermes-3-llama-3.1-70b'), 'cliStep: Hermes model configured in runtimes');
+ok(c.envMap.OPENROUTER_API_KEY === 'sk-hermes-or' && c.envMap.HERMES_MODEL === 'nousresearch/hermes-3-llama-3.1-70b', 'cliStep: Hermes key and HERMES_MODEL saved');
+
+// 4. Pick Custom CLI
+c = await testCli({
+  answers: [7, 'python my_agent.py'], // 7=Custom CLI, command
+});
+ok(c.config.orchy.runtime === 'custom' && c.config.orchy.customCommand === 'python my_agent.py', 'cliStep: Custom CLI command and runtime saved');
+
+// 5. Pick Claude Code with existing signed in account
+c = await testCli({
+  answers: [0, true], // 0=Claude Code, yes to use account
+  engines: [{ id: 'claude', label: 'Claude Code', account: async () => ({ loggedIn: true, email: 'user@example.com' }) }],
+  found: { claude: true },
+});
+ok(c.config.orchy.runtime === 'claude' && c.config.orchy.claudeAccount === 'user@example.com', 'cliStep: Claude Code with signed in account');
 
 // the launcher: this computer's one is copied from launchers/ into the Orchy folder, the others aren't
 {
