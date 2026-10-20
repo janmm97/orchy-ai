@@ -1002,22 +1002,46 @@ export async function openSettings({ from } = {}) {
   const w = openWindow({ id: 'settings', title: 'Settings', size: 'wide', body, from });
   const keys = {}; // API keys pasted but not saved yet: a redraw (a workspace changing) puts them back
   let backendEditing = false; // "Change" pressed on Orchy's own account
-  // Orchy fixing his own code (Fix Orchy) runs under a Claude Code account of his own choosing; a fresh install has none
+  let selectedBackendRuntime = null; // engine picked in Settings switcher
+  // Orchy fixing his own code (Fix Orchy) runs under a harness account of his own choosing
   const backendAccountHTML = () => {
-    const a = backendInfo().account || {};
+    const bInfo = backendInfo();
+    const currentRt = bInfo.runtime || 'claude';
+    const activeRt = selectedBackendRuntime || currentRt;
+    const rts = ctx.state.runtimes && Object.keys(ctx.state.runtimes).length ? ctx.state.runtimes : { claude: { label: 'Claude Code' }, codex: { label: 'Codex' }, aider: { label: 'Aider' }, opencode: { label: 'OpenCode' }, custom: { label: 'Custom CLI' }, hermes: { label: 'Hermes' }, antigravity: { label: 'Antigravity' }, cursor: { label: 'Cursor' } };
+    const rtLabel = rts[activeRt]?.label || activeRt;
+    const a = (activeRt === currentRt) ? (bInfo.account || {}) : {};
     const pc = a.computerAccount;
-    const form = `<form data-backend-acct-form class="btnrow"><input class="input" name="account" type="email" placeholder="${pc ? 'or another account’s email' : 'the Claude Code account’s email'}" autocomplete="off" style="flex:1;min-width:200px"><button class="btn sm" type="submit">Save</button></form>
-      <span class="hint">${pc ? `An account other than ${esc(pc)} gets a Claude Code profile folder of Orchy’s own, so it never changes this computer’s sign-in. You log it in once.` : 'Sign in to Claude Code on this computer first (in a terminal: claude auth login), then Re-check accounts, or type the account here.'}</span>`;
     const head = `<b>Orchy · fixing his own code</b>`;
-    if (!a.expected || backendEditing) {
+    const engineSwitcher = `<div class="seg wrap" role="group" aria-label="Fix Orchy CLI">${Object.entries(rts).map(([k, r]) => `<button type="button" data-backend-engine="${esc(k)}" aria-pressed="${activeRt === k}">${esc(r.label || k)}</button>`).join('')}</div>`;
+
+    if (activeRt === 'custom') {
       return `<div style="display:grid;gap:4px">${head}
-        <span class="hint">“Fix Orchy” runs Claude Code on Orchy’s own code. ${a.expected ? `Now: <b>${esc(a.expected)}</b>.` : '<span class="plate decide">not set</span>'}</span>
-        ${pc && pc !== a.expected ? `<span class="btnrow"><button class="btn sm primary" type="button" data-backend-use="${esc(pc)}">${icon('check')}Use ${esc(pc)}</button><span class="hint">this computer’s Claude Code sign-in</span></span>` : ''}
-        ${form}</div>`;
+        ${engineSwitcher}
+        <span class="hint">“Fix Orchy” runs a custom command or script on Orchy’s own code.</span>
+        <form data-backend-custom-form class="btnrow">
+          <input class="input" name="customCommand" placeholder="Command to run (e.g. aider, goose, python agent.py)" value="${esc(bInfo.customCommand || '')}" style="flex:1;min-width:200px">
+          <button class="btn sm" type="submit">Save</button>
+        </form>
+        <span class="hint">Orchy runs this command for fixes, passing the task instruction via stdin and environment.</span></div>`;
     }
+
+    if (activeRt === currentRt && a.expected && !backendEditing) {
+      return `<div style="display:grid;gap:4px">${head}
+        ${engineSwitcher}
+        <span class="hint">${esc(rtLabel)} must run as <b>${esc(a.expected)}</b> · profile ${esc(a.configDir || '')} · ${a.ok ? `${icon('check')} logged in as ${esc(a.actual)}` : `<span class="plate decide">${a.loggedIn ? `wrong account: ${esc(a.actual || '?')}` : 'not logged in'}</span>`}</span>
+        <span class="btnrow">${a.ok || !a.fix ? '' : `<button class="btn sm" data-loginws="orchy" data-rt="${esc(activeRt)}">Log in</button><button class="btn sm" data-copycmd="${esc(a.fix)}">Copy command</button>`}<button class="btn sm" type="button" data-act="backend-change">${icon('edit')}Change</button></span></div>`;
+    }
+
+    const form = `<form data-backend-acct-form data-rt="${esc(activeRt)}" class="btnrow"><input class="input" name="account" type="text" placeholder="${pc ? `or another ${esc(rtLabel)} account` : `the ${esc(rtLabel)} account’s email`}" autocomplete="off" style="flex:1;min-width:200px"><button class="btn sm" type="submit">Save</button></form>
+      <span class="hint">${pc ? `An account other than ${esc(pc)} gets a profile folder of Orchy’s own, so it never changes this computer’s sign-in. You log it in once.` : `Sign in to ${esc(rtLabel)} on this computer first, then Re-check accounts, or type the account here.`}</span>`;
+
     return `<div style="display:grid;gap:4px">${head}
-      <span class="hint">Claude Code must run as <b>${esc(a.expected)}</b> · profile ${esc(a.configDir || '')} · ${a.ok ? `${icon('check')} logged in as ${esc(a.actual)}` : `<span class="plate decide">${a.loggedIn ? `wrong account: ${esc(a.actual || '?')}` : 'not logged in'}</span>`}</span>
-      <span class="btnrow">${a.ok || !a.fix ? '' : `<button class="btn sm" data-loginws="orchy">Log in</button><button class="btn sm" data-copycmd="${esc(a.fix)}">Copy command</button>`}<button class="btn sm" type="button" data-act="backend-change">${icon('edit')}Change</button></span></div>`;
+      ${engineSwitcher}
+      <span class="hint">“Fix Orchy” runs ${esc(rtLabel)} on Orchy’s own code. ${a.expected && activeRt === currentRt ? `Now: <b>${esc(a.expected)}</b>.` : '<span class="plate decide">not set</span>'}</span>
+      ${pc && pc !== a.expected ? `<span class="btnrow"><button class="btn sm primary" type="button" data-backend-use="${esc(pc)}" data-rt="${esc(activeRt)}">${icon('check')}Use ${esc(pc)}</button><span class="hint">this computer’s ${esc(rtLabel)} sign-in</span></span>` : ''}
+      ${activeRt !== currentRt ? `<span class="btnrow"><button class="btn sm" type="button" data-backend-switch="${esc(activeRt)}">Switch to ${esc(rtLabel)}</button></span>` : ''}
+      ${form}</div>`;
   };
   body.addEventListener('input', e => { if (e.target.id?.startsWith('k-')) keys[e.target.id.slice(2)] = e.target.value; });
   body.addEventListener('click', e => { const b = e.target.closest('[data-act="setup-guide"]'); if (b) openSetup({ from: b }); });
@@ -1189,26 +1213,39 @@ export async function openSettings({ from } = {}) {
     body.querySelectorAll('[data-loginws]').forEach(b => b.addEventListener('click', async () => {
       try { await api(`/api/workspaces/${encodeURIComponent(b.dataset.loginws)}/login`, { method: 'POST', body: { runtime: b.dataset.rt || null } }); ctx.toast('A login window opened. Sign in there, then re-check.'); } catch (e) { ctx.toast(e.message, 'warn'); }
     }));
-    // the account Orchy fixes himself under: this computer's Claude Code sign-in, or another one in a profile of his own
-    const setBackend = async (btn, account, ownProfile) => {
-      btn.disabled = true;
+    // the account Orchy fixes himself under: this computer's sign-in, or another one in a profile of his own
+    const setBackend = async (btn, runtime, account, ownProfile, customCommand) => {
+      if (btn) btn.disabled = true;
       try {
-        const b = await api('/api/backend/account', { method: 'POST', body: { account, ownProfile } });
+        const b = await api('/api/backend/account', { method: 'POST', body: { runtime, account, ownProfile, customCommand } });
         setWorkspaces(null, null, b);
         backendEditing = false;
-        ctx.toast(b.account?.ok ? `Orchy fixes himself as ${b.account.expected}.` : `Saved. Now sign ${account} in to Claude Code: press Log in.`, b.account?.ok ? '' : 'warn');
+        selectedBackendRuntime = b.runtime;
+        ctx.toast(b.account?.ok ? `Orchy fixes himself as ${b.account.expected || b.runtimeLabel}.` : `Saved ${b.runtimeLabel || b.runtime} settings.`, b.account?.ok ? '' : 'warn');
         w.render();
-      } catch (err) { btn.disabled = false; ctx.toast(err.message, 'warn'); }
+      } catch (err) { if (btn) btn.disabled = false; ctx.toast(err.message, 'warn'); }
     };
-    body.querySelector('[data-backend-use]')?.addEventListener('click', e => setBackend(e.currentTarget, e.currentTarget.dataset.backendUse, false));
+    body.querySelectorAll('[data-backend-engine]').forEach(b => b.addEventListener('click', e => {
+      selectedBackendRuntime = e.currentTarget.dataset.backendEngine;
+      if (selectedBackendRuntime !== (backendInfo().runtime || 'claude')) backendEditing = true;
+      w.render();
+    }));
+    body.querySelector('[data-backend-use]')?.addEventListener('click', e => setBackend(e.currentTarget, e.currentTarget.dataset.rt, e.currentTarget.dataset.backendUse, false));
+    body.querySelector('[data-backend-switch]')?.addEventListener('click', e => setBackend(e.currentTarget, e.currentTarget.dataset.backendSwitch));
+    body.querySelector('[data-backend-custom-form]')?.addEventListener('submit', e => {
+      e.preventDefault();
+      const f = e.currentTarget, input = f.querySelector('[name="customCommand"]');
+      setBackend(f.querySelector('button[type="submit"]'), 'custom', null, false, input.value.trim());
+    });
     body.querySelector('[data-backend-acct-form]')?.addEventListener('submit', e => {
       e.preventDefault();
       const f = e.currentTarget, input = f.querySelector('[name="account"]');
       const account = input.value.trim();
+      const rt = f.dataset.rt || 'claude';
       if (!account) return input.focus();
       // this computer's own sign-in keeps the default profile; any other account gets a profile folder of Orchy's own
       const pc = backendInfo().account?.computerAccount;
-      setBackend(f.querySelector('button[type="submit"]'), account, !(pc && pc.toLowerCase() === account.toLowerCase()));
+      setBackend(f.querySelector('button[type="submit"]'), rt, account, !(pc && pc.toLowerCase() === account.toLowerCase()));
     });
     body.querySelector('[data-act="backend-change"]')?.addEventListener('click', () => { backendEditing = true; w.render(); });
     body.querySelector('[data-act="accounts"]').addEventListener('click', async e => {

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { config, ORCH_DIR, ownerName } from './env.mjs';
 import { ask } from './jev.mjs';
 import { askViaHarness } from './brain.mjs';
-import { workspaces, tierModel, modelsFor, modelFor, handles, BACKEND_ID } from './workspaces.mjs';
+import { workspaces, tierModel, modelsFor, modelFor, handles, BACKEND_ID, backendWorkspace } from './workspaces.mjs';
 import { engine } from './engines/index.mjs';
 import { listAgents, BUILDER_SLUG } from './agents.mjs';
 import { db } from './store.mjs';
@@ -117,7 +117,7 @@ export function earlierTasks(text, wss, { newest = 4, related = 4 } = {}) {
 
 // Orchy (or his dashboard) named with something wrong: a fix of his own code
 const FIX_ORCHY = t => /\b(orchy|dashboard)\b/i.test(t) && /\b(bug|broken|fix|error|crash(es|ed)?|not working|doesn'?t work|won'?t|stuck|blank|freez(es|ing))\b/i.test(t);
-const fixGuess = () => ({ intent: 'fix_orchy', workspace: BACKEND_ID, agent: null, model: 'opus', tier: 2, confidence: 0.5, source: 'heuristic' });
+const fixGuess = () => ({ intent: 'fix_orchy', workspace: BACKEND_ID, agent: null, model: tierModel(backendWorkspace(), 2), tier: 2, confidence: 0.5, source: 'heuristic' });
 
 /** A message with files that asks to fix Orchy (a screenshot of the problem): its routing, else null (Orchy reviews the files). */
 export function fixRouting(text) {
@@ -406,7 +406,7 @@ export async function route(text, { recent = [], runs = [], files = [], purpose 
     const fr = A.earlier_run, fi = fr?.choice && fr.choice !== 'none' ? Number(fr.choice.slice(1)) : -1;
     const frP = fi >= 0 ? fr.probabilities?.[fr.choice] ?? fr.confidence ?? 0 : 0;
     return finalize({
-      intent, workspace: BACKEND_ID, agent: null, model: effort < 0.6 ? 'sonnet' : 'opus', tier: effort < 0.6 ? 1 : 2,
+      intent, workspace: BACKEND_ID, agent: null, model: tierModel(backendWorkspace(), effort < 0.6 ? 1 : 2), tier: effort < 0.6 ? 1 : 2,
       confidence: A.intent?.confidence ?? 1, source: 'jev',
       probabilities: { intent: A.intent?.probabilities || {}, workspace: {}, agent: {}, effort: A.effort?.probabilities || {} },
       agentConfidence: null, askChat: false, statusAbout: null, effortScore: effort,

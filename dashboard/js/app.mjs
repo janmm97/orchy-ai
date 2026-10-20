@@ -657,16 +657,17 @@ function agentLabel(key) {
   return agentName(ws, slug, state.agents.find(a => a.workspace === ws && a.slug === slug)?.displayName);
 }
 
-/** On the Fix Orchy card: Orchy has no Claude Code account of his own yet (a fresh install), or it isn't signed in. */
+/** On the Fix Orchy card: Orchy has no account of his own yet (a fresh install), or it isn't signed in. */
 function fixAccountHTML() {
   const a = backendInfo().account;
   if (!a || a.ok) return '';
+  const rtLabel = a.runtimeLabel || 'Claude Code';
   if (!a.expected) {
-    return `<div class="fixbar"><b>I need a Claude Code account to work on my own code.</b>
-      <span>${a.suggested ? `Claude Code on this computer is signed in as <b>${esc(a.suggested)}</b>. Use that account for my fixes?` : 'Sign in to Claude Code on this computer first (in a terminal: claude auth login), then pick the account in Settings → Accounts.'}</span>
+    return `<div class="fixbar"><b>I need a ${esc(rtLabel)} account to work on my own code.</b>
+      <span>${a.suggested ? `${esc(rtLabel)} on this computer is signed in as <b>${esc(a.suggested)}</b>. Use that account for my fixes?` : `Sign in to ${esc(rtLabel)} on this computer first (or pick another CLI in Settings → Accounts).`}</span>
       <span class="btnrow">${a.suggested ? `<button class="btn sm primary" type="button" data-backend-use="${esc(a.suggested)}">${icon('check')}Use ${esc(a.suggested)}</button>` : ''}<button class="btn sm" type="button" data-open="settings">Settings</button></span></div>`;
   }
-  return `<div class="fixbar"><b>I fix myself as ${esc(a.expected)}, but ${a.loggedIn ? `Claude Code is signed in as ${esc(a.actual || 'another account')}` : 'that Claude Code profile isn’t signed in'}.</b>
+  return `<div class="fixbar"><b>I fix myself as ${esc(a.expected)}, but ${a.loggedIn ? `${esc(rtLabel)} is signed in as ${esc(a.actual || 'another account')}` : `that ${esc(rtLabel)} profile isn’t signed in`}.</b>
     <span class="btnrow"><button class="btn sm" type="button" data-login="orchy">Log in</button><button class="btn sm" type="button" data-open="settings">Settings</button></span></div>`;
 }
 
