@@ -148,6 +148,7 @@ export async function gate(runId, toolName, input = {}, { toolUseId } = {}) {
     runId: run.id, workspace: ws.id, agent: who, title: verdict.summary, message: verdict.reason,
     detail: verdict.detail, ruleKey: verdict.ruleKey, tool: toolName, action: verdict.action || null,
     delegatedBy: run.delegatedByName || null, noRemember: handedOutward || !!run.client,
+    floor: !!verdict.floor, // "always allow" for it covers the one agent that asked, never the whole workspace
     ...askFields(run, verdict.ruleKey || ''),
   });
   return { decision: 'ask', itemId: item.id };

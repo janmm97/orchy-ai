@@ -1227,7 +1227,9 @@ export async function openSettings({ from, section } = {}) {
               : 'Agents work on their own (reading, drafting, labelling, notes, docs, files in their folder) and only stop for the decisions switched on below. ' + (s.scriptsFree !== false ? 'Commands, scripts and One CLI calls run too, unless they look like one of those decisions. Other workspaces’ folders, Orchy’s own files and dashboard, sign-ins, setup files and system changes still ask, and so does everything outward in a head’s hand-offs and clients’ runs.' : 'Running scripts, network tools, deleting files and other folders ask.')}</p>`, 'approvals mode decisions every change')}
             ${(s.approvals || 'decisions') === 'all' ? '' : toggle('data-set="scriptsFree"', s.scriptsFree !== false, 'Scripts and commands', s.scriptsFree !== false ? 'Run on their own (scripts, curl, deleting scratch files, One CLI calls and flows), unless one looks like a decision switched on below, like a refund, an email or a calendar invite' : 'Asks you before every script, network tool, delete outside its folder and One CLI call it can’t read')}`)}
           ${(s.approvals || 'decisions') === 'all' ? '' : group('Always ask before', (ctx.state.approvalKinds || []).map(k => toggle(`data-askfor="${esc(k.key)}"`, s.askFor?.[k.key] !== false, esc(k.label), `${s.askFor?.[k.key] !== false ? 'Asks you' : 'Runs on its own'}: ${esc(k.hint)}`)).join(''))}
-          ${group('Remembered approvals', item('<div data-rules class="list"><div class="hint">Loading…</div></div>', 'remembered always allow rules forget'))}`)}
+          ${group('Always allow', `${item(`<div class="btnrow"><span class="label">Covers</span><div class="seg" role="group" aria-label="Always allow covers">${[['agent', 'The agent that asked'], ['workspace', 'Every agent in its workspace']].map(([k, l]) => `<button type="button" data-allowscope="${k}" aria-pressed="${(s.allowScope || 'agent') === k}">${l}</button>`).join('')}</div></div>
+              <p class="hint" style="margin:0">Where an approval’s “Always allow” starts; each approval lets you switch it. Sign-ins, other clients’ folders, Orchy’s own files and the harness’s settings are only ever allowed for one agent.</p>`, 'always allow scope agent workspace remember default')}
+            ${item('<div data-rules class="list"><div class="hint">Loading…</div></div>', 'remembered always allow rules forget')}`)}`)}
         ${pane('runs', 'Runs', 'How many agents work at once, how long they may run, and what Orchy does when one goes wrong.',
           `${group('', `${item(`<div class="btnrow"><span class="label">Concurrency</span><label class="hint">run up to ${select('data-maxlive', 'Max live runs per account', [1, 2, 3, 4, 5, 6].map(m => [m, m]), Number(s.maxLivePerAccount) || 3)} live runs per account (more queue automatically; Run now jumps the queue)</label></div>`, 'concurrency live runs queue')}
             ${item(`<div class="btnrow"><span class="label">Huddles</span><label class="hint">agents talk for up to ${select('data-huddleturns', 'Turns per huddle', [6, 8, 10, 12, 16, 20].map(m => [m, m]), Number(s.huddleTurns) || 10)} turns (at least two each, so bigger huddles get more), push back on each other, then write up what they agree (Keep talking adds 6)</label></div>`, 'huddle turns')}
@@ -1279,6 +1281,10 @@ export async function openSettings({ from, section } = {}) {
     body.querySelectorAll('[data-onesign]').forEach(b => b.addEventListener('click', async () => {
       b.disabled = true;
       if ((await oneSignIn(b.dataset.onesign, ctx.toast))?.status !== 'waiting') b.disabled = false;
+    }));
+    body.querySelectorAll('[data-allowscope]').forEach(b => b.addEventListener('click', async () => {
+      try { ctx.state.settings = await api('/api/settings', { method: 'POST', body: { allowScope: b.dataset.allowscope } }); w.render(); }
+      catch (e) { ctx.toast(e.message, 'warn'); }
     }));
     body.querySelectorAll('[data-approvals]').forEach(b => b.addEventListener('click', async () => {
       try { ctx.state.settings = await api('/api/settings', { method: 'POST', body: { approvals: b.dataset.approvals } }); w.render(); }
@@ -1440,7 +1446,7 @@ export async function openSettings({ from, section } = {}) {
     const ruleId = r => [r.workspace, r.agent, r.ruleKey, r.at].join('|');
     api('/api/rules').then(rules => {
       const box = body.querySelector('[data-rules]');
-      box.innerHTML = rules.map(r => `<div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center"><span><b>${esc(r.summary || r.ruleKey)}</b><br><span class="hint">${esc(wsName(r.workspace))} · ${esc(r.agent || 'generalist')}</span></span><button class="btn sm icon" data-rule="${esc(ruleId(r))}" aria-label="Forget this approval">${icon('trash')}</button></div>`).join('') || '<div class="hint">None. When you tick “Always allow” on an approval, it shows up here.</div>';
+      box.innerHTML = rules.map(r => `<div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center"><span><b>${esc(r.summary || r.ruleKey)}</b><br><span class="hint">${esc(wsName(r.workspace))} · ${r.agent === '*' ? 'every agent' : `${esc(r.agent || 'generalist')} only`}</span></span><button class="btn sm icon" data-rule="${esc(ruleId(r))}" aria-label="Forget this approval">${icon('trash')}</button></div>`).join('') || '<div class="hint">None. When you tick “Always allow” on an approval, it shows up here.</div>';
       box.querySelectorAll('[data-rule]').forEach(b => b.addEventListener('click', async () => {
         b.disabled = true;
         try {

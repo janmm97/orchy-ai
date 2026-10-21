@@ -1275,7 +1275,8 @@ function answerItem(iid, body) {
   if (!item) throw Object.assign(new Error('That message is gone'), { status: 404 });
   let ans;
   if (item.kind === 'question') ans = { text: String(body.text || '').trim() || '(no answer)' };
-  else if (item.kind === 'approval') ans = { approve: !!body.approve, note: body.note || '', remember: !!body.remember };
+  // remember: for this agent, or (everyAgent) every agent in the workspace
+  else if (item.kind === 'approval') ans = { approve: !!body.approve, note: body.note || '', remember: !!body.remember, everyAgent: !!body.everyAgent };
   else if (item.kind === 'connections') {
     const pool = item.payload.connections;
     const picked = (body.selected || []).map(s => {
@@ -1288,7 +1289,8 @@ function answerItem(iid, body) {
   const done = inbox.answer(iid, ans);
   const run = db().runs[item.runId];
   // remembered only once the answer went through; an outward action in a handed-over run is asked every time
-  if (run && item.kind === 'approval' && ans.approve && ans.remember && !item.noRemember) addRule(run, item.ruleKey, item.title);
+  // a floor ask (a sign-in, another client, Orchy's own files…) is remembered for its one agent, whatever was asked
+  if (run && item.kind === 'approval' && ans.approve && ans.remember && !item.noRemember) addRule(run, item.ruleKey, item.title, { everyAgent: ans.everyAgent, floor: !!item.floor });
   if (run && !inbox.pending().some(i => i.runId === run.id)) runner.setRunStatus(run, 'working');
   return done;
 }
@@ -1568,6 +1570,8 @@ on('POST', '/api/settings', async (req) => {
     db().settings.dismissed = [...cur, b.dismiss.slice(0, 200)].slice(-50);
   }
   if (b.approvals === 'decisions' || b.approvals === 'all') db().settings.approvals = b.approvals;
+  // who an approval's "Always allow" starts on: the agent that asked, or every agent in its workspace
+  if (b.allowScope === 'agent' || b.allowScope === 'workspace') db().settings.allowScope = b.allowScope;
   if (b.askFor && typeof b.askFor === 'object') {
     const cur = db().settings.askFor ||= {};
     for (const d of DECISIONS) if (d.key in b.askFor) cur[d.key] = !!b.askFor[d.key];

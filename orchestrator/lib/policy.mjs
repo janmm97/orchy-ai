@@ -1604,9 +1604,9 @@ async function backendLimits(toolName, input, ctx) {
   if (READ_TOOLS.has(toolName)) {
     for (const p of paths) {
       const rel = rootRel(p);
-      if (rel === '.env') return { decision: 'ask', reason: 'This reads Orchy’s .env (API keys)', summary: 'Read Orchy’s .env', detail: path.resolve(ws.dir, p), ruleKey: 'read:.env' };
+      if (rel === '.env') return { decision: 'ask', reason: 'This reads Orchy’s .env (API keys)', summary: 'Read Orchy’s .env', detail: path.resolve(ws.dir, p), ruleKey: 'read:.env', floor: true };
       // a file the owner attached to this fix (a screenshot of the problem) is named in the task: that one it just reads
-      if (rel && /^Uploads(\/|$)/i.test(rel) && !String(ctx.run?.instruction || '').includes(`\`${rel}\``)) return { decision: 'ask', reason: 'This reads the files you gave Orchy (Uploads)', summary: `Read ${path.basename(String(p))} in Uploads`, detail: path.resolve(ws.dir, p), ruleKey: 'read:uploads' };
+      if (rel && /^Uploads(\/|$)/i.test(rel) && !String(ctx.run?.instruction || '').includes(`\`${rel}\``)) return { decision: 'ask', reason: 'This reads the files you gave Orchy (Uploads)', summary: `Read ${path.basename(String(p))} in Uploads`, detail: path.resolve(ws.dir, p), ruleKey: 'read:uploads', floor: true };
     }
     return null;
   }
@@ -1689,12 +1689,12 @@ async function decideOnce(toolName, input, ctx) {
       // (not the Glob prefix, which can be half a file name)
       if (p !== glob && !exists(abs)) continue;
       const sign = signInArea(abs, ws, ctx);
-      if (sign) return { decision: 'ask', reason: `This reads ${sign}`, summary: `${toolName} a sign-in: ${path.basename(abs)}`, detail: abs, ruleKey: `read:${abs}`, outward: true };
+      if (sign) return { decision: 'ask', reason: `This reads ${sign}`, summary: `${toolName} a sign-in: ${path.basename(abs)}`, detail: abs, ruleKey: `read:${abs}`, outward: true, floor: true };
       const area = josArea(p, ws, ctx);
       if (!area) continue;
       return {
         decision: 'ask', reason: area === 'Orchy' ? `This reads Orchy's own files (logs and records that cover every client), outside ${ws.name}'s folder` : `This reads ${area}, another client's folder`,
-        summary: `${toolName} outside ${ws.name}: ${path.basename(abs)}`, detail: abs, ruleKey: `read:${toolName === 'Read' ? path.dirname(abs) : abs}`,
+        summary: `${toolName} outside ${ws.name}: ${path.basename(abs)}`, detail: abs, ruleKey: `read:${toolName === 'Read' ? path.dirname(abs) : abs}`, floor: true,
       };
     }
     return { decision: 'allow', reason: 'read-only tool' };
@@ -1707,12 +1707,14 @@ async function decideOnce(toolName, input, ctx) {
     const abs = path.resolve(ws.dir, file);
     const sign = signInArea(abs, ws, ctx);
     if (sign) return { decision: 'ask', reason: `This writes ${sign}`, summary: `${toolName} a sign-in: ${path.basename(abs)}`, detail: abs, ruleKey: null, outward: true };
-    if (setupFile(abs, ws, ctx)) return { decision: 'ask', reason: `This ${SETUP_WHY(ws)}`, summary: `${toolName} ${path.basename(abs)} in ${ws.name}'s setup`, detail: abs, ruleKey: `setup:${wsRel(abs, ws.dir)}` };
+    if (setupFile(abs, ws, ctx)) return { decision: 'ask', reason: `This ${SETUP_WHY(ws)}`, summary: `${toolName} ${path.basename(abs)} in ${ws.name}'s setup`, detail: abs, ruleKey: `setup:${wsRel(abs, ws.dir)}`, floor: true };
     if (insideDir(file, ws.dir)) return { decision: 'allow', reason: 'file work inside its own workspace' };
     if (decisionsOnly && file && inRoots(file, workRoots(ws)) && !otherClientIn(file, ws, ctx)) return { decision: 'allow', reason: 'scratch file in the temp folder' };
     return {
       decision: 'ask', reason: 'writes a file outside its workspace',
       summary: `${toolName} a file outside ${ws.name}`, detail: file, ruleKey: `${toolName}:${path.dirname(file || '')}`,
+      // into Orchy's own folder or another client's: floor (one agent's "always allow" at most)
+      ...(josArea(file, ws, ctx) || otherClientIn(file, ws, ctx) ? { floor: true } : {}),
     };
   }
 
@@ -1737,12 +1739,12 @@ async function decideOnce(toolName, input, ctx) {
     const cwd = input.cwd ? realPath(input.cwd, ws.dir) : ws.dir;
     if (!inRoots(cwd, [ws.dir]) && (v = need({ decision: 'ask', reason: `This command runs in ${cwd}, outside ${ws.name}'s folder`, summary: `Run a command in ${path.basename(cwd)}`, detail: command, ruleKey: `cwd:${cwd}` }))) return v;
     const sign = shellSignIn(command, ws, ctx, cwd, shell);
-    if (sign && (v = askPiece(`This reaches ${sign.area}`, sign.piece, { outward: true }))) return v;
+    if (sign && (v = askPiece(`This reaches ${sign.area}`, sign.piece, { outward: true, floor: true }))) return v;
     const other = otherClientIn(command, ws, ctx);
-    if (other && (v = askPiece(`This reaches into ${other}, another client's folder`, segs.find(s => otherClientIn(s, ws, ctx)) || command))) return v;
+    if (other && (v = askPiece(`This reaches into ${other}, another client's folder`, segs.find(s => otherClientIn(s, ws, ctx)) || command, { floor: true }))) return v;
     // reading Orchy's own files (LOGS.md, its records) from a shell asks, the same as the Read tool does
     const area = ctx.home ? null : shellJosArea(command, ws, ctx, cwd, shell);
-    if (area && (v = askPiece(!area.area ? 'This command changes folder more ways than Orchy can follow' : area.area === 'Orchy' ? `This reaches Orchy's own files (logs and records that cover every client), outside ${ws.name}'s folder` : `This reaches into ${area.area}, another client's folder`, area.piece))) return v;
+    if (area && (v = askPiece(!area.area ? 'This command changes folder more ways than Orchy can follow' : area.area === 'Orchy' ? `This reaches Orchy's own files (logs and records that cover every client), outside ${ws.name}'s folder` : `This reaches into ${area.area}, another client's folder`, area.piece, { floor: true }))) return v;
     // a `cd`/`Set-Location` in the line moves where the writes land, which this fast path doesn't track: hand those to
     // the full check (shellNeedsOwner follows the cd)
     if (!segs.some(s => cdResolve(s, cwd, shell) != null) && segs.some(s => psWriteInside(s, cwd, ws, ctx)) && !writesViaRedirect(command, shell) && segs.every(s => psWriteInside(s, cwd, ws, ctx) || pieceIsSafe(s, shell))) {
@@ -1826,10 +1828,10 @@ async function decideOnce(toolName, input, ctx) {
     if (decisionsOnly) {
       // the settings of the harness this run uses ask wherever its profile lives, also inside a folder that is otherwise
       // the run's own (a profile kept in the temp folder): hooks there run in every later run, past the gate
-      if (harnessPlace(command, [cwd], ws) && (v = askPiece('This command changes the settings of the harness this run uses, which every later run loads', command, { outward: true }))) return v;
+      if (harnessPlace(command, [cwd], ws) && (v = askPiece('This command changes the settings of the harness this run uses, which every later run loads', command, { outward: true, floor: true }))) return v;
       for (const n of needs) {
         // Orchy's own dashboard (approvals, settings) never runs on its own: curl, Invoke-RestMethod, a script's fetch…
-        if ((free || (ctx.scriptsFree && n.script)) && talksToDashboard({ ...n, piece: command }) && (v = askPiece(`This command ${DASHBOARD_WHY}`, n.piece, { outward: true }))) return v;
+        if ((free || (ctx.scriptsFree && n.script)) && talksToDashboard({ ...n, piece: command }) && (v = askPiece(`This command ${DASHBOARD_WHY}`, n.piece, { outward: true, floor: true }))) return v;
         if (ctx.scriptsFree && n.script) {
           // Settings → Scripts: it runs on its own unless it looks like a decision the owner keeps
           const d = await scriptDecision(n, ctx);
@@ -1841,7 +1843,8 @@ async function decideOnce(toolName, input, ctx) {
           if (d && (v = askPiece(`This command ${d.why}`, n.piece, { outward: true }))) return v;
           continue;
         }
-        if ((v = askPiece(`This command ${n.why}`, n.piece, { outward: reaches(n.why) }))) return v;
+        // a change to the workspace's own setup (agents, instructions, connections) is floor: one agent's "always allow" at most
+        if ((v = askPiece(`This command ${n.why}`, n.piece, { outward: reaches(n.why), ...(n.kind === 'setup' ? { floor: true } : {}) }))) return v;
       }
       return { decision: 'allow', reason: calls.length ? 'One work that isn’t a decision' : 'work inside its own folder' };
     }
@@ -1877,15 +1880,22 @@ async function decideOnce(toolName, input, ctx) {
   return { decision: 'ask', reason: 'unrecognised tool', summary: `Use ${toolName}`, detail: JSON.stringify(input, null, 2).slice(0, 2000), ruleKey: `tool:${toolName}`, outward: true };
 }
 
-// ── Remembered "always allow" rules (per workspace + agent + ruleKey) ──
-export function ruleMatches(run, ruleKey) {
+// ── Remembered "always allow" rules (per workspace + agent + ruleKey; agent EVERY_AGENT: every agent in the workspace) ──
+export const EVERY_AGENT = '*';
+export function ruleMatches(run, ruleKey, rules = db().rules) {
   if (!ruleKey) return false;
-  return db().rules.some(r => r.workspace === run.workspace && r.agent === run.agentSlug && r.ruleKey === ruleKey);
+  return rules.some(r => r.workspace === run.workspace && (r.agent === run.agentSlug || r.agent === EVERY_AGENT) && r.ruleKey === ruleKey);
 }
 
-export function addRule(run, ruleKey, summary) {
-  if (!ruleKey || ruleMatches(run, ruleKey)) return;
-  db().rules.push({ workspace: run.workspace, agent: run.agentSlug, ruleKey, summary, at: new Date().toISOString() });
+/** The agent a new rule covers. everyAgent: the whole workspace, but never for a floor ask (a sign-in, another
+ *  client, Orchy's own files, the dashboard, the harness's settings, a workspace's setup): those stay with one agent. */
+export const ruleAgent = (run, { everyAgent = false, floor = false } = {}) => (everyAgent && !floor ? EVERY_AGENT : run.agentSlug);
+
+export function addRule(run, ruleKey, summary, scope = {}) {
+  if (!ruleKey) return;
+  const agent = ruleAgent(run, scope);
+  if (db().rules.some(r => r.workspace === run.workspace && r.agent === agent && r.ruleKey === ruleKey)) return;
+  db().rules.push({ workspace: run.workspace, agent, ruleKey, summary, at: new Date().toISOString() });
   save();
 }
 
