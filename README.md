@@ -115,7 +115,7 @@ Each key is checked once with its service and saved in `.env` on your PC. Keys a
 
 ### Prerequisites
 
-- Node.js 20 or newer.
+- Node.js 20 or newer. For the One CLI it must be 22.23.4+, 24.22.1+ or 26.12.1+: One refuses older releases, and Node 23 and 25, because they still trust the compromised eMudhra certificates.
 - Git, to clone the repository.
 - At least one harness CLI installed and signed in. Claude Code is recommended (see [Supported harnesses](#supported-harnesses)).
 - The One CLI (`one`), so agents can use your apps. Setup installs `@withone/cli` globally if it is missing. See [docs/ONE.md](docs/ONE.md).
@@ -392,6 +392,7 @@ This health check tests each workspace's accounts, the One CLI, Jev, voice, agen
 | Orchy will not start | Read the error in the terminal window it was started from. After Orchy restarted itself, it is in `orchestrator/data/server.err.log`. |
 | The dashboard says it can't make changes | The browser isn't paired: see Pairing under [First run](#first-run). |
 | A workspace says it is not signed in to One | Workspaces, the workspace, "Sign in to One". |
+| One shows **can't run on Node** | The One CLI is installed, but this Node release is one it refuses. Update Node with the command shown (or from nodejs.org), then restart Orchy: One runs on Orchy's own Node. |
 | A run is refused for an account mismatch | The harness profile for that workspace is logged into the wrong account: sign in again with the right one. |
 | A workspace "isn't logged in", but you signed in to the harness in a terminal | A plain terminal signs in the computer's profile, not the workspace's. A Hermes workspace set to "This computer's sign-in" (the default) uses it on its own; one set to "Its own sign-in" needs **Log in**. For a Claude Code or Codex workspace with its own profile, press **Log in** on the workspace: the window it opens signs in that workspace's profile. Cursor has one sign-in for the whole computer: run `agent login` in any terminal. Then press Re-check. |
 | A harness shows **won't start** | Its install didn't finish. Press **Install** to install it again, or run the command shown next to it. Then press Re-check. |

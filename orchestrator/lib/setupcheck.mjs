@@ -3,6 +3,7 @@
 import { execFile } from 'node:child_process';
 import { engines, engineTools, engineRepairCmd, runRefusal } from './engines/index.mjs';
 import { findBinary } from './claude.mjs';
+import { oneNodeProblem } from './one.mjs';
 
 const win = process.platform === 'win32', mac = process.platform === 'darwin';
 const TTL = 30_000, TIMEOUT = 4000;
@@ -38,7 +39,9 @@ export async function toolStatus({ force = false } = {}) {
   inflight = (async () => {
     const list = [{ id: 'node', label: 'Node.js', kind: 'runtime', install: NODE_INSTALL }, ...engineTools(), { id: 'one', label: 'One CLI', kind: 'one', install: ONE_INSTALL }];
     const tools = await Promise.all(list.map(async t => {
-      let version = t.id === 'node' ? process.version : await probe(locate(t.id));
+      // One installed on a Node it refuses: found, but can't run here (it won't even print its version)
+      const blocked = t.id === 'one' ? oneNodeProblem() : null;
+      let version = t.id === 'node' ? process.version : blocked ? `One CLI ${blocked.version || ''}`.trim() : await probe(locate(t.id));
       if (t.id === 'one' && !version) version = await probe(win ? 'one.cmd' : 'one') ; // PATH-only shims
       const n = NOTES[t.id] || {};
       // a harness whose program is there but won't start (an install that didn't finish) shows what finishes it
@@ -46,7 +49,8 @@ export async function toolStatus({ force = false } = {}) {
       const broken = !!e?.available();
       return { id: t.id, label: t.label, kind: t.kind || 'harness', found: !!version, version: version || null, broken, repairCmd: broken ? engineRepairCmd(e) || null : null, installCmd: t.install, required: !!n.required, recommended: !!n.recommended, note: n.note || t.note || '', gated: t.gated ?? null,
         // found, but a version Orchy won't run (runRefusal): why, and the way to one it does
-        refusal: version && t.kind === 'harness' ? runRefusal(engines().find(x => x.id === t.id)) : null };
+        refusal: blocked ? blocked.message : version && t.kind === 'harness' ? runRefusal(engines().find(x => x.id === t.id)) : null,
+        fixCmd: blocked?.fix || null };
     }));
     cache = { at: Date.now(), tools };
     return tools;

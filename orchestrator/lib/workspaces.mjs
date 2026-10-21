@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { ROOT, DATA_DIR, config, saveConfig, expandPath, env, ownerName, readJson, setAside } from './env.mjs';
-import { one, oneInteractive, listConnections, whoami } from './one.mjs';
+import { one, oneInteractive, listConnections, whoami, oneBlocked } from './one.mjs';
 import { engine, engines, engineInfo, registerEngine, engineOffered, offeredRefusal, engineHealth, brokenMessage, engineRepairCmd } from './engines/index.mjs';
 import { envPrefix, psq, profilePath } from './engines/shared.mjs';
 import { findBinary } from './claude.mjs';
@@ -396,18 +396,24 @@ export function oneScope(ws) {
 }
 
 const oneLogins = new Map(); // wsId -> { status: 'waiting'|'done'|'failed', startedAt, error, account }
+const loginEnds = new WeakMap(); // a login's status -> the promise that settles when `one init` exits
 export function oneLoginStatus(wsId) { return oneLogins.get(wsId) || null; }
+/** Wait up to ms for a login that fails at once (One exits before any browser opens), so the dashboard says so. */
+export const oneLoginSettled = (st, ms = 2500) => Promise.race([loginEnds.get(st), new Promise(r => setTimeout(r, ms))]);
 
 /** Sign the workspace into its own One account: `one init --auth browser --project` opens a login window. */
 export function startOneLogin(ws, { onDone } = {}) {
   const cur = oneLogins.get(ws.id);
   if (cur?.status === 'waiting') return cur;
+  // One won't start on this Node: say why and how to fix it, instead of a login that dies before any browser opens
+  const stuck = oneBlocked();
+  if (stuck) throw Object.assign(new Error(`${stuck.message}${stuck.fix ? ` Run: ${stuck.fix}` : ''}`), { status: 409, code: 'one-node' });
   // the .one marker makes this folder the project root (else One would pick the Orchy folder and overwrite Orchy's own login)
   fs.mkdirSync(path.join(ws.dir, '.one'), { recursive: true });
   const st = { status: 'waiting', startedAt: new Date().toISOString(), error: null, account: null };
   oneLogins.set(ws.id, st);
   const before = mtime(oneConfig(ws));
-  one(['init', '--auth', 'browser', '--project', '--yes'], { cwd: ws.dir, timeoutMs: 15 * 60_000 })
+  const ended = one(['init', '--auth', 'browser', '--project', '--yes'], { cwd: ws.dir, timeoutMs: 15 * 60_000 })
     .then(res => {
       if (res?.success === false || res?.error) throw new Error(res.error?.message || res.error || 'One sign-in did not complete');
       const entry = config.workspaces.find(w => w.id === ws.id);
@@ -421,6 +427,7 @@ export function startOneLogin(ws, { onDone } = {}) {
     })
     .catch(e => { st.status = 'failed'; st.error = e.message; })
     .finally(() => onDone?.(st));
+  loginEnds.set(st, ended);
   return st;
 }
 
