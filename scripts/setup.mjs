@@ -130,6 +130,7 @@ export async function questions(env, setEnv, io = { yesNo, choose, askKey: (...a
   const { yesNo, choose, askKey, log } = io;
   const answered = env('VOICE_ENABLED') || env('JEV_PROVIDER');
   if (answered && !(await yesNo('\n  Setup has run before. Go through the questions again?', false))) return;
+  const later = []; // a feature wanted with its key left for later: the dashboard won't ask again (lib/features.mjs)
 
   log('\n  Voice');
   if (!(await yesNo('  Do you want to enable the Voice Agent feature (talk to Orchy and your agents)?', true))) {
@@ -142,7 +143,7 @@ export async function questions(env, setEnv, io = { yesNo, choose, askKey: (...a
     let any = false;
     if (which !== 1) { const k = await askKey('ELEVENLABS_API_KEY', 'ElevenLabs', 'elevenlabs.io → Developers → API keys'); if (k) { set('ELEVENLABS_API_KEY', k); any = true; } }
     if (which !== 0) { const k = await askKey('DEEPGRAM_API_KEY', 'Deepgram', 'console.deepgram.com → API keys'); if (k) { set('DEEPGRAM_API_KEY', k); any = true; } }
-    if (!any && !env('ELEVENLABS_API_KEY') && !env('DEEPGRAM_API_KEY')) log('  No voice key yet: Orchy uses your browser’s voice until you add one in Settings.');
+    if (!any && !env('ELEVENLABS_API_KEY') && !env('DEEPGRAM_API_KEY')) { later.push('voice'); log('  No voice key yet: Orchy uses your browser’s voice until you add one in Settings. It won’t ask again.'); }
   }
 
   log('\n  Jev (routing)');
@@ -167,7 +168,7 @@ export async function questions(env, setEnv, io = { yesNo, choose, askKey: (...a
     const k = await askKey(envKey, label, where, model);
     if (k) set(envKey, k);
     if (env(envKey)) { set('JEV_PROVIDER', provider); log(`  ${OK} Jev runs through ${label}.`); }
-    else { set('JEV_PROVIDER', ''); log('  No key yet, so Jev stays off. Add one later in Settings → Routing.'); }
+    else { set('JEV_PROVIDER', ''); later.push('jev'); log('  No key yet, so Jev stays off. Add one later in Settings → Routing. Orchy won’t ask again.'); }
   }
 
   log('\n  Scripts');
@@ -176,6 +177,7 @@ export async function questions(env, setEnv, io = { yesNo, choose, askKey: (...a
     'Off: ask me before every script',
   ]);
   set('SETUP_SCRIPTS', s === 0 ? 'on' : 'off'); // Orchy applies it once on start; Settings → Scripts changes it later
+  if (later.length) set('SETUP_SKIPPED', later.join(',')); // likewise applied once on start
 }
 
 /** The One CLI step. Missing, or a failed install, is a warning and never stops setup: Orchy runs without it and

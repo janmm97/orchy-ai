@@ -58,6 +58,7 @@ import { fixRouting, unroutedModel } from './lib/router.mjs';
 import * as owner from './lib/owner.mjs';
 import * as missions from './lib/missions.mjs';
 import { openTaskDir } from './lib/tasks.mjs';
+import { featureStates, parseSkipped, SKIPPABLE } from './lib/features.mjs';
 
 const PORT = Number(env('PORT', '8008'));
 // scripts/restart.mjs hands the Orchy it starts a one-time token, so only it can report how the restart went.
@@ -90,6 +91,10 @@ runner.setPort(PORT);
 // npm run setup's answer about scripts, applied once; Settings → Scripts changes it after
 const setupScripts = String(env('SETUP_SCRIPTS') || '').trim().toLowerCase();
 if (setupScripts === 'on' || setupScripts === 'off') { db().settings.scriptsFree = setupScripts === 'on'; save(); setEnv('SETUP_SCRIPTS', ''); }
+// …and the keys it was told to leave for later (lib/features.mjs): the dashboard doesn't ask for those again
+const setupSkipped = parseSkipped(env('SETUP_SKIPPED'));
+if (Object.keys(setupSkipped).length) { db().settings.skipped = { ...db().settings.skipped, ...setupSkipped }; save(); }
+if (env('SETUP_SKIPPED')) setEnv('SETUP_SKIPPED', '');
 ensureInks(); // any workspace from before colours: each gets its own
 const interrupted = runner.markInterruptedRuns(); // recover.boot offers the owner Resume / Start over on each
 migrateChat();
@@ -1552,6 +1557,16 @@ on('POST', '/api/settings', async (req) => {
   if ('missionMaxLive' in b) db().settings.missionMaxLive = Math.min(missions.LIMITS.liveCap, Math.max(1, Math.round(Number(b.missionMaxLive)) || missions.LIMITS.maxLive));
   if ('missionMaxMin' in b) db().settings.missionMaxMin = Math.min(1440, Math.max(0, Math.round(Number(b.missionMaxMin)) || 0));
   if ('callStuckMin' in b) db().settings.callStuckMin = Math.min(120, Math.max(1, Math.round(Number(b.callStuckMin)) || 10));
+  // an optional feature left for later ("Not now"): no nag about it (lib/features.mjs); false asks again
+  if (b.skip && typeof b.skip === 'object') {
+    const cur = db().settings.skipped ||= {};
+    for (const k of SKIPPABLE) if (k in b.skip) { if (b.skip[k]) cur[k] = true; else delete cur[k]; }
+  }
+  // a notice under the chat box the owner closed: closed in every browser, until what it says changes (its key does)
+  if (typeof b.dismiss === 'string' && b.dismiss.trim()) {
+    const cur = (db().settings.dismissed || []).filter(k => k !== b.dismiss);
+    db().settings.dismissed = [...cur, b.dismiss.slice(0, 200)].slice(-50);
+  }
   if (b.approvals === 'decisions' || b.approvals === 'all') db().settings.approvals = b.approvals;
   if (b.askFor && typeof b.askFor === 'object') {
     const cur = db().settings.askFor ||= {};
@@ -1601,6 +1616,9 @@ on('GET', '/api/setup', async (req) => {
     tools, harness: tools.some(t => t.kind === 'harness' && t.found && !t.refusal), keys,
     workspaces: { count: list.length, list },
     backend: await backendSummary({ force }), // the account "Fix Orchy" runs under (the Tools step offers one)
+    // where the owner stands on Jev and Voice (on, off, skipped, or still a question), and the steps they skipped
+    features: featureStates({ env, skipped: db().settings.skipped || {}, jevOn: jevMode() !== 'none' }),
+    skippedSteps: db().settings.setupSkipped || [],
     done: !!db().settings.setupDone,
   };
 });
@@ -1628,6 +1646,18 @@ on('POST', '/api/setup/owner', async (req) => {
   saveConfig();
   emit('settings.updated', { owner: { name: ownerName(), set: !!name }, timezone: config.timezone });
   return { ok: true, owner: { name, set: !!name }, timezone: config.timezone };
+});
+// a step of the setup guide the owner skipped: it stays skipped after a restart, and the guide opens past it
+const SETUP_STEPS = ['you', 'tools', 'keys', 'workspace', 'signin', 'app', 'agent'];
+on('POST', '/api/setup/skip', async (req) => {
+  const { step, skipped = true } = await readBody(req);
+  if (!SETUP_STEPS.includes(step)) throw Object.assign(new Error('Not a setup step'), { status: 400 });
+  const cur = new Set(db().settings.setupSkipped || []);
+  if (skipped) cur.add(step); else cur.delete(step);
+  db().settings.setupSkipped = [...cur];
+  save();
+  emit('settings.updated', { settings: db().settings });
+  return { ok: true, skippedSteps: db().settings.setupSkipped };
 });
 on('POST', '/api/setup/done', async (req) => {
   const { done } = await readBody(req);

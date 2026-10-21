@@ -51,6 +51,13 @@ ok(r.store.JEV_PROVIDER === 'vercel' && r.store.AI_GATEWAY_API_KEY === 'vg', 'Je
 // a skipped key: Jev stays off, and nothing is half set
 r = await run({ answers: [false, true, 0, 0] });
 ok(r.store.JEV_PROVIDER === '' && !('TYPESAFE_API_KEY' in r.store), 'Jev with the key skipped: provider left automatic (off until a key)');
+ok(r.store.SETUP_SKIPPED === 'jev', 'Jev with the key skipped: noted, so the dashboard won’t ask again');
+r = await run({ answers: [true, 0, true, 0, 0] });
+ok(r.store.SETUP_SKIPPED === 'voice,jev' && r.store.VOICE_ENABLED === '1', 'voice and Jev wanted, both keys skipped: both noted');
+r = await run({ answers: [true, 0, false, 0], start: { ELEVENLABS_API_KEY: 'kept' } });
+ok(!('SETUP_SKIPPED' in r.store), 'voice wanted with a key already saved: nothing noted');
+r = await run({ answers: [false, false, 0] });
+ok(!('SETUP_SKIPPED' in r.store), 'both turned off: nothing noted (off is its own answer)');
 // a key that was already there and kept
 r = await run({ answers: [true, false, true, 0, 0], start: { TYPESAFE_API_KEY: 'old', VOICE_ENABLED: '1' } });
 ok(r.store.JEV_PROVIDER === 'typesafe' && r.store.TYPESAFE_API_KEY === 'old', 'run again, key kept: the provider still points at it');
