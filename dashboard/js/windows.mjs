@@ -293,7 +293,7 @@ function setPopButton(w) {
 addEventListener('pagehide', () => { for (const w of wins.values()) { try { w.pop?.close(); } catch {} } });
 
 /**
- * openWindow({ id, title, kind:'decision'|'normal', size:''|'wide', body:Node|string,
+ * openWindow({ id, title, kind:'decision'|'normal', size:''|'wide'|'xwide', body:Node|string,
  *              from: Element|DOMRect, dockLabel, onClose, focus: true })
  */
 // One window at a time: a window opened from a button inside another window takes that window's

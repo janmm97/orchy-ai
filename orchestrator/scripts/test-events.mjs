@@ -12,14 +12,16 @@ await new Promise(r => srv.listen(0, '127.0.0.1', r));
 const port = srv.address().port;
 
 /** Connect, collect frames until `until(frames)` is true (or a timeout), then hang up. */
-function connect({ lastEventId, query = '', until = f => f.length >= 1, ms = 2000 } = {}) {
-  return new Promise((resolve, reject) => {
+function connect({ lastEventId, query = '', until = f => f.length >= 1, ms = 5000 } = {}) {
+  let onReady;
+  const ready = new Promise(r => { onReady = r; });
+  const p = new Promise((resolve, reject) => {
     const frames = [];
     const req = http.get({ host: '127.0.0.1', port, path: `/${query}`, headers: lastEventId ? { 'Last-Event-ID': lastEventId } : {} }, res => {
       assert.equal(res.statusCode, 200);
       assert.match(res.headers['content-type'], /text\/event-stream/);
       let buf = '';
-      const done = () => { clearTimeout(t); req.destroy(); resolve(frames); };
+      const done = () => { clearTimeout(t); req.destroy(); onReady(); resolve(frames); };
       const t = setTimeout(done, ms);
       res.setEncoding('utf8');
       res.on('data', d => {
@@ -35,12 +37,19 @@ function connect({ lastEventId, query = '', until = f => f.length >= 1, ms = 200
           if (!f.event) continue; // retry: / : ping
           f.json = JSON.parse(f.data);
           frames.push(f);
+          if (f.event === 'hello') onReady();
         }
         if (until(frames)) done();
       });
     });
-    req.on('error', e => (e.code === 'ECONNRESET' ? null : reject(e)));
+    req.on('error', e => {
+      onReady();
+      if (e.code === 'ECONNRESET') return;
+      reject(e);
+    });
   });
+  p.ready = ready;
+  return p;
 }
 const ok = (name) => console.log(`ok - ${name}`);
 
@@ -55,7 +64,7 @@ try {
 
   // live frames carry BOOT:seq ids and the numeric seq in the payload
   const live = connect({ until: x => x.length >= 6 });
-  await new Promise(r => setTimeout(r, 50));
+  await live.ready;
   const sent = [];
   for (let i = 0; i < 5; i++) sent.push(emit('test.ping', { i }));
   f = await live;
@@ -97,7 +106,7 @@ try {
   // that caused it, so ids reach the browser in order and its dedupe (seq not newer → drop) keeps both
   {
     const nested = connect({ until: x => x.length >= 3 });
-    await new Promise(r => setTimeout(r, 50));
+    await nested.ready;
     const onEvt = e => { if (e.type === 'test.outer') emit('test.inner', {}); };
     bus.on('event', onEvt);
     emit('test.outer', {});

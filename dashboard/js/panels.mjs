@@ -2,7 +2,7 @@
 // Connections (One + external MCP), Settings, Sessions history.
 import { openWindow, getWindow } from './windows.mjs';
 import { icon, createEl, orchySVG } from './pixel.mjs';
-import { esc, api, md, wsName, wsShort, wsClass, agentName, nameRole, platformName, dateTime, ownerName, backendInfo, setWorkspaces, oneSignIn } from './util.mjs';
+import { esc, api, md, wsName, wsShort, wsClass, agentName, nameRole, platformName, dateTime, ownerName, ownerKnown, timezone, backendInfo, setWorkspaces, oneSignIn } from './util.mjs';
 import { voiceConfig, setVoiceConfig, speak, setSound } from './voice.mjs';
 import { openAgent, openBuild, spriteFor } from './sheets.mjs';
 import { startCall } from './call.mjs';
@@ -999,11 +999,19 @@ export async function openConnections(wsId, { from, edit } = {}) {
 }
 
 // ── Settings ──
-export async function openSettings({ from } = {}) {
+// One section at a time, picked on the rail (a dropdown when the window is narrow), and Find across all of them.
+// Features gathers every on/off switch. Yellow marks only what stops work; off or "later" is plain.
+const SETTINGS_SECTIONS = [['features', 'Features', 'spark'], ['general', 'General', 'gear'], ['routing', 'Routing', 'steps'], ['voice', 'Voice & calls', 'speaker'],
+  ['accounts', 'Accounts', 'user'], ['approvals', 'Approvals', 'hand'], ['runs', 'Runs', 'play'], ['browser', 'This browser', 'key']];
+const SETTINGS_SEC = 'orchy-settings-section';
+export async function openSettings({ from, section } = {}) {
   const existing = getWindow('settings');
-  if (existing) { existing.restore(); existing.render?.(); return existing; }
-  const body = createEl(`<div style="display:grid;grid-template-columns:minmax(0,1fr);gap:var(--s5)"></div>`);
-  const w = openWindow({ id: 'settings', title: 'Settings', size: 'wide', body, from });
+  if (existing) { existing.restore(); if (section) existing.go?.(section); else existing.render?.(); return existing; }
+  const body = createEl(`<div class="settings-wrap"></div>`);
+  const w = openWindow({ id: 'settings', title: 'Settings', size: 'xwide', body, from });
+  const known = id => SETTINGS_SECTIONS.some(([k]) => k === id);
+  let sec = known(section) ? section : (() => { try { const v = localStorage.getItem(SETTINGS_SEC); return known(v) ? v : 'features'; } catch { return 'features'; } })();
+  let q = ''; // Find: every section at once, only the settings that match
   const keys = {}; // API keys pasted but not saved yet: a redraw (a workspace changing) puts them back
   let backendEditing = false; // "Change" pressed on Orchy's own account
   let selectedBackendRuntime = null; // engine picked in Settings switcher
@@ -1042,7 +1050,7 @@ export async function openSettings({ from } = {}) {
 
     return `<div style="display:grid;gap:4px">${head}
       ${engineSwitcher}
-      <span class="hint">“Fix Orchy” runs ${esc(rtLabel)} on Orchy’s own code. ${a.expected && activeRt === currentRt ? `Now: <b>${esc(a.expected)}</b>.` : '<span class="plate decide">not set</span>'}</span>
+      <span class="hint">“Fix Orchy” runs ${esc(rtLabel)} on Orchy’s own code. ${a.expected && activeRt === currentRt ? `Now: <b>${esc(a.expected)}</b>.` : '<span class="chip">not set</span>'}</span>
       ${pc && pc !== a.expected ? `<span class="btnrow"><button class="btn sm primary" type="button" data-backend-use="${esc(pc)}" data-rt="${esc(activeRt)}">${icon('check')}Use ${esc(pc)}</button><span class="hint">this computer’s ${esc(rtLabel)} sign-in</span></span>` : ''}
       ${activeRt !== currentRt ? `<span class="btnrow"><button class="btn sm" type="button" data-backend-switch="${esc(activeRt)}">Switch to ${esc(rtLabel)}</button></span>` : ''}
       ${form}</div>`;
@@ -1051,11 +1059,11 @@ export async function openSettings({ from } = {}) {
   body.addEventListener('click', e => { const b = e.target.closest('[data-act="setup-guide"]'); if (b) openSetup({ from: b }); });
   const keyRow = (k, label, hint) => {
     const set = ctx.state.envStatus?.[k];
-    return `<div class="field"><label for="k-${k}">${label} ${set ? `<span class="plate">set</span>` : `<span class="plate decide">not set</span>`}</label>
+    return `<div class="field set-item"><label for="k-${k}">${label} ${set ? `<span class="plate">set</span>` : ''}</label>
       <div class="btnrow"><input class="input data" id="k-${k}" type="password" autocomplete="off" placeholder="${set ? 'Paste a new key to replace it' : 'Paste key'}" style="flex:1;min-width:200px"><button class="btn" data-save="${k}">Save</button></div>
       <span class="hint">${hint}</span></div>`;
   };
-  const toggle = (attr, on, title, hint) => `<label style="display:grid;grid-template-columns:auto 1fr;gap:var(--s3);align-items:center"><span class="switch"><input type="checkbox" role="switch" ${attr} ${on ? 'checked' : ''}><span class="track"><span class="knob"></span></span></span><span><b>${title}</b><br><span class="hint">${hint}</span></span></label>`;
+  const toggle = (attr, on, title, hint) => `<label class="set-item" style="display:grid;grid-template-columns:auto 1fr;gap:var(--s3);align-items:center"><span class="switch"><input type="checkbox" role="switch" ${attr} ${on ? 'checked' : ''}><span class="track"><span class="knob"></span></span></span><span><b>${title}</b><br><span class="hint">${hint}</span></span></label>`;
   const JEV_OPTS = [
     ['typesafe', 'TypeSafe', 'TYPESAFE_API_KEY', 'Stored in .env, never shown again.'],
     ['openrouter', 'OpenRouter', 'OPENROUTER_API_KEY', 'openrouter.ai → Keys. Jev runs as ~typesafe/jev-latest.'],
@@ -1075,18 +1083,18 @@ export async function openSettings({ from } = {}) {
     const provider = JEV_OPTS.find(o => o[0] === pick)?.[0] || (pick !== 'off' && JEV_OPTS.find(o => o[0] === mode)?.[0]) || '';
     const on = pick !== 'off' && (!!provider || !!ctx.state.jev?.label || jevOpen);
     const opt = JEV_OPTS.find(o => o[0] === provider);
-    return `<section style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">Routing · TypeSafe Jev</h3>
+    return `<div class="set-group">
         ${toggle('data-usejev', on, 'Use Jev?', 'Jev reads each message and picks the workspace, the agent and the model. Off: your agent harness reads each message instead (slower, 10 to 30 seconds, on its own plan), and keyword matching only when there is no harness.')}
-        ${on ? `<div class="btnrow"><span class="label">Provider</span><select class="select" data-jevprovider aria-label="Jev provider" style="width:auto">${provider ? '' : '<option value="" selected disabled>Pick a provider…</option>'}${JEV_OPTS.map(([v, l]) => `<option value="${v}" ${provider === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+        ${on ? `<div class="btnrow set-item" data-find="provider typesafe openrouter vercel opencode"><span class="label">Provider</span><select class="select" data-jevprovider aria-label="Jev provider" style="width:auto">${provider ? '' : '<option value="" selected disabled>Pick a provider…</option>'}${JEV_OPTS.map(([v, l]) => `<option value="${v}" ${provider === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
         <p class="hint" style="margin:0">${ctx.state.jev?.label ? `Jev is reached through ${esc(ctx.state.jev.label)}.${['openrouter', 'opencode'].includes(mode) ? ' This is a chat model answering Jev’s questions, an approximation of the native Jev.' : ''}` : opt ? `Paste your ${opt[1]} key to switch Jev on. Until then, routing uses keyword matching.` : 'Pick the provider you have a key for.'}</p>
         ${opt ? keyRow(opt[2], `${opt[1]} API key`, opt[3]) : ''}
         ${ctx.state.jev?.label ? `${[['liveJev', 'Jev reads as you type', 'Its pick shows under the chat box before you send. Drafts reach Jev too, even ones you delete; they’re never saved.'],
            ['liveStart', 'Start right away when Jev’s sure', 'You saw the pick, so Enter starts the task with no countdown (Stop is on the run). Off: the card counts down as usual.']].map(([k, l, h]) => toggle(`data-set="${k}"`, ctx.state.settings?.[k] !== false, l, h)).join('')}
-        <div class="btnrow"><span class="label">Jev reads</span>
+        <div class="btnrow set-item" data-find="limits reads per message per day cap"><span class="label">Jev reads</span>
           <label class="hint">per message <input class="input data" type="number" min="0" max="200" step="1" data-livecap="liveReadsPerMessage" value="${esc(ctx.state.liveJev?.perMessage ?? 12)}" style="width:80px;margin-left:4px"></label>
           <label class="hint">per day <input class="input data" type="number" min="0" max="100000" step="50" data-livecap="liveReadsPerDay" value="${esc(ctx.state.liveJev?.perDay ?? 1000)}" style="width:96px;margin-left:4px"></label></div>
         <p class="hint" style="margin:0">0 means no limit. Each read is about 5k Jev tokens; ${esc(ctx.state.liveJev?.today ?? 0)} so far today.</p>` : ''}` : ''}
-      </section>`;
+      </div>`;
   };
   const voiceSection = v => {
     const env = ctx.state.envStatus || {};
@@ -1094,74 +1102,184 @@ export async function openSettings({ from } = {}) {
     // no service picked yet: the one whose key is set, else ask
     const provider = v.provider || (both ? '' : env.ELEVENLABS_API_KEY ? 'elevenlabs' : env.DEEPGRAM_API_KEY ? 'deepgram' : '');
     const eleven = provider === 'elevenlabs' || both, deepgram = provider === 'deepgram' || both;
-    return `<section style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">Voice</h3>
+    return `<div class="set-group">
         ${toggle('data-voiceenabled', v.enabled !== false, 'Voice', 'Orchy speaks, and you can call Orchy and your agents. Off: chat only, and nothing is sent to ElevenLabs or Deepgram.')}
         ${v.enabled === false ? '' : `<div data-voice style="display:grid;gap:var(--s3)">
-        <div class="btnrow"><span class="label">Service</span><select class="select" data-voiceprovider aria-label="Voice service" style="width:auto">${provider || both ? '' : '<option value="" selected disabled>Pick a service…</option>'}${both ? '<option value="" selected>ElevenLabs, Deepgram as backup</option>' : ''}${VOICE_OPTS.map(([k, l]) => `<option value="${k}" ${provider === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+        <div class="btnrow set-item" data-find="service provider elevenlabs deepgram"><span class="label">Service</span><select class="select" data-voiceprovider aria-label="Voice service" style="width:auto">${provider || both ? '' : '<option value="" selected disabled>Pick a service…</option>'}${both ? '<option value="" selected>ElevenLabs, Deepgram as backup</option>' : ''}${VOICE_OPTS.map(([k, l]) => `<option value="${k}" ${provider === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
         <p class="hint" style="margin:0">${provider || both ? `Speaking: <b>${{ elevenlabs: 'ElevenLabs', deepgram: 'Deepgram Aura' }[v.tts] || 'your browser’s voice, until the key is saved'}</b>. ${esc(VOICE_OPTS.find(o => o[0] === provider)?.[2] || '')}` : 'Pick the service you have a key for. Until then Orchy uses your browser’s voice.'}</p>
         ${v.ttsIssue ? `<div class="ctx"><b>Voice:</b> ${esc(v.ttsIssue)}</div>` : ''}
         ${eleven ? keyRow('ELEVENLABS_API_KEY', 'ElevenLabs API key', 'Orchy’s voice, and calls. elevenlabs.io → Settings → API keys.') : ''}
         ${deepgram ? keyRow('DEEPGRAM_API_KEY', 'Deepgram API key', `${both ? 'Orchy’s backup voice (Aura). ' : ''}console.deepgram.com → API keys.`) : ''}
-        ${eleven ? `<div class="field"><label for="voice-sel">ElevenLabs voice</label><div class="btnrow"><select class="select" id="voice-sel" style="flex:1;min-width:200px"><option value="${esc(v.voiceId)}">Current: ${esc(v.voiceId)}</option></select><button class="btn" data-act="test-voice">${icon('speaker')}Test</button></div></div>`
-          : provider ? `<div class="btnrow"><button class="btn" data-act="test-voice">${icon('speaker')}Test</button></div>` : ''}
+        ${eleven ? `<div class="field set-item" data-find="voice pick test"><label for="voice-sel">ElevenLabs voice</label><div class="btnrow"><select class="select" id="voice-sel" style="flex:1;min-width:200px"><option value="${esc(v.voiceId)}">Current: ${esc(v.voiceId)}</option></select><button class="btn" data-act="test-voice">${icon('speaker')}Test</button></div></div>`
+          : provider ? `<div class="btnrow set-item" data-find="test voice"><button class="btn" data-act="test-voice">${icon('speaker')}Test</button></div>` : ''}
         </div>`}
-      </section>`;
+      </div>`;
   };
+  // a row Find can match (its text, plus words that aren't on screen)
+  const item = (html, find = '', cls = '') => `<div class="set-item ${cls}" data-find="${esc(find)}">${html}</div>`;
+  const pane = (id, title, lead, groups) => `<section class="set-pane" data-pane="${id}" aria-labelledby="sp-${id}">
+      <div class="set-head"><h3 class="px2 caps" id="sp-${id}" tabindex="-1">${title}</h3>${lead ? `<p class="hint">${lead}</p>` : ''}</div>${groups}</section>`;
+  const group = (title, inner) => `<div class="set-group">${title ? `<h4>${title}</h4>` : ''}${inner}</div>`;
+  const select = (attr, label, opts, cur) => `<select class="select" ${attr} aria-label="${esc(label)}" style="width:auto;padding:2px 6px">${opts.map(([n, l]) => `<option value="${n}" ${cur === n ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+
+  // Features: each optional feature in one row, with where it stands. Plain words for off and later; yellow only when broken
+  const features = (s, v) => {
+    const env = ctx.state.envStatus || {}, list = ctx.state.workspaces || [];
+    const jevPick = String(env.JEV_PROVIDER || '').toLowerCase();
+    const stuck = list.find(x => x.oneBlocked)?.oneBlocked;
+    const signedIn = list.filter(x => x.oneScoped !== false).length;
+    const callsReady = v.enabled !== false && !!env.ELEVENLABS_API_KEY && v.provider !== 'deepgram';
+    const callsOn = callsReady && (s.callStuck !== false || s.callAsk !== false || s.callDone === true);
+    const row = ({ id, ico, title, text, state, on, broken, control }) => item(`<div class="feat-row ${on ? 'on' : ''} ${broken ? 'broken' : ''}">
+        <span class="fi">${icon(ico)}</span><span class="t">${control?.startsWith('<span class="switch">') ? `<label for="ft-${id}"><b>${title}</b></label>` : `<b>${title}</b>`}<span class="hint">${text}</span></span>
+        <span class="rc">${state}${control || ''}</span></div>`, `${id} feature`);
+    const sw = (id, on, disabled = false) => `<span class="switch"><input type="checkbox" role="switch" id="ft-${id}" data-feat="${id}" ${on ? 'checked' : ''} ${disabled ? 'disabled' : ''}><span class="track"><span class="knob"></span></span></span>`;
+    const plate = (on, word) => `<span class="${on ? 'plate' : 'chip'}">${esc(word)}</span>`;
+    const jevOn = !!ctx.state.jev?.label, jevOff = jevPick === 'off';
+    const jevWord = jevOff ? 'Off' : jevOn ? 'On' : s.skipped?.jev ? 'Later' : 'No key yet';
+    const speaking = { elevenlabs: 'ElevenLabs', deepgram: 'Deepgram' }[v.tts] || 'browser voice';
+    return `<div class="feat-list">
+      ${row({ id: 'jev', ico: 'steps', title: 'Jev routing', on: jevOn,
+        text: jevOff ? 'Off. Your agent harness reads each message instead.' : jevOn ? `Picks the workspace, agent and model for each message, through ${esc(ctx.state.jev.label)}.` : s.skipped?.jev ? 'You’re adding a key later. Until then your harness reads each message.' : 'Add a key in Routing to switch it on.',
+        state: plate(jevOn, jevWord), control: sw('jev', jevOn) })}
+      ${row({ id: 'voice', ico: 'speaker', title: 'Voice', on: v.enabled !== false,
+        text: v.enabled === false ? 'Off. Chat only, and nothing is sent to ElevenLabs or Deepgram.' : `Orchy speaks with ${esc(speaking)}.${v.tts ? '' : ' Add a key in Voice & calls whenever you like.'}`,
+        state: plate(v.enabled !== false, v.enabled === false ? 'Off' : `On · ${speaking}`), control: sw('voice', v.enabled !== false) })}
+      ${row({ id: 'calls', ico: 'phone', title: 'Agent calls', on: callsOn,
+        text: callsReady ? 'Agents ring you here in Orchy when they’re stuck on you. Voice & calls sets when.' : 'Needs Voice with an ElevenLabs key.',
+        state: plate(callsOn, callsOn ? 'On' : 'Off'), control: `<button class="btn sm" type="button" data-go="voice">${callsReady ? 'Change' : 'Set up'}</button>` })}
+      ${row({ id: 'coach', ico: 'huddle', title: 'Orchy joins huddles', on: s.huddleCoach !== false,
+        text: 'He reads along and pushes back when it changes the outcome. He never approves or assigns work.',
+        state: plate(s.huddleCoach !== false, s.huddleCoach !== false ? 'On' : 'Off'), control: sw('coach', s.huddleCoach !== false) })}
+      ${row({ id: 'one', ico: 'plug', title: 'One: your apps', on: !stuck && signedIn > 0, broken: !!stuck,
+        text: stuck ? `Installed, but it can’t run on Node ${esc(stuck.node)}.` : list.length ? `${signedIn} of ${list.length} workspace${list.length === 1 ? '' : 's'} signed in. Each signs in on its own.` : 'Each workspace signs in to One on its own.',
+        state: stuck ? `<span class="plate decide">${icon('bang')}Needs you</span>` : '', control: `<button class="btn sm" type="button" data-go="accounts">${stuck ? 'Fix' : 'Accounts'}</button>` })}
+    </div>`;
+  };
+
+  // the rail's counts: only what stops work (an account that won't run, One that can't start, a voice key refused)
+  const needs = v => {
+    const list = ctx.state.workspaces || [], b = backendInfo().account || {};
+    const accounts = list.filter(x => x.enabled !== false && !x.account?.ok).length + list.reduce((n, x) => n + (x.extraAccounts || []).filter(e => !e.ok).length, 0)
+      + (b.expected && !b.ok ? 1 : 0) + (list.some(x => x.oneBlocked) ? 1 : 0);
+    return { features: list.some(x => x.oneBlocked) ? 1 : 0, accounts, voice: v.ttsIssue ? 1 : 0 };
+  };
+
   const draw = () => {
     const s = ctx.state.settings || {};
     const v = voiceConfig();
     const theme = localStorage.getItem('jos-theme') || 'day'; // light unless the owner picks otherwise
-    body.innerHTML = `
-      <section style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">Behavior</h3>
-        ${[['autoDispatch', 'Auto-dispatch when Jev is confident', 'The routing card counts down and sends. Off: you press Send every time.'],
-           ['actionPlan', 'Jev plans each task’s app actions', 'Agents start with the One actions Jev picked and their docs. Off: they look them up.'],
-           ['budgetRouting', 'Lean cheaper when the week runs high', 'When agents have spent more than in a usual week, Jev’s close calls take the lighter model and small asks lean to the generalist. An agent you name is never swapped.'],
-           ['voiceReplies', 'Orchy speaks every reply', 'Off: Orchy only speaks when you talked to it.'],
-           ['sound', '8-bit sounds', 'A chirp when an agent needs you or finishes.']].map(([k, l, h]) => `
-          <label style="display:grid;grid-template-columns:auto 1fr;gap:var(--s3);align-items:center"><span class="switch"><input type="checkbox" role="switch" data-set="${k}" ${s[k] !== false ? 'checked' : ''}><span class="track"><span class="knob"></span></span></span><span><b>${l}</b><br><span class="hint">${h}</span></span></label>`).join('')}
-        <div class="btnrow"><span class="label">Concurrency</span><label class="hint">run up to <select class="select" data-maxlive aria-label="Max live runs per account" style="width:auto;padding:2px 6px">${[1, 2, 3, 4, 5, 6].map(n => `<option value="${n}" ${(Number(s.maxLivePerAccount) || 3) === n ? 'selected' : ''}>${n}</option>`).join('')}</select> live runs per account (more queue automatically; Run now jumps the queue)</label></div>
-        <div class="btnrow"><span class="label">Huddles</span><label class="hint">agents talk for up to <select class="select" data-huddleturns aria-label="Turns per huddle" style="width:auto;padding:2px 6px">${[6, 8, 10, 12, 16, 20].map(n => `<option value="${n}" ${(Number(s.huddleTurns) || 10) === n ? 'selected' : ''}>${n}</option>`).join('')}</select> turns (at least two each, so bigger huddles get more), push back on each other, then write up what they agree (Keep talking adds 6)</label></div>
-        <div data-coach>${coachSettingsHTML(s)}</div>
-        <div class="btnrow"><span class="label">Theme</span><div class="seg" role="group" aria-label="Theme">${[['day', 'Light'], ['night', 'Dark'], ['auto', 'Match system']].map(([t, l]) => `<button type="button" data-theme="${t}" aria-pressed="${theme === t}">${l}</button>`).join('')}</div>
-          <button class="btn sm" data-act="notify">${icon('bang')}Desktop alerts</button><button class="btn sm" data-act="setup-guide">${icon('spark')}Setup guide</button></div>
-      </section>
-      <section style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">Checks and recovery</h3>
-        ${[['validateRuns', s.validateRuns !== false, 'Orchy checks finished runs', 'No model, no cost: did it report, do the files it names exist, does it say it sent or changed something in an app with no step to show for it. It only flags: the run window offers Ask it to fix, and nothing is re-run on its own.'],
-           ['validateJev', s.validateJev === true, 'Jev also reads each report', 'One quick Jev call per finished run: does the report answer what you asked? Off by default.'],
-           ['autoRetry', s.autoRetry !== false, 'Retry safe failures on their own', 'Only when the engine, the API or the network failed before the agent did anything but read: up to 2 tries, 20 to 60 seconds apart, under the same account. Anything else waits for you in the chat.']].map(([k, on, l, h]) => `
-          <label style="display:grid;grid-template-columns:auto 1fr;gap:var(--s3);align-items:center"><span class="switch"><input type="checkbox" role="switch" data-set="${k}" ${on ? 'checked' : ''}><span class="track"><span class="knob"></span></span></span><span><b>${l}</b><br><span class="hint">${h}</span></span></label>`).join('')}
-        <div class="btnrow"><span class="label">Stuck runs</span><label class="hint">flag a run after <select class="select" data-recnum="stallMin" aria-label="Minutes with no new step before Orchy flags a run" style="width:auto;padding:2px 6px">${[[0, 'never'], [10, '10'], [20, '20'], [30, '30'], [60, '60'], ...([0, 10, 20, 30, 60].includes(s.stallMin ?? 20) ? [] : [[s.stallMin, String(s.stallMin)]])].map(([n, l]) => `<option value="${n}" ${(s.stallMin ?? 20) === n ? 'selected' : ''}>${l}</option>`).join('')}</select> minutes with no new step (it keeps running; you choose)</label></div>
-        <div class="btnrow"><span class="label">Time cap</span><label class="hint">stop runs after <select class="select" data-recnum="stopAfterMin" aria-label="Stop runs after this many minutes" style="width:auto;padding:2px 6px">${[[0, 'no limit'], [60, '1 hour'], [120, '2 hours'], [240, '4 hours'], [480, '8 hours']].map(([n, l]) => `<option value="${n}" ${(Number(s.stopAfterMin) || 0) === n ? 'selected' : ''}>${l}</option>`).join('')}</select> of running (never while it’s waiting on you)</label></div>
-      </section>
-      ${browserSectionHTML()}
-      <section data-voice style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">Agents call you</h3>
-        <p class="hint" style="margin:0">They ring right here in Orchy, never your phone: answer and you’re talking to the agent by name. One call at a time, at most 12 a day. A missed call lands in Orchy’s chat with Call back. Turn on Desktop alerts to see calls while this tab is in the background.</p>
-        ${[['callStuck', s.callStuck !== false, 'When an agent is stuck on you', `A question or approval waited <select class="select" data-callmin aria-label="Minutes before an agent calls" style="width:auto;padding:2px 6px">${[5, 10, 15, 30, 60].map(m => `<option value="${m}" ${(Number(s.callStuckMin) || 10) === m ? 'selected' : ''}>${m}</option>`).join('')}</select> minutes: its agent rings to ask you.`],
-           ['callAsk', s.callAsk !== false, 'When an agent asks to', 'For something urgent that can’t wait, at most twice per task. Never from a client’s task.'],
-           ['callDone', s.callDone === true, 'When a task finishes', 'The agent rings to tell you how it went, scheduled tasks too. Can get busy.']].map(([k, on, l, h]) => `
-          <div style="display:grid;grid-template-columns:auto 1fr;gap:var(--s3);align-items:center"><span class="switch"><input type="checkbox" role="switch" id="cs-${k}" data-setcall="${k}" ${on ? 'checked' : ''}><span class="track"><span class="knob"></span></span></span><span><label for="cs-${k}"><b>${l}</b></label><br><span class="hint">${h}</span></span></div>`).join('')}
-        ${ctx.state.envStatus?.ELEVENLABS_API_KEY ? '' : '<div class="ctx">Calls need the ElevenLabs API key (Voice, below).</div>'}
-      </section>
-      <section style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">Accounts</h3>
-        <div class="list">${backendAccountHTML()}${ctx.state.workspaces.map(x => `<div style="display:grid;gap:4px"><b>${esc(wsName(x.id))}${x.enabled === false ? ' · off' : ''}</b>
-          <span class="hint">${esc(x.account.runtimeLabel || 'Claude Code')} must run as <b>${esc(x.account.expected || '')}</b> · profile ${esc(x.account.configDir)} · ${x.account.ok ? `${icon('check')} logged in as ${esc(x.account.actual)}` : `<span class="plate decide">${x.account.loggedIn ? `wrong account: ${esc(x.account.actual || '?')}` : 'not logged in'}</span>`}</span>
-          ${x.account.ok ? '' : `<span class="hint">Paste into a terminal (PowerShell on Windows):</span><code class="data" style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(x.account.fix)}</code><span class="btnrow"><button class="btn sm" data-loginws="${esc(x.id)}">Log in</button><button class="btn sm" data-copycmd="${esc(x.account.fix)}">Copy command</button>${x.account.fixAlt ? `<span class="hint">${esc(x.account.fixAlt)}</span>` : ''}</span>`}
-          ${(x.extraAccounts || []).map(e => `<span class="hint">${esc(e.runtimeLabel)} for ${esc(e.agents.join(', '))} must run as <b>${esc(e.expected || 'an account (none set)')}</b> · profile ${esc(e.configDir)} · ${e.ok ? `${icon('check')} logged in as ${esc(e.actual)}` : `<span class="plate decide">${e.loggedIn ? `wrong account: ${esc(e.actual || '?')}` : 'not logged in'}</span>`}</span>
-          ${e.ok || !e.fix ? '' : `<span class="btnrow"><button class="btn sm" data-loginws="${esc(x.id)}" data-rt="${esc(e.runtime)}">Log in</button><button class="btn sm" data-copycmd="${esc(e.fix)}">Copy command</button></span>`}`).join('')}</div>`).join('')}</div>
-        <div class="btnrow"><button class="btn sm" data-act="accounts">${icon('refresh')}Re-check accounts</button></div>
-      </section>
-      ${jevSection()}
-      ${voiceSection(v)}
-      <section style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">Approvals</h3>
-        <div class="seg" role="group" aria-label="When agents ask you">${[['decisions', 'Only decisions'], ['all', 'Every change']].map(([v, l]) => `<button type="button" data-approvals="${v}" aria-pressed="${(s.approvals || 'decisions') === v}">${l}</button>`).join('')}</div>
-        <p class="hint" style="margin:0">${(s.approvals || 'decisions') === 'all'
-          ? 'Agents stop for your OK before anything that creates, changes, sends, deletes or spends.'
-          : 'Agents work on their own (reading, drafting, labelling, notes, docs, files in their folder) and only stop for the decisions switched on below. ' + (s.scriptsFree !== false ? 'Commands, scripts and One CLI calls run too, unless they look like one of those decisions. Other workspaces’ folders, Orchy’s own files and dashboard, sign-ins, setup files and system changes still ask, and so does everything outward in a head’s hand-offs and clients’ runs.' : 'Running scripts, network tools, deleting files and other folders ask.') + ' Connection limits and read-only access still hold.'}</p>
-        ${(s.approvals || 'decisions') === 'all' ? '' : `<label style="display:grid;grid-template-columns:auto 1fr;gap:var(--s3);align-items:center"><span class="switch"><input type="checkbox" role="switch" data-set="scriptsFree" ${s.scriptsFree !== false ? 'checked' : ''}><span class="track"><span class="knob"></span></span></span><span><b>Scripts and commands</b><br><span class="hint">${s.scriptsFree !== false ? 'Run on their own (scripts, curl, deleting scratch files, One CLI calls and flows), unless one looks like a decision switched on below, like a refund, an email or a calendar invite' : 'Asks you before every script, network tool, delete outside its folder and One CLI call it can’t read'}</span></span></label>` + (ctx.state.approvalKinds || []).map(k => `
-          <label style="display:grid;grid-template-columns:auto 1fr;gap:var(--s3);align-items:center"><span class="switch"><input type="checkbox" role="switch" data-askfor="${esc(k.key)}" ${s.askFor?.[k.key] !== false ? 'checked' : ''}><span class="track"><span class="knob"></span></span></span><span><b>${esc(k.label)}</b><br><span class="hint">${s.askFor?.[k.key] !== false ? 'Asks you' : 'Runs on its own'}: ${esc(k.hint)}</span></span></label>`).join('')}
-      </section>
-      <section style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">Remembered approvals</h3><div data-rules class="list"><div class="hint">Loading…</div></div></section>`;
+    const n = needs(v);
+    const list = ctx.state.workspaces || [];
+    const stuck = list.find(x => x.oneBlocked)?.oneBlocked;
+    const sw = (attr, on) => `<span class="switch"><input type="checkbox" role="switch" ${attr} ${on ? 'checked' : ''}><span class="track"><span class="knob"></span></span></span>`;
+    const setToggle = (k, on, l, h) => toggle(`data-set="${k}"`, on, l, h);
+    body.innerHTML = `<div class="settings">
+      <div class="set-rail">
+        <label class="sr-only" for="set-find">Find a setting</label>
+        <input class="input" id="set-find" type="search" placeholder="Find a setting" autocomplete="off" value="${esc(q)}">
+        <nav aria-label="Settings sections"><ul class="set-nav">${SETTINGS_SECTIONS.map(([id, label, ico]) => `<li><button type="button" data-go="${id}" ${id === sec ? 'aria-current="page"' : ''}>${icon(ico)}<span class="t">${esc(label)}</span>${n[id] ? `<span class="count" title="Needs you">${n[id]}</span>` : ''}</button></li>`).join('')}</ul></nav>
+        <div class="set-pick"><label class="sr-only" for="set-pick">Section</label><select class="select" id="set-pick">${SETTINGS_SECTIONS.map(([id, label]) => `<option value="${id}" ${id === sec ? 'selected' : ''}>${esc(label)}${n[id] ? ` · ${n[id]} needs you` : ''}</option>`).join('')}</select></div>
+        <button class="btn sm ghost set-guide" type="button" data-act="setup-guide">${icon('doc')}Setup guide</button>
+      </div>
+      <div class="set-main">
+        <div class="empty set-nohits set-off"><strong>No setting matches</strong>Try voice, key, theme, approvals or One.</div>
+        ${pane('features', 'Features', 'Everything optional, in one list. Off is a fine answer: Orchy won’t ask again about anything you turned off or left for later.',
+          group('', features(s, v)))}
+        ${pane('general', 'General', 'How Orchy greets you, keeps time and looks.',
+          group('', `${item(`<form class="field" data-owner-form><label for="set-name">Your name and timezone</label>
+              <div class="btnrow"><input class="input" id="set-name" name="name" maxlength="60" autocomplete="given-name" value="${esc(ownerKnown() ? ownerName() : '')}" placeholder="What should Orchy call you?" style="flex:1;min-width:160px">
+              <input class="input data" id="set-tz" name="timezone" value="${esc(timezone())}" autocomplete="off" style="flex:1;min-width:160px" aria-label="Timezone"><button class="btn sm" type="submit">Save</button></div>
+              <span class="hint">For greetings, the clock, schedules and daily reports. A timezone looks like Europe/Berlin.</span></form>`, 'name owner timezone clock')}
+            ${item(`<div class="btnrow"><span class="label">Theme</span><div class="seg" role="group" aria-label="Theme">${[['day', 'Light'], ['night', 'Dark'], ['auto', 'Match system']].map(([t, l]) => `<button type="button" data-theme="${t}" aria-pressed="${theme === t}">${l}</button>`).join('')}</div></div>`, 'theme light dark night day appearance')}
+            ${setToggle('sound', s.sound !== false, '8-bit sounds', 'A chirp when an agent needs you or finishes.')}
+            ${item(`<div class="btnrow"><button class="btn sm" data-act="notify">${icon('bang')}Desktop alerts</button><span class="hint">See when an agent needs you while this tab is in the background.</span></div>`, 'desktop alerts notifications')}`))}
+        ${pane('routing', 'Routing', 'Jev reads each message and decides who handles it.',
+          `${jevSection()}${group('What Jev does on his own', [
+            ['autoDispatch', 'Auto-dispatch when Jev is confident', 'The routing card counts down and sends. Off: you press Send every time.'],
+            ['actionPlan', 'Jev plans each task’s app actions', 'Agents start with the One actions Jev picked and their docs. Off: they look them up.'],
+            ['budgetRouting', 'Lean cheaper when the week runs high', 'When agents have spent more than in a usual week, Jev’s close calls take the lighter model and small asks lean to the generalist. An agent you name is never swapped.']]
+            .map(([k, l, h]) => setToggle(k, s[k] !== false, l, h)).join(''))}`)}
+        ${pane('voice', 'Voice & calls', 'Talk to Orchy and your agents, and let them ring you here in Orchy, never on your phone.',
+          `${voiceSection(v)}${v.enabled === false ? '' : group('', setToggle('voiceReplies', s.voiceReplies !== false, 'Orchy speaks every reply', 'Off: Orchy only speaks when you talked to it.'))}
+          <div class="set-group" data-voice><h4>Agents call you</h4>
+            <p class="hint" style="margin:0">One call at a time, at most 12 a day. A missed call lands in Orchy’s chat with Call back. Turn on Desktop alerts (General) to see calls while this tab is in the background.</p>
+            ${[['callStuck', s.callStuck !== false, 'When an agent is stuck on you', `A question or approval waited ${select('data-callmin', 'Minutes before an agent calls', [5, 10, 15, 30, 60].map(m => [m, m]), Number(s.callStuckMin) || 10)} minutes: its agent rings to ask you.`],
+               ['callAsk', s.callAsk !== false, 'When an agent asks to', 'For something urgent that can’t wait, at most twice per task. Never from a client’s task.'],
+               ['callDone', s.callDone === true, 'When a task finishes', 'The agent rings to tell you how it went, scheduled tasks too. Can get busy.']].map(([k, on, l, h]) =>
+              item(`<div style="display:grid;grid-template-columns:auto 1fr;gap:var(--s3);align-items:center">${sw(`id="cs-${k}" data-setcall="${k}"`, on)}<span><label for="cs-${k}"><b>${l}</b></label><br><span class="hint">${h}</span></span></div>`, 'call ring phone')).join('')}
+            ${ctx.state.envStatus?.ELEVENLABS_API_KEY ? '' : '<p class="hint" style="margin:0">Calls use ElevenLabs: they start once its key is saved above.</p>'}
+          </div>`)}
+        ${pane('accounts', 'Accounts', 'Each workspace runs under exactly one login per tool, and signs in to One on its own.',
+          `${stuck ? group('', item(`<div class="ctx decide-note"><b>One can’t run on Node ${esc(stuck.node)}</b><br>${esc(stuck.message)}${stuck.fix ? cmdHTML(stuck.fix) : ''}</div>`, 'one node update fix')) : ''}
+          ${group('Fix Orchy', item(backendAccountHTML(), 'fix orchy backend own code account'))}
+          ${group('Workspaces', `${list.length ? '' : '<p class="hint" style="margin:0">No workspaces yet. Each one you add shows its logins here.</p>'}<div class="list">${list.map(x => item(`<div style="display:grid;gap:4px"><b>${esc(wsName(x.id))}${x.enabled === false ? ' · off' : ''}</b>
+            <span class="hint">${esc(x.account.runtimeLabel || 'Claude Code')} must run as <b>${esc(x.account.expected || '')}</b> · profile ${esc(x.account.configDir)} · ${x.account.ok ? `${icon('check')} logged in as ${esc(x.account.actual)}` : `<span class="plate decide">${x.account.loggedIn ? `wrong account: ${esc(x.account.actual || '?')}` : 'not logged in'}</span>`}</span>
+            ${x.account.ok ? '' : `<span class="hint">Paste into a terminal (PowerShell on Windows):</span><code class="data" style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(x.account.fix)}</code><span class="btnrow"><button class="btn sm" data-loginws="${esc(x.id)}">Log in</button><button class="btn sm" data-copycmd="${esc(x.account.fix)}">Copy command</button>${x.account.fixAlt ? `<span class="hint">${esc(x.account.fixAlt)}</span>` : ''}</span>`}
+            ${(x.extraAccounts || []).map(e => `<span class="hint">${esc(e.runtimeLabel)} for ${esc(e.agents.join(', '))} must run as <b>${esc(e.expected || 'an account (none set)')}</b> · profile ${esc(e.configDir)} · ${e.ok ? `${icon('check')} logged in as ${esc(e.actual)}` : `<span class="plate decide">${e.loggedIn ? `wrong account: ${esc(e.actual || '?')}` : 'not logged in'}</span>`}</span>
+            ${e.ok || !e.fix ? '' : `<span class="btnrow"><button class="btn sm" data-loginws="${esc(x.id)}" data-rt="${esc(e.runtime)}">Log in</button><button class="btn sm" data-copycmd="${esc(e.fix)}">Copy command</button></span>`}`).join('')}
+            <span class="hint">One · ${x.oneScoped !== false ? `${icon('check')} signed in` : `<span class="chip">not signed in</span> ${x.oneBlocked ? '(fix Node first)' : `<button class="btn sm" type="button" data-onesign="${esc(x.id)}">${icon('key')}Sign in to One</button>`}`}</span></div>`, `${x.name} workspace login one`)).join('')}</div>
+            <div class="btnrow"><button class="btn sm" data-act="accounts">${icon('refresh')}Re-check accounts</button></div>`)}`)}
+        ${pane('approvals', 'Approvals', 'When agents stop and wait for your OK. Connection limits and read-only access hold either way.',
+          `${group('', `${item(`<div class="seg" role="group" aria-label="When agents ask you">${[['decisions', 'Only decisions'], ['all', 'Every change']].map(([a, l]) => `<button type="button" data-approvals="${a}" aria-pressed="${(s.approvals || 'decisions') === a}">${l}</button>`).join('')}</div>
+            <p class="hint" style="margin:0">${(s.approvals || 'decisions') === 'all'
+              ? 'Agents stop for your OK before anything that creates, changes, sends, deletes or spends.'
+              : 'Agents work on their own (reading, drafting, labelling, notes, docs, files in their folder) and only stop for the decisions switched on below. ' + (s.scriptsFree !== false ? 'Commands, scripts and One CLI calls run too, unless they look like one of those decisions. Other workspaces’ folders, Orchy’s own files and dashboard, sign-ins, setup files and system changes still ask, and so does everything outward in a head’s hand-offs and clients’ runs.' : 'Running scripts, network tools, deleting files and other folders ask.')}</p>`, 'approvals mode decisions every change')}
+            ${(s.approvals || 'decisions') === 'all' ? '' : toggle('data-set="scriptsFree"', s.scriptsFree !== false, 'Scripts and commands', s.scriptsFree !== false ? 'Run on their own (scripts, curl, deleting scratch files, One CLI calls and flows), unless one looks like a decision switched on below, like a refund, an email or a calendar invite' : 'Asks you before every script, network tool, delete outside its folder and One CLI call it can’t read')}`)}
+          ${(s.approvals || 'decisions') === 'all' ? '' : group('Always ask before', (ctx.state.approvalKinds || []).map(k => toggle(`data-askfor="${esc(k.key)}"`, s.askFor?.[k.key] !== false, esc(k.label), `${s.askFor?.[k.key] !== false ? 'Asks you' : 'Runs on its own'}: ${esc(k.hint)}`)).join(''))}
+          ${group('Remembered approvals', item('<div data-rules class="list"><div class="hint">Loading…</div></div>', 'remembered always allow rules forget'))}`)}
+        ${pane('runs', 'Runs', 'How many agents work at once, how long they may run, and what Orchy does when one goes wrong.',
+          `${group('', `${item(`<div class="btnrow"><span class="label">Concurrency</span><label class="hint">run up to ${select('data-maxlive', 'Max live runs per account', [1, 2, 3, 4, 5, 6].map(m => [m, m]), Number(s.maxLivePerAccount) || 3)} live runs per account (more queue automatically; Run now jumps the queue)</label></div>`, 'concurrency live runs queue')}
+            ${item(`<div class="btnrow"><span class="label">Huddles</span><label class="hint">agents talk for up to ${select('data-huddleturns', 'Turns per huddle', [6, 8, 10, 12, 16, 20].map(m => [m, m]), Number(s.huddleTurns) || 10)} turns (at least two each, so bigger huddles get more), push back on each other, then write up what they agree (Keep talking adds 6)</label></div>`, 'huddle turns')}
+            ${item(`<div data-coach>${coachSettingsHTML(s)}</div>`, 'huddle coach orchy joins')}`)}
+          ${group('Checks and recovery', `${[['validateRuns', s.validateRuns !== false, 'Orchy checks finished runs', 'No model, no cost: did it report, do the files it names exist, does it say it sent or changed something in an app with no step to show for it. It only flags: the run window offers Ask it to fix, and nothing is re-run on its own.'],
+              ['validateJev', s.validateJev === true, 'Jev also reads each report', 'One quick Jev call per finished run: does the report answer what you asked? Off by default.'],
+              ['autoRetry', s.autoRetry !== false, 'Retry safe failures on their own', 'Only when the engine, the API or the network failed before the agent did anything but read: up to 2 tries, 20 to 60 seconds apart, under the same account. Anything else waits for you in the chat.']].map(([k, on, l, h]) => setToggle(k, on, l, h)).join('')}
+            ${item(`<div class="btnrow"><span class="label">Stuck runs</span><label class="hint">flag a run after ${select('data-recnum="stallMin"', 'Minutes with no new step before Orchy flags a run', [[0, 'never'], [10, '10'], [20, '20'], [30, '30'], [60, '60'], ...([0, 10, 20, 30, 60].includes(s.stallMin ?? 20) ? [] : [[s.stallMin, String(s.stallMin)]])], s.stallMin ?? 20)} minutes with no new step (it keeps running; you choose)</label></div>`, 'stuck stall flag minutes')}
+            ${item(`<div class="btnrow"><span class="label">Time cap</span><label class="hint">stop runs after ${select('data-recnum="stopAfterMin"', 'Stop runs after this many minutes', [[0, 'no limit'], [60, '1 hour'], [120, '2 hours'], [240, '4 hours'], [480, '8 hours']], Number(s.stopAfterMin) || 0)} of running (never while it’s waiting on you)</label></div>`, 'time cap stop limit hours')}`)}`)}
+        ${pane('browser', 'This browser', '', group('', item(browserSectionHTML({ heading: false }), 'pair browser code unpair')))}
+      </div></div>`;
+    applyFind();
     for (const [k, val] of Object.entries(keys)) { const i = body.querySelector(`#k-${k}`); if (i) i.value = val; }
+    wireCopy(body);
+    // sections: the rail, the dropdown (narrow), Find, and the Features buttons that point at a section
+    body.querySelectorAll('[data-go]').forEach(b => b.addEventListener('click', () => go(b.dataset.go)));
+    body.querySelector('#set-pick').addEventListener('change', e => go(e.target.value, { focus: true }));
+    const find = body.querySelector('#set-find');
+    find.addEventListener('input', () => { q = find.value; applyFind(); });
+    find.addEventListener('keydown', e => { if (e.key === 'Escape' && find.value) { e.stopPropagation(); find.value = q = ''; applyFind(); } });
+    // Features: the same switches as in their own sections, and the same calls
+    body.querySelectorAll('[data-feat]').forEach(i => i.addEventListener('change', async () => {
+      const on = i.checked;
+      try {
+        if (i.dataset.feat === 'jev') {
+          await api('/api/settings/env', { method: 'POST', body: { key: 'JEV_PROVIDER', value: on ? '' : 'off' } });
+          await ctx.reload();
+          // on, but no key yet: the Routing section is where the key goes
+          if (on && !ctx.state.jev?.label) { jevOpen = true; ctx.toast('Pick Jev’s provider and add its key.'); return go('routing'); }
+          ctx.toast(on ? 'Jev is on.' : 'Jev is off: your harness reads each message instead.');
+        } else if (i.dataset.feat === 'voice') {
+          await api('/api/settings/env', { method: 'POST', body: { key: 'VOICE_ENABLED', value: on ? '1' : '0' } });
+          setVoiceConfig(await api('/api/voice/config'));
+          ctx.toast(on ? 'Voice is on.' : 'Voice is off: chat only.');
+        } else if (i.dataset.feat === 'coach') {
+          ctx.state.settings = await api('/api/settings', { method: 'POST', body: { huddleCoach: on } });
+          ctx.toast(on ? 'Orchy joins huddles.' : 'Orchy stays out of huddles.');
+        }
+        w.render();
+      } catch (e) { i.checked = !on; ctx.toast(e.message, 'warn'); }
+    }));
+    body.querySelector('[data-owner-form]')?.addEventListener('submit', async e => {
+      e.preventDefault();
+      const f = e.currentTarget, btn = f.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      try { await api('/api/setup/owner', { method: 'POST', body: { name: f.name.value, timezone: f.timezone.value } }); await ctx.reload(); ctx.toast('Saved.'); w.render(); }
+      catch (err) { btn.disabled = false; ctx.toast(err.message, 'warn'); }
+    });
+    body.querySelectorAll('[data-onesign]').forEach(b => b.addEventListener('click', async () => {
+      b.disabled = true;
+      if ((await oneSignIn(b.dataset.onesign, ctx.toast))?.status !== 'waiting') b.disabled = false;
+    }));
     body.querySelectorAll('[data-approvals]').forEach(b => b.addEventListener('click', async () => {
       try { ctx.state.settings = await api('/api/settings', { method: 'POST', body: { approvals: b.dataset.approvals } }); w.render(); }
       catch (e) { ctx.toast(e.message, 'warn'); }
@@ -1333,6 +1451,39 @@ export async function openSettings({ from } = {}) {
       }));
     }).catch(e => { body.querySelector('[data-rules]').innerHTML = `<div class="hint">Couldn’t load them: ${esc(e.message)}</div>`; });
   };
+  // Find shows every section at once with only the settings that match; empty, it's back to the section picked
+  const applyFind = () => {
+    const root = body.querySelector('.settings');
+    if (!root) return;
+    const needle = q.trim().toLowerCase();
+    root.classList.toggle('finding', !!needle);
+    root.querySelectorAll('.set-nav .hits').forEach(h => h.remove());
+    root.querySelectorAll('.set-item').forEach(el => el.classList.toggle('set-miss', !!needle && !`${el.textContent} ${el.dataset.find || ''}`.toLowerCase().includes(needle)));
+    let total = 0;
+    root.querySelectorAll('.set-pane').forEach(p => {
+      let hits = 0;
+      p.querySelectorAll('.set-group').forEach(g => {
+        const h = needle ? g.querySelectorAll('.set-item:not(.set-miss)').length : 1;
+        g.classList.toggle('set-off', !h);
+        if (needle && !g.parentElement.closest('.set-group')) hits += h;
+      });
+      p.classList.toggle('set-off', needle ? !hits : p.dataset.pane !== sec);
+      total += hits;
+      const b = root.querySelector(`.set-nav [data-go="${p.dataset.pane}"]`);
+      b?.classList.toggle('nohit', !!needle && !hits);
+      if (needle && hits) b?.insertAdjacentHTML('beforeend', `<span class="hits">${hits}</span>`);
+    });
+    root.querySelector('.set-nohits').classList.toggle('set-off', !needle || !!total);
+  };
+  const go = (id, { focus = false } = {}) => {
+    if (!known(id)) return;
+    sec = id; q = '';
+    try { localStorage.setItem(SETTINGS_SEC, id); } catch {}
+    w.render();
+    body.closest('.wb')?.scrollTo?.({ top: 0 });
+    if (focus) body.querySelector(`#sp-${id}`)?.focus({ preventScroll: true });
+  };
+  w.go = go;
   w.render = () => redraw(body, draw);
   w.render();
   return w;

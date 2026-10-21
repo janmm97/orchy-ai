@@ -60,7 +60,7 @@ export function openPair({ from } = {}) {
 }
 
 /** Settings → This browser. */
-export const browserSectionHTML = () => `<section style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">This browser</h3>
+export const browserSectionHTML = ({ heading = true } = {}) => `<section style="display:grid;gap:var(--s3)">${heading ? '<h3 class="px caps" style="margin:0">This browser</h3>' : ''}
   <p class="hint" style="margin:0">Only paired browsers can make changes in Orchy. Pair another (a second browser, a laptop on this PC) with a one-time code.</p>
   <div data-pairout></div>
   <div class="btnrow"><button class="btn sm" type="button" data-act="pair-new">${icon('plus')}Pair another browser</button>

@@ -91,7 +91,7 @@ export function recoveryHTML(run) {
 /** A recovery button: Log in / Follow up / Huddle open windows; the rest go to the server (recover.mjs#act). */
 export async function recoverAct(runId, action, { from, run, toast = ctx.toast } = {}) {
   run ||= (await api(`/api/runs/${runId}`).catch(() => null))?.run;
-  if (action === 'login') return openSettings({ from });
+  if (action === 'login') return openSettings({ from, section: 'accounts' });
   if (action === 'followup') return openRun(runId, { from, prefill: '' });
   if (action === 'huddle') {
     const w = openNewHuddle(run.workspace, { from, agents: [run.isBuilder ? 'agent-builder' : run.agentSlug].filter(Boolean) });
