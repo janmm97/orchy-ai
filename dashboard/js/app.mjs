@@ -499,7 +499,7 @@ function renderUnder() {
   const vp = voice.voiceConfig().provider;
   const vName = { elevenlabs: 'ElevenLabs', deepgram: 'Deepgram' }[vp];
   const vKey = vp === 'elevenlabs' ? state.envStatus.ELEVENLABS_API_KEY : vp === 'deepgram' ? state.envStatus.DEEPGRAM_API_KEY : state.envStatus.DEEPGRAM_API_KEY || state.envStatus.ELEVENLABS_API_KEY;
-  if (voice.voiceOn() && !vKey && !state.settings?.skipped?.voice) problems.push(check(`voice:${vp || 'any'}`, 'Voice', `Add ${vName ? `your ${vName}` : 'an ElevenLabs or Deepgram'} key in Settings, or switch voice off there. Until then I use the browser’s voice.`, `<button class="btn sm" data-open="settings">Settings</button>`));
+  if (voice.voiceOn() && !vKey && !state.settings?.skipped?.voice) problems.push(check(`voice:${vp || 'any'}`, 'Voice', `Add ${vName ? `your ${vName}` : 'an ElevenLabs or Deepgram'} key in Settings, or switch voice off there. Until then I use the browser’s voice.`, `<button class="btn sm" data-open="settings" data-section="voice">Settings</button>`));
   $('#composer-under').innerHTML = `
     <div class="keys"><span><kbd>/</kbd>type</span><span data-voice><kbd>Ctrl</kbd><kbd>Space</kbd>call</span><span><kbd>Enter</kbd>send</span></div>
     ${problems.some(Boolean) ? `<div class="checklist">${problems.join('')}</div>` : ''}`;
@@ -670,10 +670,10 @@ function fixAccountHTML() {
   if (!a.expected) {
     return `<div class="fixbar"><b>I need a ${esc(rtLabel)} account to work on my own code.</b>
       <span>${a.suggested ? `${esc(rtLabel)} on this computer is signed in as <b>${esc(a.suggested)}</b>. Use that account for my fixes?` : `Sign in to ${esc(rtLabel)} on this computer first (or pick another CLI in Settings → Accounts).`}</span>
-      <span class="btnrow">${a.suggested ? `<button class="btn sm primary" type="button" data-backend-use="${esc(a.suggested)}">${icon('check')}Use ${esc(a.suggested)}</button>` : ''}<button class="btn sm" type="button" data-open="settings">Settings</button></span></div>`;
+      <span class="btnrow">${a.suggested ? `<button class="btn sm primary" type="button" data-backend-use="${esc(a.suggested)}">${icon('check')}Use ${esc(a.suggested)}</button>` : ''}<button class="btn sm" type="button" data-open="settings" data-section="accounts">Settings</button></span></div>`;
   }
   return `<div class="fixbar"><b>I fix myself as ${esc(a.expected)}, but ${a.loggedIn ? `${esc(rtLabel)} is signed in as ${esc(a.actual || 'another account')}` : `that ${esc(rtLabel)} profile isn’t signed in`}.</b>
-    <span class="btnrow"><button class="btn sm" type="button" data-login="orchy">Log in</button><button class="btn sm" type="button" data-open="settings">Settings</button></span></div>`;
+    <span class="btnrow"><button class="btn sm" type="button" data-login="orchy">Log in</button><button class="btn sm" type="button" data-open="settings" data-section="accounts">Settings</button></span></div>`;
 }
 
 function routeCard(p) {
@@ -968,7 +968,7 @@ function renderLive() {
   } else if (r?.capped) {
     st = 'capped';
     body = `<span class="who">Jev stopped reading: ${r.capped === 'day' ? `${r.limits?.perDay} reads today` : `${r.limits?.perMessage} reads for this message`}</span>`;
-    tail = `<button type="button" class="jlink" data-open="settings">Limits</button>`;
+    tail = `<button type="button" class="jlink" data-open="settings" data-section="routing">Limits</button>`;
   } else if (!rt) {
     st = live.reading ? 'reading' : 'listening';
     body = `<span class="who">${live.reading ? 'reading…' : liveWords(text) < (state.liveJev?.minWords || 3) ? 'keep typing…' : 'listening…'}</span>`;
@@ -1231,7 +1231,7 @@ async function onClick(e) {
     if (t.dataset.open === 'huddles') openHuddles({ from, session: () => view.active });
     if (t.dataset.open === 'logs') openLogs({ from });
     if (t.dataset.open === 'connections') openConnections(defaultWs(), { from });
-    if (t.dataset.open === 'settings') openSettings({ from });
+    if (t.dataset.open === 'settings') openSettings({ from, section: t.dataset.section });
     if (t.dataset.open === 'history') openHistory({ from });
     return;
   }
@@ -1413,7 +1413,7 @@ pairFromLink(PARAMS).then(load).then(async () => {
   if (open === 'agents') openAgents(PARAMS.get('ws') || defaultWs());
   if (open === 'logs') openLogs({ tab: PARAMS.get('tab') });
   if (open === 'usage') openLogs({ tab: 'usage' });
-  if (open === 'settings') openSettings();
+  if (open === 'settings') openSettings({ section: PARAMS.get('section') });
   if (open === 'connections') openConnections(PARAMS.get('ws') || defaultWs());
   if (open === 'build') openBuild(PARAMS.get('ws') || defaultWs());
   if (open === 'add') openAddWorkspace();
