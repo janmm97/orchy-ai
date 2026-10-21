@@ -109,6 +109,18 @@ export function ownerHeaders() {
   return key ? { 'X-Orchy-Key': key } : {};
 }
 
+/** Start a workspace's One sign-in and say what actually happened: One is opening its page, it finished at once,
+ *  or it couldn't start (the server waits a moment for that, and refuses up front when One can't run on this Node). */
+export async function oneSignIn(wsId, toast) {
+  try {
+    const st = await api(`/api/workspaces/${encodeURIComponent(wsId)}/one-login`, { method: 'POST' });
+    if (st?.status === 'failed') toast(`One’s sign-in didn’t start: ${String(st.error || 'One exited').split(/(?<=[.!?])\s/)[0]}`, 'warn');
+    else if (st?.status === 'done') toast('Signed in to One.');
+    else toast('One is opening its sign-in page in your browser. Pick the account and org for this workspace there.');
+    return st;
+  } catch (e) { toast(e.message, 'warn'); return null; }
+}
+
 export async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(path, {
     method,

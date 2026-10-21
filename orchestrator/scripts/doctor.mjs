@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config, env, ROOT, ORCH_DIR } from '../lib/env.mjs';
 import { workspaces, backendWorkspace, accountCheck, oneScope, listRetired } from '../lib/workspaces.mjs';
-import { listConnections, one, oneVersion } from '../lib/one.mjs';
+import { listConnections, one, oneVersion, oneNodeProblem } from '../lib/one.mjs';
 import { jevMode, jevLabel, models, PROVIDERS } from '../lib/jev.mjs';
 import { CLAUDE_BIN, claudeVersion } from '../lib/claude.mjs';
 import { engines, engineTools, brokenMessage } from '../lib/engines/index.mjs';
@@ -44,8 +44,10 @@ else if (cv) off(`Claude Code runs from ${CLAUDE_BIN}`);
 
 
 console.log('\nOne CLI');
-const oneV = oneVersion();
-if (!oneV) warn('One CLI not found. It connects agents to Gmail, Slack, Notion and 1000+ apps (strongly recommended)', 'npm install -g @withone/cli (then open a new terminal). Guide: docs/ONE.md');
+const oneBlock = oneNodeProblem();
+const oneV = oneBlock ? null : oneVersion();
+if (oneBlock) bad(oneBlock.message, oneBlock.fix ? `${oneBlock.fix} (then restart Orchy)` : 'Install Node LTS from https://nodejs.org, then restart Orchy');
+else if (!oneV) warn('One CLI not found. It connects agents to Gmail, Slack, Notion and 1000+ apps (strongly recommended)', 'npm install -g @withone/cli (then open a new terminal). Guide: docs/ONE.md');
 else {
   ok(`One CLI ${oneV}`);
   try {

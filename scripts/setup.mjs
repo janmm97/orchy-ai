@@ -179,8 +179,15 @@ export async function questions(env, setEnv, io = { yesNo, choose, askKey: (...a
 }
 
 /** The One CLI step. Missing, or a failed install, is a warning and never stops setup: Orchy runs without it and
- *  only app connections wait for it. io is swapped for fakes in test-setup.mjs. Returns whether One is there. */
-export async function oneStep({ version, interactive, yesNo, install, auto = false, log = console.log }) {
+ *  only app connections wait for it. Installed on a Node it refuses (blocked: lib/one.mjs#oneNodeProblem) is said
+ *  as that, with the Node fix, and never reinstalled. io is swapped for fakes in test-setup.mjs. Returns whether One runs. */
+export async function oneStep({ version, blocked = null, recheck = () => null, interactive, yesNo, install, auto = false, log = console.log }) {
+  const sayBlocked = b => {
+    log(`  ${NO} ${ONE_TOOL.label.padEnd(28)} installed${b.version ? ` (${b.version})` : ''}, but it can't run on Node ${b.node}`);
+    log(`\n  ! ${b.message}${b.fix ? `\n    Update Node with:\n      ${b.fix}` : ''}\n    Orchy still starts; app connections wait until One can run.`);
+    return false;
+  };
+  if (blocked) return sayBlocked(blocked);
   if (version) { log(`  ${OK} ${ONE_TOOL.label.padEnd(28)} ${version}`); return true; }
   log(`  ${NO} ${ONE_TOOL.label.padEnd(28)} not found. It connects your agents to your apps (Gmail, Slack, Notion and more).`);
   let found = false;
@@ -188,6 +195,9 @@ export async function oneStep({ version, interactive, yesNo, install, auto = fal
   if (shouldInstall) {
     if (auto) log(`  Installing One CLI globally (${ONE_TOOL.install})...`);
     try { found = !!install(); } catch {}
+    // it installed, but on a Node it refuses: say that, not "the install didn't finish"
+    const b = found ? null : recheck();
+    if (b) return sayBlocked(b);
     log(found ? `  ${OK} One CLI installed` : `  ${NO} The install didn't finish. If it did install, open a new terminal so the PATH updates.`);
   }
   if (!found) log(`\n  ! Orchy still starts, but app connections need the One CLI. Install it with:\n      ${ONE_TOOL.install}\n    then open a new terminal and run setup again. Guide: docs/ONE.md`);
@@ -528,7 +538,7 @@ async function main() {
   // 4. Tools: every harness the engine registry knows (found / version / install / gated), plus the One CLI.
   //    None is fatal: a tester may have one harness (or none yet) and no One CLI. Orchy starts and says what's missing.
   const { engines, engineTools, brokenMessage, runRefusal } = await import(pathToFileURL(path.join(ROOT, 'orchestrator/lib/engines/index.mjs')).href);
-  const { oneVersion } = await import(pathToFileURL(path.join(ROOT, 'orchestrator/lib/one.mjs')).href);
+  const { oneVersion, oneNodeProblem } = await import(pathToFileURL(path.join(ROOT, 'orchestrator/lib/one.mjs')).href);
   const { ensureStandardPath } = await import(pathToFileURL(path.join(ROOT, 'orchestrator/lib/claude.mjs')).href);
   const harnesses = engineTools();
   console.log('\n  Tools');
@@ -550,7 +560,7 @@ async function main() {
     console.log(`\n  ! No agent harness yet. Orchy starts, but agents can't run until you install one. Claude Code is recommended:\n      ${harnesses[0].install}${mac ? '\n      (then open a new Terminal window so the PATH updates)' : ''}`);
   }
   found.one = await oneStep({
-    version: oneVersion(), interactive, yesNo, auto: true,
+    version: oneVersion(), blocked: oneNodeProblem(), recheck: () => oneNodeProblem(), interactive, yesNo, auto: true,
     install: () => {
       const res = sh('npm', ['install', '-g', '@withone/cli']);
       ensureStandardPath();

@@ -2,11 +2,11 @@
 // Connections (One + external MCP), Settings, Sessions history.
 import { openWindow, getWindow } from './windows.mjs';
 import { icon, createEl, orchySVG } from './pixel.mjs';
-import { esc, api, md, wsName, wsShort, wsClass, agentName, nameRole, platformName, dateTime, ownerName, backendInfo, setWorkspaces } from './util.mjs';
+import { esc, api, md, wsName, wsShort, wsClass, agentName, nameRole, platformName, dateTime, ownerName, backendInfo, setWorkspaces, oneSignIn } from './util.mjs';
 import { voiceConfig, setVoiceConfig, speak, setSound } from './voice.mjs';
 import { openAgent, openBuild, spriteFor } from './sheets.mjs';
 import { startCall } from './call.mjs';
-import { openSetup, openOneGuide, cmdHTML, wireCopy, ONE_SIGN_IN } from './setup.mjs';
+import { openSetup, openOneGuide, cmdHTML, wireCopy, oneBlockedHTML, ONE_SIGN_IN } from './setup.mjs';
 import { browserSectionHTML, wireBrowserSection, openPair } from './pairing.mjs';
 import { coachSettingsHTML, wireCoachSettings } from './huddles.mjs';
 
@@ -275,19 +275,23 @@ function setupHTML(ws) {
   const acct = ws.account || {};
   const extra = (ws.extraAccounts || []).filter(x => !x.ok);
   if (acct.ok && ws.oneScoped !== false && !extra.length) return '';
-  const one = ws.oneLogin || {};
+  const one = ws.oneLogin || {}, stuck = ws.oneBlocked;
+  const firstSentence = t => String(t || '').split(/(?<=[.!?])\s/)[0];
   const row = (done, title, text, buttons) => `<div class="check ${done ? 'ok' : 'todo'}"><span class="box">${done ? icon('check') : ''}</span><span class="t"><b>${title}</b>${text}</span><span class="btnrow">${done ? '' : buttons}</span></div>`;
   const loginRow = (a, whose) => row(a.ok, `${esc(a.runtimeLabel || 'Claude Code')}${a.expected ? ` runs as ${esc(a.expected)}` : ' OAuth sign-in'}${whose}`,
     a.ok ? `Logged in as ${esc(a.actual)}${a.plan ? ` (${esc(a.plan)})` : ''}.`
       : `${a.error && /install|account set/i.test(a.error) ? esc(a.error) : a.loggedIn ? `Its profile is logged in as ${esc(a.actual || 'another account')}, so Orchy won't run ${whose ? 'those agents' : 'anything here'}.` : a.hint ? esc(a.hint) : 'Its profile isn’t signed in yet. Sign in via OAuth once in the window Orchy opens.'}${a.fix ? `<code>${esc(a.fix)}</code>` : ''}`,
     `<button class="btn sm primary" data-setup="login" data-rt="${esc(a.runtime || '')}">Log in</button>${a.fix ? `<button class="btn sm" data-setup="copy" data-fix="${esc(a.fix || '')}">Copy</button>` : ''}<button class="btn sm" data-setup="recheck">${icon('refresh')}Re-check</button>`);
-  return `<div class="setup"><span class="h">Get ${esc(wsName(ws.id))} ready</span>
+  return `<div class="ws-setup"><span class="h">Get ${esc(wsName(ws.id))} ready</span>
     ${loginRow(acct, '')}
     ${extra.map(x => loginRow(x, ` (for ${esc(x.agents.join(', '))})`)).join('')}
     ${row(ws.oneScoped !== false, 'Its own One account',
-      ws.oneScoped !== false ? 'Signed in.' : one.status === 'waiting' ? 'Waiting for you to finish signing in, in the browser window One opened…'
-        : `${one.status === 'failed' ? `Last try didn’t finish: ${esc(one.error || '')}. ` : ''}Sign it in to the One account (and org) with ${esc(wsName(ws.id))}’s connections. Until then One is off here, so it can’t borrow another client’s apps.`,
-      one.status === 'waiting' ? '<span class="plate blink">waiting</span>' : `<button class="btn sm primary" data-setup="one">Sign in to One</button>`)}
+      ws.oneScoped !== false ? 'Signed in.'
+        : stuck ? `One can’t run on Node ${esc(stuck.node)}: it needs Node ${esc(stuck.need)}. Update Node, then restart Orchy.${stuck.fix ? `<code>${esc(stuck.fix)}</code>` : ''}`
+        : one.status === 'waiting' ? 'Waiting for you to finish signing in, in the browser window One opened…'
+        : `${one.status === 'failed' ? `Last try didn’t finish: ${esc(firstSentence(one.error) || 'One exited')} <details><summary>Details</summary><code>${esc(one.error || '')}</code></details>` : ''}Sign it in to the One account (and org) with ${esc(wsName(ws.id))}’s connections. Until then One is off here, so it can’t borrow another client’s apps.`,
+      stuck ? `${stuck.fix ? `<button class="btn sm" data-setup="copy" data-fix="${esc(stuck.fix)}">Copy</button>` : ''}<button class="btn sm" data-setup="recheck">${icon('refresh')}Re-check</button>`
+        : one.status === 'waiting' ? '<span class="plate blink">waiting</span>' : `<button class="btn sm primary" data-setup="one">Sign in to One</button>`)}
   </div>`;
 }
 function wireSetup(root, ws) {
@@ -295,7 +299,7 @@ function wireSetup(root, ws) {
     try { await api(`/api/workspaces/${encodeURIComponent(ws.id)}/login`, { method: 'POST', body: { runtime: b.dataset.rt || null } }); ctx.toast('A login window opened. Sign in there, then press Re-check.'); }
     catch (e) { ctx.toast(e.message, 'warn'); }
   }));
-  root.querySelectorAll('[data-setup="copy"]').forEach(b => b.addEventListener('click', async () => { try { await navigator.clipboard.writeText(b.dataset.fix || ws.account?.fix || ''); ctx.toast('Copied. Paste it into PowerShell.'); } catch { ctx.toast('Copy failed: select the text instead.', 'warn'); } }));
+  root.querySelectorAll('[data-setup="copy"]').forEach(b => b.addEventListener('click', async () => { try { await navigator.clipboard.writeText(b.dataset.fix || ws.account?.fix || ''); ctx.toast('Copied. Paste it into a terminal.'); } catch { ctx.toast('Copy failed: select the text instead.', 'warn'); } }));
   root.querySelectorAll('[data-setup="recheck"]').forEach(b => b.addEventListener('click', async e => {
     e.currentTarget.disabled = true;
     try { await api('/api/accounts/refresh', { method: 'POST' }); } catch (err) { ctx.toast(err.message, 'warn'); }
@@ -303,8 +307,7 @@ function wireSetup(root, ws) {
   root.querySelector('[data-setup="one"]')?.addEventListener('click', async e => {
     const btn = e.currentTarget;
     btn.disabled = true;
-    try { await api(`/api/workspaces/${encodeURIComponent(ws.id)}/one-login`, { method: 'POST' }); ctx.toast('One opened a sign-in window in your browser. Pick the account and org for this client.'); }
-    catch (err) { btn.disabled = false; ctx.toast(err.message, 'warn'); }
+    if ((await oneSignIn(ws.id, ctx.toast))?.status !== 'waiting') btn.disabled = false;
   });
 }
 
@@ -576,7 +579,7 @@ export async function openAddWorkspace({ edit = null, from } = {}) {
       w.close();
       openAgents(ws.id);
       if (signin) {
-        if (!ws.oneScoped) api(`/api/workspaces/${encodeURIComponent(ws.id)}/one-login`, { method: 'POST' }).catch(err => ctx.toast(err.message, 'warn'));
+        if (!ws.oneScoped && !ws.oneBlocked) api(`/api/workspaces/${encodeURIComponent(ws.id)}/one-login`, { method: 'POST' }).catch(err => ctx.toast(err.message, 'warn'));
         if (!ws.account?.ok) api(`/api/workspaces/${encodeURIComponent(ws.id)}/login`, { method: 'POST' }).catch(err => ctx.toast(err.message, 'warn'));
       }
       ctx.toast(`${wsName(ws.id)} is set up in ${ws.folder}.${signin ? ' Finish signing in, in the windows that just opened.' : ''}`);
@@ -817,7 +820,9 @@ export async function openConnections(wsId, { from, edit } = {}) {
     // friendly versions of the ways One can be unavailable: not signed in, CLI missing, or some other error
     let oneNote = '';
     const oneErr = d.connections.oneError;
-    if (d.oneScoped === false) {
+    const stuck = ctx.state.workspaces?.find(x => x.id === current)?.oneBlocked;
+    if (stuck) oneNote = oneBlockedHTML(stuck);
+    else if (d.oneScoped === false) {
       oneNote = `<div class="empty"><strong>${esc(wsName(current))} isn’t signed in to One</strong>Each workspace uses its own One account, so its apps stay separate from your other businesses. Create an account if you don’t have one, make an organization for this business, then sign in.<div class="btnrow"><button class="btn" type="button" data-act="create-one">${icon('plug')}Create a One account</button><button class="btn primary" type="button" data-act="one-login">${icon('key')}Sign in to One</button></div></div>`;
     } else if (oneErr) {
       let one = null;
@@ -862,8 +867,7 @@ export async function openConnections(wsId, { from, edit } = {}) {
     body.querySelectorAll('[data-act="one-login"]').forEach(b => b.addEventListener('click', async e => {
       const btn = e.currentTarget;
       btn.disabled = true;
-      try { await api(`/api/workspaces/${encodeURIComponent(current)}/one-login`, { method: 'POST' }); ctx.toast('One opened a sign-in window in your browser. Pick the account and org for this client.'); }
-      catch (err) { btn.disabled = false; ctx.toast(err.message, 'warn'); }
+      if ((await oneSignIn(current, ctx.toast))?.status !== 'waiting') btn.disabled = false;
     }));
     body.querySelector('[data-act="add"]').addEventListener('click', () => { if (editing) closeForm(); adding = true; renderForm(); });
     body.querySelector('[data-act="pair"]')?.addEventListener('click', () => pairFirst());
@@ -1106,7 +1110,7 @@ export async function openSettings({ from } = {}) {
   const draw = () => {
     const s = ctx.state.settings || {};
     const v = voiceConfig();
-    const theme = localStorage.getItem('jos-theme') || 'auto';
+    const theme = localStorage.getItem('jos-theme') || 'day'; // light unless the owner picks otherwise
     body.innerHTML = `
       <section style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">Behavior</h3>
         ${[['autoDispatch', 'Auto-dispatch when Jev is confident', 'The routing card counts down and sends. Off: you press Send every time.'],
@@ -1118,7 +1122,7 @@ export async function openSettings({ from } = {}) {
         <div class="btnrow"><span class="label">Concurrency</span><label class="hint">run up to <select class="select" data-maxlive aria-label="Max live runs per account" style="width:auto;padding:2px 6px">${[1, 2, 3, 4, 5, 6].map(n => `<option value="${n}" ${(Number(s.maxLivePerAccount) || 3) === n ? 'selected' : ''}>${n}</option>`).join('')}</select> live runs per account (more queue automatically; Run now jumps the queue)</label></div>
         <div class="btnrow"><span class="label">Huddles</span><label class="hint">agents talk for up to <select class="select" data-huddleturns aria-label="Turns per huddle" style="width:auto;padding:2px 6px">${[6, 8, 10, 12, 16, 20].map(n => `<option value="${n}" ${(Number(s.huddleTurns) || 10) === n ? 'selected' : ''}>${n}</option>`).join('')}</select> turns (at least two each, so bigger huddles get more), push back on each other, then write up what they agree (Keep talking adds 6)</label></div>
         <div data-coach>${coachSettingsHTML(s)}</div>
-        <div class="btnrow"><span class="label">Theme</span><div class="seg" role="group" aria-label="Theme">${[['auto', 'Auto'], ['day', 'Day'], ['night', 'Night']].map(([t, l]) => `<button type="button" data-theme="${t}" aria-pressed="${theme === t}">${l}</button>`).join('')}</div>
+        <div class="btnrow"><span class="label">Theme</span><div class="seg" role="group" aria-label="Theme">${[['day', 'Light'], ['night', 'Dark'], ['auto', 'Match system']].map(([t, l]) => `<button type="button" data-theme="${t}" aria-pressed="${theme === t}">${l}</button>`).join('')}</div>
           <button class="btn sm" data-act="notify">${icon('bang')}Desktop alerts</button><button class="btn sm" data-act="setup-guide">${icon('spark')}Setup guide</button></div>
       </section>
       <section style="display:grid;gap:var(--s3)"><h3 class="px caps" style="margin:0">Checks and recovery</h3>

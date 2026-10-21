@@ -3,7 +3,7 @@
 // after a restart: name and timezone in config, keys in .env, workspaces and One logins on disk.
 import { openWindow, getWindow } from './windows.mjs';
 import { icon, createEl } from './pixel.mjs';
-import { esc, api, setWorkspaces } from './util.mjs';
+import { esc, api, setWorkspaces, oneSignIn } from './util.mjs';
 import { openAddWorkspace, openConnections } from './panels.mjs';
 import { openBuild } from './sheets.mjs';
 
@@ -20,6 +20,8 @@ const copy = async text => {
 
 /** An install command with a Copy button. */
 export const cmdHTML = cmd => `<span class="setup-cmd"><code class="data">${esc(cmd)}</code><button class="btn sm" type="button" data-copy="${esc(cmd)}" aria-label="Copy command">${icon('clip')}Copy</button></span>`;
+/** One is installed but won't run on this Node (GET /api/workspaces → oneBlocked): why, and the command that fixes it. */
+export const oneBlockedHTML = b => `<div class="empty"><strong>One can’t run on Node ${esc(b.node)}</strong>${esc(b.message)}${b.fix ? cmdHTML(b.fix) : ''}</div>`;
 export const wireCopy = root => root.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', () => copy(b.dataset.copy)));
 
 // Steps that make the One dashboard show an app (docs/ONE.md, step 6)
@@ -181,7 +183,7 @@ export async function openSetup({ step, from } = {}) {
           ${rows.map(t => `<tr>
             <td data-l="Tool"><b>${esc(t.label)}</b><br><span class="hint">${esc(t.note)}</span></td>
             <td data-l="Status">${t.found && t.refusal ? `<span class="plate decide">can’t run here</span><br><span class="hint data">${esc(t.version || '')}</span>` : t.found ? `<span class="plate">${icon('check')}found</span><br><span class="hint data">${esc(t.version || '')}</span>` : t.broken ? '<span class="plate decide">won’t start</span><br><span class="hint">Its install didn’t finish.</span>' : `<span class="plate ${t.required || (t.id === 'claude' && missingHarness) || t.id === 'one' ? 'decide' : ''}">${t.recommended ? 'recommended' : t.required ? 'required' : 'not found'}</span>`}</td>
-            <td data-l="Install" ${t.found && !t.refusal ? 'class="none"' : ''}>${t.found && t.refusal ? `<span class="hint">${esc(t.refusal)}</span>` : t.found ? '<span class="hint">Nothing to do.</span>' : t.kind === 'harness' && t.installCmd
+            <td data-l="Install" ${t.found && !t.refusal ? 'class="none"' : ''}>${t.found && t.refusal ? `<span class="hint">${esc(t.refusal)}</span>${t.fixCmd ? cmdHTML(t.fixCmd) : ''}` : t.found ? '<span class="hint">Nothing to do.</span>' : t.kind === 'harness' && t.installCmd
               ? `${t.broken && t.repairCmd ? `<span class="hint">Run this in a terminal to finish it, then Re-check. Or press Install: it installs again and finishes it for you.</span>${cmdHTML(t.repairCmd)}` : ''}<span class="btnrow"><button class="btn sm primary" type="button" data-install="${esc(t.id)}" ${installing.has(t.id) ? 'disabled' : ''}>${icon(installing.has(t.id) ? 'refresh' : 'plus')}${installing.has(t.id) ? 'Installing…' : 'Install'}</button></span><details><summary class="hint">Or run it yourself</summary>${cmdHTML(t.installCmd)}</details>`
               : t.installCmd ? cmdHTML(t.installCmd) : '<span class="hint">No installer here: get it as the note says, then press Re-check.</span>'}</td></tr>`).join('')}
           </tbody></table></div>
@@ -272,8 +274,7 @@ export async function openSetup({ step, from } = {}) {
           root.querySelector('[data-act="recheck"]').addEventListener('click', () => load());
           root.querySelector('[data-act="login"]').addEventListener('click', async e => {
             const btn = e.currentTarget; btn.disabled = true;
-            try { await api(`/api/workspaces/${encodeURIComponent(wsPick())}/one-login`, { method: 'POST' }); ctx.toast('One opened a sign-in window in your browser. Pick the account and org for this workspace, then press Re-check.'); }
-            catch (err) { ctx.toast(err.message, 'warn'); }
+            await oneSignIn(wsPick(), ctx.toast);
             btn.disabled = false;
           });
         },

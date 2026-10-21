@@ -843,9 +843,13 @@ pre.cmd { margin: 0; padding: var(--s3); background: var(--ink); color: var(--pa
 .wshead .facts { flex: 1 1 240px; min-width: 0; display: grid; gap: 6px; font-size: var(--read-sm); overflow-wrap: anywhere; }
 .wshead .ctl { flex: 0 1 auto; min-width: 0; display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
 .wshead .ctl > label { flex-wrap: nowrap; }
-.setup { display: grid; border: var(--rule) solid var(--ink); }
-.setup > .h { padding: 8px var(--s3); background: var(--ink); color: var(--paper); font: 400 var(--px)/1 var(--f-px); text-transform: uppercase; }
-.setup .check .t code { margin-top: 6px; }
+.ws-setup { display: grid; border: var(--rule) solid var(--ink); container-type: inline-size; }
+.ws-setup > .h { padding: 8px var(--s3); background: var(--ink); color: var(--paper); font: 400 var(--px)/1 var(--f-px); text-transform: uppercase; }
+.ws-setup .check .t code { margin-top: 6px; }
+.ws-setup .check details { margin-top: 4px; }
+.ws-setup .check summary { cursor: pointer; font-size: var(--read-sm); text-decoration: underline; text-underline-offset: 3px; }
+/* narrow: the buttons go under the text instead of squeezing it */
+@container (max-width: 520px) { .ws-setup .check { grid-template-columns: 22px minmax(0, 1fr); } .ws-setup .check > .btnrow { grid-column: 2; } }
 .retired { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s2) var(--s3); align-items: center; padding: var(--s3) 0; }
 .retired + .retired { border-top: var(--rule-fine) solid var(--ink); }
 .choice { display: grid; grid-template-columns: auto 1fr; gap: 4px var(--s3); align-items: start; padding: var(--s2) var(--s3); border: var(--rule) solid var(--ink); cursor: pointer; }
@@ -1319,7 +1323,7 @@ body[data-view="live"][data-dock="1"] .livev:not([hidden]) { height: calc(100dvh
     .md table { font-size: 12px; }
     .list > * { padding: 6px var(--s3); }
     .logent > button { padding: 8px var(--s3); }
-    .setup > .h { padding: 6px var(--s3); }
+    .ws-setup > .h { padding: 6px var(--s3); }
     .limit .ico { width: 12px; height: 12px; }
     .cpick input { width: 14px; height: 14px; }
 

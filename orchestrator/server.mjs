@@ -10,11 +10,11 @@ import { post, ensureSession, getSession, updateSession, listSessions, publicSes
 import { bus, emit, attachSSE, cursor as busCursor } from './lib/bus.mjs';
 import {
   workspaces, workspace, accountCheck, allConnections, identity, readMcp, shownMcp, upsertMcp, removeMcp, testMcp, loginHint,
-  runtimes, runtimeLabel, modelsFor, modelFor, oneScope, oneLoginStatus, startOneLogin, oneAddStatus, startOneAdd, openLoginWindow, runtimeAvailability,
+  runtimes, runtimeLabel, modelsFor, modelFor, oneScope, oneLoginStatus, oneLoginSettled, startOneLogin, oneAddStatus, startOneAdd, openLoginWindow, runtimeAvailability,
   addWorkspace, updateWorkspace, reorderWorkspaces, ensureInks, handles, retireWorkspace, restoreWorkspace, purgeRetired, listRetired, checkFolderName,
 } from './lib/workspaces.mjs';
 import { scaffoldWorkspace, ensureInstructions } from './lib/scaffold.mjs';
-import { listPlatforms } from './lib/one.mjs';
+import { listPlatforms, oneBlocked } from './lib/one.mjs';
 import { toolStatus } from './lib/setupcheck.mjs';
 import { quickClaude } from './lib/claude.mjs';
 import { engine, engines, engineInstallCmd, runRefusal } from './lib/engines/index.mjs';
@@ -434,7 +434,7 @@ async function workspaceSummary(ws, { force = false } = {}) {
     claudeAccount: ws.claudeAccount || null, codexAccount: ws.codexAccount || null, ownProfile: !!ws[engine(ws.runtime)?.fields.profile],
     // every registered engine's account and profile for this workspace, and whether it may run an engine Orchy can't gate
     accounts: Object.fromEntries(engines().map(e => [e.id, { account: ws[e.fields.account] || null, ownProfile: !!ws[e.fields.profile], ...(e.fields.computerLogin ? { computerLogin: ws[e.fields.computerLogin] !== false } : {}) }])), allowUngated: ws.allowUngated === true, gated: engine(ws.runtime)?.capabilities.gated !== false,
-    account, extraAccounts: extra, oneScoped: oneScope(ws).own, oneLogin: oneLoginStatus(ws.id), oneAdd: oneAddStatus(ws.id), createdAt: ws.createdAt || null,
+    account, extraAccounts: extra, oneScoped: oneScope(ws).own, oneLogin: oneLoginStatus(ws.id), oneBlocked: oneBlocked(), oneAdd: oneAddStatus(ws.id), createdAt: ws.createdAt || null,
     mcpCount: Object.keys(readMcp(ws)).length,
   };
 }
@@ -1015,6 +1015,8 @@ on('POST', '/api/workspaces/:ws/one-login', async (_req, _res, { ws: wsId }) => 
       if (s.status === 'done') orchy.say(`${ws.name} is signed in to One${s.account?.user ? ` as ${s.account.user}${s.account.org ? ` (${s.account.org})` : ''}` : ''}. Add its apps from Connect → Add app.`, { workspace: wsId, session: null });
     },
   });
+  // a sign-in that dies at once (One can't start) comes back failed, not as "a window opened"
+  await oneLoginSettled(st);
   await wsChanged(wsId);
   return st;
 });

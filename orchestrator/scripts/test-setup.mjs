@@ -85,6 +85,39 @@ ok(!o.found && o.installed === 1 && /Orchy still starts/.test(o.out), 'One insta
 o = await one({ interactive: true, installs: true });
 ok(o.found && /installed/.test(o.out) && !/Orchy still starts/.test(o.out), 'One installed by setup: no warning');
 
+// One installed on a Node it refuses (it won't even print --version): said as that, with the Node fix, never reinstalled
+const { nodeSatisfies, describeRange, nodeUpdateCmd, oneNodeProblem } = await import('../lib/one.mjs');
+const RANGE = '^22.23.4 || ^24.22.1 || >=26.12.1';
+ok(!nodeSatisfies('v23.1.0', RANGE) && !nodeSatisfies('v22.23.3', RANGE) && !nodeSatisfies('v20.19.0', RANGE) && !nodeSatisfies('v24.21.0', RANGE), 'One’s Node range: 23.1.0, 22.23.3, 20 and 24.21 are refused');
+ok(nodeSatisfies('v22.23.4', RANGE) && nodeSatisfies('v24.22.1', RANGE) && nodeSatisfies('v26.12.1', RANGE) && nodeSatisfies('v27.0.0', RANGE), 'One’s Node range: 22.23.4, 24.22.1, 26.12.1 and 27 run');
+ok(nodeSatisfies('v20.1.0', '') && nodeSatisfies('v20.1.0', '>=18') && !nodeSatisfies('v20.1.0', '~20.2') && nodeSatisfies('v20.2.9', '~20.2') && nodeSatisfies('v20.1.0', '20') && !nodeSatisfies('v20.1.0', '>=18 <20'), 'Node ranges: none, >=, ~, a bare major and a two-part range');
+ok(describeRange(RANGE) === '22.23.4+, 24.22.1+ or 26.12.1+' && describeRange('>=18 <20') === '>=18 <20', 'One’s range in plain words (others as written)');
+const upd = (platform, version, execPath) => nodeUpdateCmd({ platform, version, execPath });
+ok(upd('win32', '23.1.0', 'C:\\Program Files\\nodejs\\node.exe') === 'winget install OpenJS.NodeJS.LTS'
+  && upd('darwin', '23.1.0', '/opt/homebrew/Cellar/node/23.1.0/bin/node') === 'brew upgrade node'
+  && upd('darwin', '20.19.0', '/opt/homebrew/Cellar/node@20/20.19.0/bin/node') === 'brew install node@24'
+  && upd('darwin', '22.20.0', '/opt/homebrew/Cellar/node@22/22.20.0/bin/node') === 'brew upgrade node@22'
+  && upd('darwin', '23.1.0', '/Users/x/.nvm/versions/node/v23.1.0/bin/node') === 'nvm install 24 && nvm alias default 24'
+  && upd('linux', '22.1.0', '/home/x/.nvm/versions/node/v22.1.0/bin/node') === 'nvm install 22 && nvm alias default 22'
+  && upd('win32', '23.1.0', 'C:\\Users\\x\\AppData\\Roaming\\nvm\\v23.1.0\\node.exe') === 'nvm install 24 && nvm use 24'
+  && upd('darwin', '23.1.0', '/Users/x/.volta/tools/image/node/23.1.0/bin/node') === 'volta install node@24'
+  && upd('linux', '23.1.0', '/usr/bin/node') === null, 'the Node update command fits how Node was installed (nvm, nvm-windows, volta, Homebrew; Linux: nodejs.org)');
+const pkg = { version: '2.9.2', engines: { node: RANGE } };
+const p = oneNodeProblem({ pkg, nodeVersion: 'v23.1.0', fix: 'brew upgrade node', allow: '' });
+ok(p && p.version === '2.9.2' && p.need === '22.23.4+, 24.22.1+ or 26.12.1+' && /won't run on Node v23\.1\.0/.test(p.message) && /restart Orchy/.test(p.message), 'One on Node 23.1.0: blocked, with the versions it needs and the restart');
+ok(!oneNodeProblem({ pkg, nodeVersion: 'v24.22.1', allow: '' }) && !oneNodeProblem({ pkg: null, nodeVersion: 'v23.1.0', allow: '' }) && !oneNodeProblem({ pkg: { version: '1.0.0' }, nodeVersion: 'v23.1.0', allow: '' })
+  && !oneNodeProblem({ pkg, nodeVersion: 'v23.1.0', allow: '1' }), 'One not blocked: a Node it takes, One not installed, no engines field, or ONE_ALLOW_UNPATCHED_NODE=1');
+{
+  const lines = [];
+  let installed = 0;
+  const found = await oneStep({ version: null, blocked: p, interactive: true, log: l => lines.push(l), yesNo: async () => true, install: () => { installed++; return true; } });
+  const out = lines.join('\n');
+  ok(!found && !installed && /can't run on Node v23\.1\.0/.test(out) && out.includes('brew upgrade node') && !/not found/.test(out), 'setup, One blocked by Node: says so with the fix, and doesn’t reinstall it');
+  lines.length = 0;
+  const after = await oneStep({ version: null, recheck: () => p, interactive: false, auto: true, log: l => lines.push(l), yesNo: async () => true, install: () => false });
+  ok(!after && /can't run on Node/.test(lines.join('\n')) && !/didn't finish/.test(lines.join('\n')), 'setup installs One onto a Node it refuses: that, not "the install didn’t finish"');
+}
+
 // "Fix Orchy": the Claude Code account Orchy works on his own code under. A fresh config.json has none.
 const { backendAccountStep } = await import('../../scripts/setup.mjs');
 async function fixAcct({ set = null, signedInAs = null, interactive = true, yes = true }) {

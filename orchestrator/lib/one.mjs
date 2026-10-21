@@ -11,7 +11,9 @@ function resolveCli() {
   const explicit = env('ONE_CLI_PATH');
   if (explicit && fs.existsSync(explicit)) return { cmd: process.execPath, pre: [explicit] };
   const found = findBinary('one');
+  const real = (() => { try { return found && fs.realpathSync(found); } catch { return null; } })();
   const candidates = [
+    real && /cli\.js$/.test(real) && real, // npm's `one` on macOS and Linux is a link to the package's bin/cli.js
     found && path.join(path.dirname(found), 'node_modules', '@withone', 'cli', 'bin', 'cli.js'),
     process.env.APPDATA && path.join(process.env.APPDATA, 'npm', 'node_modules', '@withone', 'cli', 'bin', 'cli.js'),
     process.env.npm_config_prefix && path.join(process.env.npm_config_prefix, 'node_modules', '@withone', 'cli', 'bin', 'cli.js'),
@@ -30,6 +32,83 @@ const CLI = resolveCli();
 export function oneVersion() {
   const bin = CLI.pre[0] ? process.execPath : (CLI.cmd === 'one' ? findBinary('one') : CLI.cmd);
   return probeVersion(bin, CLI.pre[0] ? [CLI.pre[0], '--version'] : ['--version']);
+}
+
+// ── One and the Node it runs on ──
+// One refuses to start (even for --version) on a Node that still trusts the compromised eMudhra certificates, so
+// "it won't start" must never read as "not installed". Its package.json says which Node it takes: read that,
+// never One's wording. One runs on Orchy's own Node (process.execPath), so updating Node means restarting Orchy.
+const parseV = s => [...String(s).trim().replace(/^v/, '').split('.').map(n => parseInt(n, 10)), NaN, NaN].slice(0, 3);
+/** Does a Node version meet an npm `engines` range? Handles the forms packages use: ^ ~ >= > <= < =, partial versions, || and spaces. */
+export function nodeSatisfies(version, range) {
+  if (!range || !String(range).trim()) return true;
+  const v = parseV(version).map(n => n || 0);
+  return String(range).split('||').some(alt => alt.trim().split(/\s+/).filter(Boolean).every(c => {
+    const m = c.match(/^(\^|~|>=|<=|>|<|=)?v?(\d+(?:\.\d+){0,2})/);
+    if (!m) return true; // a form this doesn't read (x-ranges, tags) never blocks One
+    const t = parseV(m[2]), given = t.filter(n => !Number.isNaN(n)).length, tt = t.map(n => n || 0);
+    const d = v[0] - tt[0] || v[1] - tt[1] || v[2] - tt[2];
+    switch (m[1]) {
+      case '^': return d >= 0 && v[0] === tt[0];
+      case '~': return d >= 0 && v[0] === tt[0] && (given < 2 || v[1] === tt[1]);
+      case '>=': return d >= 0;
+      case '>': return d > 0;
+      case '<=': return d <= 0;
+      case '<': return d < 0;
+      default: return v.slice(0, given).every((n, i) => n === tt[i]);
+    }
+  }));
+}
+/** "^22.23.4 || ^24.22.1 || >=26.12.1" → "22.23.4+, 24.22.1+ or 26.12.1+" (any other range is shown as it is). */
+export function describeRange(range) {
+  const parts = String(range || '').split('||').map(s => s.trim()).filter(Boolean);
+  if (!parts.length || !parts.every(p => /^(\^|>=)\d+(\.\d+){0,2}$/.test(p))) return String(range || '').trim();
+  const list = parts.map(p => `${p.replace(/^(\^|>=)/, '')}+`);
+  return list.length < 2 ? list[0] : `${list.slice(0, -1).join(', ')} or ${list.at(-1)}`;
+}
+/**
+ * The command that updates Node on this computer, by how it was installed (the same reading as One's own
+ * upgradeCommand), or null when there's none to give (then: nodejs.org). It keeps the major line when that line has
+ * the fix (22, 24, 26), else 24, the LTS.
+ */
+export function nodeUpdateCmd({ platform = process.platform, version = process.versions.node, execPath = process.execPath } = {}) {
+  const major = parseInt(String(version).replace(/^v/, ''), 10);
+  const line = [22, 24, 26].includes(major) ? major : 24;
+  const p = String(execPath).replace(/\\/g, '/');
+  if (/\/\.nvm\/versions\/node\//.test(p)) return `nvm install ${line} && nvm alias default ${line}`;
+  if (/\/AppData\/(Roaming|Local)\/nvm\//i.test(p)) return `nvm install ${line} && nvm use ${line}`; // nvm-windows
+  if (/\/\.?volta\//i.test(p)) return `volta install node@${line}`;
+  if (/fnm/i.test(p)) return `fnm install ${line} && fnm default ${line}`;
+  const brew = p.match(/\/Cellar\/(node(?:@(\d+))?)\//);
+  if (brew) return !brew[2] || [22, 24, 26].includes(Number(brew[2])) ? `brew upgrade ${brew[1]}` : `brew install node@${line}`;
+  if (platform === 'win32') return 'winget install OpenJS.NodeJS.LTS';
+  return null;
+}
+/** The installed One CLI's package.json ({ version, engines }), or null when One isn't installed where Orchy looks. */
+export function onePackage() {
+  const cli = resolveCli().pre[0];
+  if (!cli) return null;
+  try { return JSON.parse(fs.readFileSync(path.join(path.dirname(cli), '..', 'package.json'), 'utf8')); } catch { return null; }
+}
+/**
+ * One is installed but won't run on the Node Orchy runs on: { version, node, need, fix, message }, else null.
+ * pkg and nodeVersion are for tests.
+ */
+export function oneNodeProblem({ pkg = onePackage(), nodeVersion = process.version, fix = nodeUpdateCmd(), allow = process.env.ONE_ALLOW_UNPATCHED_NODE } = {}) {
+  const range = pkg?.engines?.node;
+  // One's own override: with it set, One runs on any Node (and warns), so Orchy doesn't stand in its way
+  if (!range || allow === '1' || nodeSatisfies(nodeVersion, range)) return null;
+  const need = describeRange(range);
+  return {
+    version: pkg.version || null, node: nodeVersion, need, fix,
+    message: `One CLI${pkg.version ? ` ${pkg.version}` : ''} is installed, but it won't run on Node ${nodeVersion}: it needs Node ${need} (older versions still trust the compromised eMudhra certificates). Update Node${fix ? '' : ' from https://nodejs.org'}, then restart Orchy, since One runs on Orchy's own Node.`,
+  };
+}
+let blocked = null;
+/** oneNodeProblem(), looked up at most every 30 seconds (every workspace summary asks). */
+export function oneBlocked() {
+  if (!blocked || Date.now() - blocked.at > 30_000) blocked = { at: Date.now(), p: oneNodeProblem() };
+  return blocked.p;
 }
 
 // Through cmd.exe each argument is quoted for the program, then cmd's metacharacters are escaped twice:
