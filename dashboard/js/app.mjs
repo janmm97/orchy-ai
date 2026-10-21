@@ -1379,7 +1379,7 @@ initWindows({
   toast,
   onPopDocument: doc => { doc.addEventListener('click', onClick); doc.addEventListener('keydown', onKey); },
 });
-initPopups({ toast, openRun });
+initPopups({ toast, openRun, settings: () => state.settings || {} });
 initSheets({ toast });
 initHuddles({ state, toast, openRun, activeSession: () => view.active });
 initSetup({ state, toast, reload: load });

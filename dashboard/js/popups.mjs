@@ -7,7 +7,7 @@ const openWindow = o => rawOpen({ ...o, queued: decisionVisible() });
 import { icon, agentSVG, createEl } from './pixel.mjs';
 import { esc, api, wsName, itemName, nameRole, timeShort, platformName } from './util.mjs';
 
-let ctx = null; // { toast(msg), openRun(id) }
+let ctx = null; // { toast(msg), openRun(id), settings() }
 export function initPopups(c) { ctx = c; }
 
 function fromBlock(item, label) {
@@ -89,14 +89,22 @@ function openApproval(item, from) {
         <input class="input" id="note-${item.id}" placeholder="e.g. use the support inbox instead" autofocus>
       </div>
       <div class="btnrow" style="justify-content:space-between">
-        ${item.noRemember ? '<span class="hint">Asked every time in a handed-over task.</span>' : `<label style="display:flex;gap:var(--s3);align-items:center;font-size:var(--read-sm)"><span class="switch"><input type="checkbox" role="switch" data-remember><span class="track"><span class="knob"></span></span></span>Always allow this for ${esc(name)}</label>`}
+        ${item.noRemember ? '<span class="hint">Asked every time in a handed-over task.</span>' : `<label style="display:flex;gap:var(--s3);align-items:center;font-size:var(--read-sm)"><span class="switch"><input type="checkbox" role="switch" data-remember><span class="track"><span class="knob"></span></span></span>Always allow this</label>`}
         <span class="btnrow"><button class="btn" data-act="deny">${icon('x')}Deny</button><button class="btn primary" data-act="approve">${icon('check')}Approve</button></span>
       </div>
+      ${item.noRemember ? '' : `<div class="remember-scope" data-scope hidden>${item.floor
+        ? `<span class="hint">For ${esc(name)} only. Sign-ins, other clients’ folders, Orchy’s own files and the harness’s settings are never allowed for every agent at once.</span>`
+        : `<div class="seg" role="group" aria-label="Always allow it for">${[['agent', `${esc(name)} only`], ['workspace', `Every agent in ${esc(wsName(item.workspace))}`]].map(([k, l]) => `<button type="button" data-scope-pick="${k}" aria-pressed="${(ctx.settings?.().allowScope || 'agent') === k}">${l}</button>`).join('')}</div>`}</div>`}
     </div>
   </div>`);
   const w = openWindow({ id: item.id, title: `From: ${name} · needs your OK`, kind: 'decision', body, from, dockLabel: `Approve: ${name}` });
   const note = () => body.querySelector('input.input').value.trim();
-  body.querySelector('[data-act="approve"]').addEventListener('click', e => submit(item, { approve: true, note: note(), remember: !!body.querySelector('[data-remember]')?.checked }, w, e.currentTarget));
+  // "Always allow" on: who it covers shows (the default from Settings → Approvals), one agent or the whole workspace
+  const scopeBox = body.querySelector('[data-scope]');
+  body.querySelector('[data-remember]')?.addEventListener('change', e => { if (scopeBox) scopeBox.hidden = !e.target.checked; });
+  body.querySelectorAll('[data-scope-pick]').forEach(b => b.addEventListener('click', () => body.querySelectorAll('[data-scope-pick]').forEach(x => x.setAttribute('aria-pressed', String(x === b)))));
+  const everyAgent = () => !item.floor && body.querySelector('[data-scope-pick="workspace"]')?.getAttribute('aria-pressed') === 'true';
+  body.querySelector('[data-act="approve"]').addEventListener('click', e => submit(item, { approve: true, note: note(), remember: !!body.querySelector('[data-remember]')?.checked, everyAgent: everyAgent() }, w, e.currentTarget));
   body.querySelector('[data-act="deny"]').addEventListener('click', e => submit(item, { approve: false, note: note() }, w, e.currentTarget));
   wireRunLinks(body);
   return w;

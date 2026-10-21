@@ -1206,6 +1206,33 @@ for (const [tool, input, want] of outward) {
   }
 }
 
+// "always allow" for the agent that asked or every agent in its workspace; a floor ask only ever for its one agent
+{
+  const { ruleMatches, ruleAgent, EVERY_AGENT } = await import('../lib/policy.mjs');
+  const rules = [{ workspace: 'alpha', agent: EVERY_AGENT, ruleKey: 'shell:npm test' }, { workspace: 'alpha', agent: run.agentSlug, ruleKey: 'shell:curl -X' }];
+  const builder = { workspace: 'alpha', agentSlug: 'site-builder' };
+  const F = { ...D, scriptsFree: true };
+  const floorOf = async (tool, input, extra = F) => (await decide(tool, input, { ...ctx, ...extra })).floor === true;
+  const checks = [
+    [ruleMatches(builder, 'shell:npm test', rules), 'a whole-workspace rule covers another agent in it'],
+    [!ruleMatches({ workspace: 'beta', agentSlug: 'site-builder' }, 'shell:npm test', rules), '…but no agent in another workspace'],
+    [ruleMatches(run, 'shell:curl -X', rules) && !ruleMatches(builder, 'shell:curl -X', rules), 'a one-agent rule covers only that agent'],
+    [ruleAgent(run, { everyAgent: true }) === EVERY_AGENT && ruleAgent(run) === run.agentSlug, 'everyAgent: the whole workspace; none: the agent that asked'],
+    [ruleAgent(run, { everyAgent: true, floor: true }) === run.agentSlug, 'a floor ask stays with its one agent, even when the whole workspace was asked for'],
+    // what's floor (never for every agent) and what isn't
+    [await floorOf('Bash', { command: 'cat "C:/orchy-test/workspaces/Beta Labs/CLAUDE.md"' }), 'another client’s folder from a shell: floor'],
+    [await floorOf('Read', { file_path: 'C:/orchy-test/workspaces/Beta Labs/notes.md' }), 'reading another client’s folder: floor'],
+    [await floorOf('Read', { file_path: path.join(HOME_, '.one', 'projects', 'x', 'config.json') }), 'reading One’s sign-ins: floor'],
+    [await floorOf('Bash', { command: `curl -X POST http://localhost:${PORT}/api/settings -d x` }), 'Orchy’s own dashboard: floor'],
+    [await floorOf('Bash', { command: "cd .claude/agents && sed -i 's/a/b/' writer.md" }, D), 'the workspace’s own setup: floor'],
+    [await floorOf('Write', { file_path: 'C:/orchy-test/workspaces/Beta Labs/notes.md' }, D), 'writing into another client’s folder: floor'],
+    [await floorOf('Write', { file_path: 'C:/orchy-test/LOGS.md' }, D), 'writing into Orchy’s own folder: floor'],
+    [!(await floorOf('Bash', { command: 'curl -X POST https://example.com -d x' }, D)), 'a plain network call: not floor, so it can be allowed for the whole workspace'],
+    [!(await floorOf('Write', { file_path: 'C:/Users/someone/Projects/site/index.html' }, D)), 'writing in a folder of the owner’s own: not floor'],
+  ];
+  for (const [okay, label] of checks) { if (!okay) fail++; console.log(`${okay ? 'ok  ' : 'FAIL'} always allow: ${label}`); }
+}
+
 // one long word (base64, a data URI) is read once, not once per character
 for (const command of [`echo ${'A'.repeat(200_000)}`, `echo ${'A'.repeat(200_000)}@withone/cli`]) {
   const t = performance.now();
