@@ -1458,6 +1458,8 @@ body[data-view="live"][data-dock="1"] .livev:not([hidden]) { height: calc(100dvh
 .setup-card { display: grid; gap: var(--s2); padding: var(--s3); border: var(--rule) solid var(--ink); }
 .setup-card h4 { margin: 0; font: 400 var(--px)/1.2 var(--f-px); text-transform: uppercase; }
 .setup-card p { font-size: var(--read-sm); }
+.setup-card summary { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.setup-fields { display: grid; gap: var(--s3); padding-top: var(--s3); }
 .setup-list { margin: 0; padding-left: 1.4em; display: grid; gap: var(--s2); font-size: var(--read-sm); line-height: 1.5; }
 .setup-cmd { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--s2); max-width: 100%; }
 .setup-cmd code { padding: 3px 6px; border: var(--rule-fine) solid var(--ink); overflow-wrap: anywhere; word-break: break-word; }

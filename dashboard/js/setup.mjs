@@ -73,8 +73,9 @@ export async function openSetup({ step, from } = {}) {
   if (existing) { existing.restore(); if (step != null) existing.go?.(step); return existing; }
   const body = createEl(`<div class="setup"></div>`);
   const w = openWindow({ id: 'setup', title: 'Set up Orchy', size: 'wide', body, from });
-  let data = null, cur = Math.max(0, Math.min(STEPS.length - 1, Number(step) || 0)), loadErr = null;
-  const skipped = new Set();
+  // no step asked for: the first one not done and not skipped, once the server says which those are
+  let data = null, cur = step == null ? null : Math.max(0, Math.min(STEPS.length - 1, Number(step) || 0)), loadErr = null;
+  const skipped = new Set(); // the steps skipped, kept by the server (POST /api/setup/skip), so they stay skipped
   const draft = { name: null, tz: null, keys: {}, ws: null, prompt: STARTER };
   let seq = 0;
   // harnesses Orchy is installing (Tools step): looked for every few seconds until found, 15 minutes at most
@@ -97,7 +98,7 @@ export async function openSetup({ step, from } = {}) {
 
   const load = async (force = false) => {
     const mine = ++seq;
-    try { const d = await api(`/api/setup${force ? '?force=1' : ''}`); if (mine === seq) { data = d; loadErr = null; } }
+    try { const d = await api(`/api/setup${force ? '?force=1' : ''}`); if (mine === seq) { data = d; loadErr = null; (d.skippedSteps || []).forEach(s => skipped.add(s)); } }
     catch (e) { loadErr = e.message; }
     if (mine === seq) draw();
   };
@@ -111,7 +112,8 @@ export async function openSetup({ step, from } = {}) {
     return {
       you: data.owner.set,
       tools: data.harness,
-      keys: data.keys.some(k => k.set),
+      // every optional feature answered (on, off or later), here or in npm run setup
+      keys: data.features ? Object.values(data.features).every(f => f.state !== 'needs-key') : data.keys.some(k => k.set),
       workspace: data.workspaces.count > 0,
       signin: ws.some(x => x.oneSignedIn),
       app: false, // One's connections are per workspace and need a live call; the owner marks this one by hand
@@ -218,17 +220,50 @@ export async function openSetup({ step, from } = {}) {
     },
 
     keys() {
-      const jev = data.keys.find(k => k.id === 'jev');
-      const field = (key, label, k) => `<div class="field"><label for="su-k-${key}">${label} ${k.set ? '<span class="plate">set</span>' : '<span class="plate decide">not set</span>'}</label>
-        <div class="btnrow"><input class="input data" id="su-k-${key}" type="password" autocomplete="off" placeholder="${k.set ? 'Paste a new key to replace it' : 'Paste key'}" value="${esc(draft.keys[key] || '')}" style="flex:1;min-width:200px"><button class="btn" type="button" data-save="${key}">Save</button></div></div>`;
-      const block = (title, k, fields) => `<section class="setup-card"><h4>${title}</h4>
-        <p class="hint"><b>You get:</b> ${esc(k.unlocks)}<br><b>Without it:</b> ${esc(k.withoutIt)}</p>${fields}</section>`;
+      // where the owner stands on each feature (lib/features.mjs): an answer (on, off, later) is shown as one line,
+      // never asked again; only a feature with no answer shows its key fields
+      const f = data.features || {};
+      const about = id => data.keys.find(k => k.id === id) || {};
+      const has = key => !!ctx.state.envStatus?.[key];
+      const field = (key, label) => `<div class="field"><label for="su-k-${key}">${label} ${has(key) ? '<span class="plate">set</span>' : ''}</label>
+        <div class="btnrow"><input class="input data" id="su-k-${key}" type="password" autocomplete="off" placeholder="${has(key) ? 'Paste a new key to replace it' : 'Paste key'}" value="${esc(draft.keys[key] || '')}" style="flex:1;min-width:200px"><button class="btn" type="button" data-save="${key}">Save</button></div></div>`;
+      const card = (title, body) => `<section class="setup-card"><h4>${title}</h4>${body}</section>`;
+      const answered = (word, text) => `<p>${icon('check')} <b>${word}.</b> ${text}</p>`;
+      const tucked = (summary, fields) => `<details><summary class="hint">${summary}</summary><div class="setup-fields">${fields}</div></details>`;
+      const asks = (id, offLabel) => `<div class="btnrow"><button class="btn sm" type="button" data-feat-later="${id}">Not now</button><button class="btn sm ghost" type="button" data-feat-off="${id}">${offLabel}</button></div>`;
+
+      // Jev: TypeSafe first; the other providers behind "another provider"
+      const JEV = [['TYPESAFE_API_KEY', 'TypeSafe key (best)', 'typesafe', 'TypeSafe'], ['OPENROUTER_API_KEY', 'OpenRouter key', 'openrouter', 'OpenRouter'],
+        ['AI_GATEWAY_API_KEY', 'Vercel AI Gateway key', 'vercel', 'Vercel AI Gateway'], ['OPENCODE_API_KEY', 'OpenCode Zen key', 'opencode', 'OpenCode Zen']];
+      const jev = f.jev?.state || (about('jev').set ? 'on' : 'needs-key');
+      const jevNow = JEV.find(([key, , id]) => id === f.jev?.provider && has(key)) || JEV.find(([key]) => has(key));
+      const jevFields = list => list.map(([key, label]) => field(key, label)).join('');
+      const jevHint = '<span class="hint">One is enough. TypeSafe and Vercel run the native Jev; OpenRouter and OpenCode Zen run it as a chat model, an approximation.</span>';
+      const jevCard = card('Jev: routing', {
+        off: `${answered('Off', `You turned Jev off. ${esc(about('jev').withoutIt)}`)}<div class="btnrow"><button class="btn sm" type="button" data-feat-on="jev">Turn Jev on</button></div>`,
+        on: `${answered('On', `Through ${esc(jevNow?.[3] || 'your key')}.`)}${tucked('Replace the key, or use another provider', jevFields(JEV) + jevHint)}`,
+        skipped: `${answered('Later', `You’re adding a key later, so Orchy won’t ask again. Until then: ${esc(about('jev').withoutIt)}`)}${tucked('Add a key now', jevFields(JEV) + jevHint)}`,
+        'needs-key': `<p class="hint"><b>You get:</b> ${esc(about('jev').unlocks)}<br><b>Without it:</b> ${esc(about('jev').withoutIt)}</p>
+          ${jevFields(JEV.slice(0, 1))}${tucked('Or use another provider', jevFields(JEV.slice(1)) + jevHint)}${asks('jev', 'I don’t want Jev')}`,
+      }[jev]);
+
+      // Voice: only the key for the service picked in setup (both when none was)
+      const voice = f.voice?.state || 'needs-key';
+      const needs = f.voice?.needs || ['ELEVENLABS_API_KEY', 'DEEPGRAM_API_KEY'];
+      const VOICE = { ELEVENLABS_API_KEY: 'ElevenLabs API key', DEEPGRAM_API_KEY: needs.length > 1 ? 'Deepgram API key (a backup voice, optional)' : 'Deepgram API key' };
+      const voiceFields = needs.map(key => field(key, VOICE[key])).join('');
+      const speaking = f.voice?.provider === 'deepgram' || !has('ELEVENLABS_API_KEY') ? 'Deepgram' : has('DEEPGRAM_API_KEY') && !f.voice?.provider ? 'ElevenLabs, with Deepgram as the backup' : 'ElevenLabs';
+      const voiceCard = card('Voice', {
+        off: `${answered('Off', 'Orchy is chat only, and nothing is sent to ElevenLabs or Deepgram.')}<div class="btnrow"><button class="btn sm" type="button" data-feat-on="voice">Turn voice on</button></div>`,
+        on: `${answered('On', `Speaking with ${speaking}.`)}${tucked('Replace a key', voiceFields)}`,
+        skipped: `${answered('Later', 'Orchy speaks with your browser’s voice until you add a key, and won’t ask again.')}${tucked('Add a key now', voiceFields)}`,
+        'needs-key': `<p class="hint"><b>You get:</b> ${esc(about('elevenlabs').unlocks)}<br><b>Without it:</b> ${esc(about('elevenlabs').withoutIt)}</p>${voiceFields}${asks('voice', 'Chat only, no voice')}`,
+      }[voice]);
+
       return {
         html: `<h3 class="px caps">Keys</h3>
-          <p>All three are optional. Keys are saved in Orchy’s <code class="data">.env</code> file on this computer and never shown again.</p>
-          ${block('Jev: routing', jev, `${field('TYPESAFE_API_KEY', 'TypeSafe key (best)', { set: !!ctx.state.envStatus?.TYPESAFE_API_KEY })}${field('OPENROUTER_API_KEY', 'or an OpenRouter key', { set: !!ctx.state.envStatus?.OPENROUTER_API_KEY })}${field('AI_GATEWAY_API_KEY', 'or a Vercel AI Gateway key', { set: !!ctx.state.envStatus?.AI_GATEWAY_API_KEY })}${field('OPENCODE_API_KEY', 'or an OpenCode Zen key', { set: !!ctx.state.envStatus?.OPENCODE_API_KEY })}<span class="hint">One is enough. TypeSafe and Vercel run the native Jev; OpenRouter and OpenCode Zen run it as a chat model, an approximation. Settings → Routing picks one when you have several.</span>`)}
-          ${block('ElevenLabs: voice', data.keys.find(k => k.id === 'elevenlabs'), field('ELEVENLABS_API_KEY', 'ElevenLabs API key', { set: !!ctx.state.envStatus?.ELEVENLABS_API_KEY }))}
-          ${block('Deepgram: backup voice', data.keys.find(k => k.id === 'deepgram'), field('DEEPGRAM_API_KEY', 'Deepgram API key', { set: !!ctx.state.envStatus?.DEEPGRAM_API_KEY }))}`,
+          <p>Both are optional. Keys are saved in Orchy’s <code class="data">.env</code> file on this computer and never shown again. Whatever you answer here, or answered in <code class="data">npm run setup</code>, Orchy won’t ask again. Settings changes it any time.</p>
+          ${jevCard}${voiceCard}`,
         bind(root) {
           root.addEventListener('input', e => { if (e.target.id?.startsWith('su-k-')) draft.keys[e.target.id.slice(5)] = e.target.value; });
           root.querySelectorAll('[data-save]').forEach(b => b.addEventListener('click', async () => {
@@ -238,6 +273,15 @@ export async function openSetup({ step, from } = {}) {
             try { await api('/api/settings/env', { method: 'POST', body: { key, value: input.value.trim() } }); delete draft.keys[key]; ctx.toast('Saved.'); await ctx.reload?.(); await load(); }
             catch (err) { ctx.toast(err.message, 'warn'); b.disabled = false; }
           }));
+          // an answer: on, off (.env, as Settings writes it), or later (the server's settings)
+          const answer = async (b, body, said) => {
+            b.disabled = true;
+            try { await api(body.key ? '/api/settings/env' : '/api/settings', { method: 'POST', body }); ctx.toast(said); await ctx.reload?.(); await load(); }
+            catch (err) { ctx.toast(err.message, 'warn'); b.disabled = false; }
+          };
+          root.querySelectorAll('[data-feat-on]').forEach(b => b.addEventListener('click', () => answer(b, b.dataset.featOn === 'jev' ? { key: 'JEV_PROVIDER', value: '' } : { key: 'VOICE_ENABLED', value: '1' }, b.dataset.featOn === 'jev' ? 'Jev is on: add a key to use it.' : 'Voice is on.')));
+          root.querySelectorAll('[data-feat-off]').forEach(b => b.addEventListener('click', () => answer(b, b.dataset.featOff === 'jev' ? { key: 'JEV_PROVIDER', value: 'off' } : { key: 'VOICE_ENABLED', value: '0' }, b.dataset.featOff === 'jev' ? 'Jev is off.' : 'Voice is off: chat only.')));
+          root.querySelectorAll('[data-feat-later]').forEach(b => b.addEventListener('click', () => answer(b, { skip: { [b.dataset.featLater]: true } }, 'Later, then. Orchy won’t ask again.')));
         },
       };
     },
@@ -324,6 +368,7 @@ export async function openSetup({ step, from } = {}) {
   function draw() {
     if (!data) { body.innerHTML = `<div class="empty">${loadErr ? esc(loadErr) : 'Looking around this computer…'}</div>${loadErr ? `<div class="btnrow"><button class="btn" type="button" data-act="retry">${icon('refresh')}Try again</button></div>` : ''}`; body.querySelector('[data-act="retry"]')?.addEventListener('click', () => load()); return; }
     const ok = done();
+    if (cur == null) cur = Math.max(0, STEPS.findIndex(st => !ok[st.id] && !skipped.has(st.id)));
     const s = screens[STEPS[cur].id]();
     body.innerHTML = `
       <nav class="setup-steps" aria-label="Setup steps"><ol>${STEPS.map((st, i) => `<li><button type="button" data-step="${i}" ${i === cur ? 'aria-current="step"' : ''}>
@@ -335,7 +380,15 @@ export async function openSetup({ step, from } = {}) {
     body.querySelectorAll('[data-step]').forEach(b => b.addEventListener('click', () => w.go(b.dataset.step)));
     body.querySelectorAll('[data-go]').forEach(b => b.addEventListener('click', () => w.go(b.dataset.go)));
     body.querySelector('[data-act="back"]').addEventListener('click', () => w.go(cur - 1));
-    body.querySelector('[data-act="skip"]')?.addEventListener('click', () => { skipped.add(STEPS[cur].id); next(); });
+    body.querySelector('[data-act="skip"]')?.addEventListener('click', () => {
+      const id = STEPS[cur].id;
+      skipped.add(id);
+      api('/api/setup/skip', { method: 'POST', body: { step: id } }).catch(() => {});
+      // skipping Keys answers "later" for each feature still unanswered, so nothing nags about them
+      const later = id === 'keys' ? Object.entries(data.features || {}).filter(([, f]) => f.state === 'needs-key').map(([k]) => k) : [];
+      if (later.length) api('/api/settings', { method: 'POST', body: { skip: Object.fromEntries(later.map(k => [k, true])) } }).catch(() => {});
+      next();
+    });
     body.querySelector('[data-act="next"]')?.addEventListener('click', next);
     body.querySelector('[data-act="finish"]')?.addEventListener('click', finish);
     const screen = body.querySelector('[data-screen]');

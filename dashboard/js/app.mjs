@@ -476,8 +476,13 @@ async function greet({ force = false } = {}) {
 
 // Notices under the chat box can be closed; a closed one stays closed in this browser until what it says changes.
 const DISMISSED = 'orchy-dismissed';
-const dismissedNotices = () => { try { return JSON.parse(localStorage.getItem(DISMISSED) || '[]'); } catch { return []; } };
-function dismissNotice(key) { try { localStorage.setItem(DISMISSED, JSON.stringify([...new Set([...dismissedNotices(), key])].slice(-50))); } catch {} }
+// The server keeps them too (settings.dismissed), so a notice closed in one browser stays closed in the others
+const localDismissed = () => { try { return JSON.parse(localStorage.getItem(DISMISSED) || '[]'); } catch { return []; } };
+const dismissedNotices = () => [...localDismissed(), ...(state.settings?.dismissed || [])];
+function dismissNotice(key) {
+  try { localStorage.setItem(DISMISSED, JSON.stringify([...new Set([...localDismissed(), key])].slice(-50))); } catch {}
+  api('/api/settings', { method: 'POST', body: { dismiss: key } }).then(s => { state.settings = s; }).catch(() => {});
+}
 
 function renderUnder() {
   const closed = new Set(dismissedNotices());
@@ -490,11 +495,11 @@ function renderUnder() {
       `${a.loggedIn ? `Its ${esc(a.runtimeLabel || '')} profile is logged in as ${esc(a.actual || 'another account')}.` : a.hint ? esc(a.hint) : `Its ${esc(a.runtimeLabel || '')} profile isn’t logged in yet.`} Paste into a terminal (PowerShell on Windows):<code>${esc(a.fix || '')}</code>`,
       `<button class="btn sm" data-login="${esc(ws.id)}">Log in</button><button class="btn sm" data-copy="${esc(a.fix || '')}">Copy</button>`));
   }
-  // voice on but the service it speaks with has no key yet
+  // voice on but the service it speaks with has no key yet (unless the owner chose to add it later: then nothing nags)
   const vp = voice.voiceConfig().provider;
   const vName = { elevenlabs: 'ElevenLabs', deepgram: 'Deepgram' }[vp];
   const vKey = vp === 'elevenlabs' ? state.envStatus.ELEVENLABS_API_KEY : vp === 'deepgram' ? state.envStatus.DEEPGRAM_API_KEY : state.envStatus.DEEPGRAM_API_KEY || state.envStatus.ELEVENLABS_API_KEY;
-  if (voice.voiceOn() && !vKey) problems.push(check(`voice:${vp || 'any'}`, 'Voice', `Add ${vName ? `your ${vName}` : 'an ElevenLabs or Deepgram'} key in Settings, or switch voice off there. Until then I use the browser’s voice.`, `<button class="btn sm" data-open="settings">Settings</button>`));
+  if (voice.voiceOn() && !vKey && !state.settings?.skipped?.voice) problems.push(check(`voice:${vp || 'any'}`, 'Voice', `Add ${vName ? `your ${vName}` : 'an ElevenLabs or Deepgram'} key in Settings, or switch voice off there. Until then I use the browser’s voice.`, `<button class="btn sm" data-open="settings">Settings</button>`));
   $('#composer-under').innerHTML = `
     <div class="keys"><span><kbd>/</kbd>type</span><span data-voice><kbd>Ctrl</kbd><kbd>Space</kbd>call</span><span><kbd>Enter</kbd>send</span></div>
     ${problems.some(Boolean) ? `<div class="checklist">${problems.join('')}</div>` : ''}`;
@@ -1176,7 +1181,7 @@ function connectEvents() {
   on('call.updated', ({ call }) => callUpdated(call));
   on('voice.agents', d => { state.voiceAgents = d.voiceAgents; setCallNames(d.voiceAgents); refreshAgents(); renderPanes(); });
   on('settings.updated', d => {
-    if (d.settings) { state.settings = d.settings; renderLive(); }
+    if (d.settings) { state.settings = d.settings; renderLive(); renderUnder(); } // a skip or a closed notice, from any browser
     if (d.voice) { voice.setVoiceConfig(d.voice); renderUnder(); }
     if (d.jev) state.jev = { ...state.jev, ...d.jev };
     if (d.envStatus) { state.envStatus = d.envStatus; renderUnder(); }
