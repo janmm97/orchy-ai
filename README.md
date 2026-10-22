@@ -4,17 +4,17 @@
 
 # Orchy
 
-### Build your squad. Keep your life.
+### Every business owner's best friend.
 
-**One chat box for all your AI agents. Orchy runs them on your own computer and asks you first.**
+**Your agents run the business 24/7. You approve every final decision.**
 
-Give every client its own workspace and let the routine work run without you. Come back to a short list of things that need your OK, then close the laptop.
+Give each client and department its own workspace. Let routine work run on your computer day and night, while money, emails, calendar invites, and file deletions wait for your green light.
 
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-000000?style=flat-square)](LICENSE) [![Node 20+](https://img.shields.io/badge/node-20%2B-000000?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org) [![Harnesses: 8](https://img.shields.io/badge/harnesses-8-000000?style=flat-square)](#supported-harnesses) [![Apps: 1000+ via One CLI](https://img.shields.io/badge/apps-1000%2B_via_One_CLI-000000?style=flat-square)](https://withone.ai) [![Setup: double-click](https://img.shields.io/badge/setup-double--click-000000?style=flat-square)](#quick-start) [![Asks first](https://img.shields.io/badge/asks-first-ffd23f?style=flat-square&labelColor=000000)](#security) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-000000?style=flat-square)](docs/CONTRIBUTING.md)
+[![100% Free: Apache-2.0](https://img.shields.io/badge/100%25_free-Apache--2.0-000000?style=flat-square)](LICENSE) [![User friendly: double-click](https://img.shields.io/badge/user_friendly-double--click-000000?style=flat-square)](#quick-start) [![BYOK: manage your spend](https://img.shields.io/badge/BYOK-manage_your_spend-000000?style=flat-square)](#keys-byok---manage-what-you-spend) [![Asks first](https://img.shields.io/badge/asks-first-ffd23f?style=flat-square&labelColor=000000)](#security) [![Node 20+](https://img.shields.io/badge/node-20%2B-000000?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org) [![Harnesses: 8](https://img.shields.io/badge/harnesses-8-000000?style=flat-square)](#supported-harnesses) [![Apps: 1000+ via One CLI](https://img.shields.io/badge/apps-1000%2B_via_One_CLI-000000?style=flat-square)](https://withone.ai) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-000000?style=flat-square)](docs/CONTRIBUTING.md)
 
-🔌 <a href="https://withone.ai"><b>Orchy now works with One.</b></a> Your agents use Gmail, Slack, Notion, Stripe and 1000+ more apps through the One CLI.
+🔌 <a href="https://withone.ai"><b>Orchy now works with One.</b></a> Connect your agents to Gmail, Slack, Notion, Stripe, and 1000+ more apps through the One CLI.
 
-[Quick start](#quick-start) · [How it works](#how-it-works) · [Harnesses](#supported-harnesses) · [Privacy](#what-leaves-your-machine) · [Discussions](https://github.com/janmm97/orchy-ai/discussions) · [Docs](docs/)
+[Quick start](#quick-start) · [How it works](#how-it-works) · [What's in the box](#whats-in-the-box) · [Harnesses](#supported-harnesses) · [Security & Privacy](#what-leaves-your-machine) · [Discussions](https://github.com/janmm97/orchy-ai/discussions) · [Docs](docs/)
 
 </div>
 
@@ -26,13 +26,53 @@ Give every client its own workspace and let the routine work run without you. Co
 
 ## You know this evening
 
-Four terminal tabs per client, an agent that stalled twenty minutes ago because it wanted a yes, and a second client pinging you while you scroll back to find out what the first one did. Dinner's going cold somewhere behind you.
+You started your company to build great things and serve clients, not to spend your evenings copy-pasting between spreadsheets, answering repetitive tickets, and babysitting broken automations. Dinner is cold, your inbox is overflowing, and you still have three proposals to finish before tomorrow morning.
 
-Orchy is the fix we wanted for that. You type the task once (or say it), and Orchy picks the workspace, the agent and the model. The agent does the routine part on its own. Anything that sends, posts, spends, deletes, shares or touches your calendar stops and waits for you, so nothing has to be watched while it runs.
+Autonomous AI should take that weight off your shoulders. But giving an unsupervised agent free rein over your company accounts is a recipe for disaster. One unvetted action can send a broken quote to a VIP client, trigger an accidental refund on Stripe, or wipe out live database records.
+
+Orchy is the best friend every business owner needs. You build agents for marketing, customer support, research, and daily operations. They run 24/7 on your own computer, handling the routine backlog while you sleep or focus on clients. But whenever an agent tries to send an email, charge or refund money, update your calendar, publish content, or delete a file, Orchy pauses and waits for your confirmation in the dashboard.
+
+Your business runs around the clock. The final say always stays with you.
 
 ## What's in the box
 
 <table>
+<tr>
+<td width="50%" valign="top">
+
+### 🎁 100% Free and private
+Apache-2.0 open-source software that runs locally on your computer. No monthly platform subscriptions, no credit card required, and no locked tiers. **Orchy does not send anything to its authors.**
+
+<sub>[What leaves your machine →](#what-leaves-your-machine)</sub>
+
+</td>
+<td width="50%" valign="top">
+
+### 🧸 User friendly by design
+Skip the terminal if you prefer. Double-click the launcher for your system, follow the visual browser setup at `localhost:8008`, and use the AI Agent Builder to assemble your team. Built-in viewers let you inspect PDFs, images, spreadsheets, and video directly in the dashboard.
+
+<sub>[Quick start →](#quick-start)</sub>
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 💳 BYOK: manage what you spend
+Bring your own keys and subscriptions. Connect existing Claude or ChatGPT accounts, plug in low-cost API keys (OpenRouter, Groq, DeepSeek), or run free local models with Ollama. You control your budget directly with providers, with zero markup or middleman fees.
+
+<sub>[Keys & spend control →](#keys-byok---manage-what-you-spend)</sub>
+
+</td>
+<td width="50%" valign="top">
+
+### ✋ Runs 24/7, asks before it acts
+Agents handle routine work day and night. The moment an action touches money, sends an email, publishes a post, changes your calendar, or deletes files, Orchy pauses and waits for your confirmation.
+
+<sub>[Security and approvals →](#security)</sub>
+
+</td>
+</tr>
 <tr>
 <td width="50%" valign="top">
 
@@ -44,28 +84,10 @@ Claude Code (recommended), Codex, Hermes, Antigravity, Cursor, Aider, OpenCode o
 </td>
 <td width="50%" valign="top">
 
-### 🔌 Your real apps
-Gmail, Slack, Notion, Stripe and 1000+ more through the [One CLI](https://withone.ai). Every workspace gets its own One login, so one client's inbox never shows up in another's run.
+### 🔌 1000+ real business apps
+Gmail, Slack, Notion, Stripe, GitHub and over 1000 more through the [One CLI](https://withone.ai). Every workspace gets its own One login, so one client's inbox never leaks into another's run.
 
 <sub>[Getting started with One →](#getting-started-with-one)</sub>
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### ✋ It asks before it acts
-Money, sending, calendar changes, deleting and sharing all wait for your OK in the dashboard. The dashboard listens on 127.0.0.1 only, and **Orchy does not send anything to its authors.**
-
-<sub>[What leaves your machine →](#what-leaves-your-machine)</sub>
-
-</td>
-<td width="50%" valign="top">
-
-### ⚡ Pick your CLI, then you're in
-Setup checks your tools, asks which coding harness and router you want to run, sets up Voice and Jev, then opens the dashboard. Rather skip the terminal? Double-click the launcher for your computer.
-
-<sub>[Quick start →](#quick-start)</sub>
 
 </td>
 </tr>
@@ -73,7 +95,7 @@ Setup checks your tools, asks which coding harness and router you want to run, s
 <td colspan="2" valign="top">
 
 ### 🗂️ Workspaces that never mix
-One folder per business or client, each with its own logins, agents and instructions. Orchy checks every run against that workspace's account before it starts, and refuses it if the login is wrong. Agents can also huddle (talk a task through before anything gets built) or run a mission (hand the work along 2 to 6 steps you can edit first). The Live view shows every run step by step.
+One dedicated folder per business, client, or department, each with its own logins, agents, and instructions. Orchy checks every run against that workspace's account before starting, refusing the run if credentials mismatch. Agents can also huddle to discuss complex tasks or complete multi-step missions. The Live view shows every run step by step.
 
 <sub>[Core ideas →](#core-ideas)</sub>
 
@@ -83,7 +105,7 @@ One folder per business or client, each with its own logins, agents and instruct
 
 ## Quick start
 
-Three lines. Shorter than your boba order.
+Three lines in a terminal. Shorter than ordering your morning coffee.
 
 ```bash
 git clone https://github.com/janmm97/orchy-ai
@@ -91,22 +113,22 @@ cd orchy-ai
 npm run setup
 ```
 
-Setup checks your tools, installs the One CLI if missing, guides you through picking your coding harness and router, checks your keys live, starts Orchy and opens the dashboard in your browser. Keys you paste are hidden as you type, checked once with their service and saved in `.env` on your PC. All of them are optional.
+Setup checks your environment, installs the One CLI if missing, guides you through choosing your coding harness and router, tests your keys live, starts Orchy, and opens the dashboard in your browser. Keys you paste are hidden as you type, tested once against their service, and saved in `.env` on your computer. All keys are optional.
 
-You pick each workspace's harness (Claude Code, Codex, Hermes, Antigravity, Cursor, Aider, OpenCode, or Custom CLI) in the dashboard when you add the workspace. If it isn't installed yet, **Install** runs the right installer for your computer.
+Pick each workspace's harness (Claude Code, Codex, Hermes, Antigravity, Cursor, Aider, OpenCode, or Custom CLI) in the dashboard when you add the workspace. If the harness is not installed yet, **Install** runs the installer for your computer automatically.
 
-**Rather not use a terminal?** Open the `launchers` folder and double-click the one for your computer: `Start Orchy.cmd` (Windows), `Start Orchy.command` (macOS) or `Start Orchy.sh` (Linux). It runs setup too. Setup also puts that launcher in the Orchy folder, so from then on you double-click it to start Orchy.
+**Prefer not to use a terminal?** Open the `launchers` folder and double-click the launcher for your system: `Start Orchy.cmd` (Windows), `Start Orchy.command` (macOS), or `Start Orchy.sh` (Linux). The launcher runs setup on first launch and starts Orchy every time after that.
 
 <p align="center">
-  ⭐ <b>Like it?</b> <a href="https://github.com/janmm97/orchy-ai">Star Orchy</a> so more people find it. &nbsp;·&nbsp; 🛠️ <b>Want to help?</b> PRs welcome: run <code>npm test</code> first and read <a href="docs/CONTRIBUTING.md">docs/CONTRIBUTING.md</a>. &nbsp;·&nbsp; 💬 <b>Say hi</b> in <a href="https://github.com/janmm97/orchy-ai/discussions">Discussions</a>.
+  ⭐ <b>Like it?</b> <a href="https://github.com/janmm97/orchy-ai">Star Orchy</a> so more founders find it. &nbsp;·&nbsp; 🛠️ <b>Want to help?</b> PRs welcome: run <code>npm test</code> first and read <a href="docs/CONTRIBUTING.md">docs/CONTRIBUTING.md</a>. &nbsp;·&nbsp; 💬 <b>Say hi</b> in <a href="https://github.com/janmm97/orchy-ai/discussions">Discussions</a>.
 </p>
 
 <details>
 <summary><b>What setup asks</b></summary>
 
 1. **Coding CLI:** Choose which harness Orchy coordinates (Claude Code, Codex, Hermes, Antigravity, Cursor, Aider, OpenCode, or Custom CLI). For API-driven engines (Aider, OpenCode, Hermes), setup asks for your router or provider (OpenRouter, Orca Router, custom gateways, Anthropic, OpenAI, Gemini, DeepSeek, Groq, Ollama), tests your key live against the provider endpoint, and configures default models. It also sets up Orchy's self-repair account.
-2. **Voice:** Talk to Orchy and call your agents. Pick the service you have (ElevenLabs, Deepgram or both) and paste its key. If no, Orchy is chat only. Settings → Voice turns it on later.
-3. **Jev:** The routing model that picks the workspace, agent and model for each message. Choose TypeSafe, OpenRouter, OpenCode Zen, or Vercel AI Gateway. With Jev off, Orchy matches each message by its words and the agent picks its own tools. Settings → "Use Jev?" changes it later.
+2. **Voice:** Talk to Orchy and call your agents. Pick the service you have (ElevenLabs, Deepgram or both) and paste its key. If you choose no, Orchy stays chat-only. Settings -> Voice turns it on later.
+3. **Jev:** The routing model that picks the workspace, agent and model for each message. Choose TypeSafe, OpenRouter, OpenCode Zen, or Vercel AI Gateway. With Jev off, Orchy matches each message by its words and the agent picks its own tools. Settings -> "Use Jev?" changes it later.
 4. **Scripts:** Let agents run scripts on their own unless a script looks like a decision (money, sending, deleting, sharing), or ask before every script.
 
 Each key is checked once with its service and saved in `.env` on your PC. Keys are hidden as you type. Then Orchy starts and your browser opens the dashboard, where the setup guide walks you through adding a workspace, connecting apps and making your first agent. Run `npm run setup` again any time to change your answers, and `npm start` to start Orchy after that.
@@ -121,11 +143,13 @@ Each key is checked once with its service and saved in `.env` on your PC. Keys a
 - The One CLI (`one`), so agents can use your apps. Setup installs `@withone/cli` globally if it is missing. See [docs/ONE.md](docs/ONE.md).
 - Optional: ffmpeg (with ffprobe), for thumbnails, video posters and playable copies in the file viewer. Without it every file still opens as is. Orchy finds it on your PATH, in the usual install folders (Homebrew, winget), or at `FFMPEG_PATH` in `.env`.
 
-### Keys
+### Keys (BYOK - Manage what you spend)
 
-`npm run setup` asks for these. You can also put them in `.env` (see `.env.example`) or in Settings in the dashboard. **All of them are optional.**
+`npm run setup` asks for these optional keys. You can also add them directly to `.env` (see `.env.example`) or configure them in Settings inside the dashboard. **All keys are optional.**
 
-| Key | What it unlocks | Without it |
+Because Orchy is BYOK, you pay providers directly at raw API rates or use existing subscriptions. You never pay Orchy a platform subscription or markup.
+
+| Key | What it enables | Without it |
 |---|---|---|
 | `TYPESAFE_API_KEY` | Jev from TypeSafe, the native model | Another Jev provider if one is set, else your agent harness reads each message (slower), else keyword matching |
 | `OPENROUTER_API_KEY` | Jev through OpenRouter, or models for Aider, OpenCode and Hermes | As above |
@@ -146,7 +170,11 @@ Each key is checked once with its service and saved in `.env` on your PC. Keys a
 
 ## What Orchy is
 
-Orchy is a local AI-agent orchestrator. You tell Orchy what you need, by text or voice. A small routing model (Jev, made by [TypeSafe](https://typesafe.ai), a separate company with no affiliation to Orchy) picks the workspace, the agent and the model. The work runs in that workspace, under that workspace's own account, using a coding-agent CLI (a "harness"). Orchy reports back and keeps a log of every finished task. It runs on your own machine, with a dashboard at http://localhost:8008.
+Orchy is a local AI-agent orchestrator built to be every business owner's reliable partner. You tell Orchy what you need, using text or voice. A compact routing model (Jev, made by [TypeSafe](https://typesafe.ai), a separate company with no affiliation to Orchy) selects the right workspace, agent, and model.
+
+The work runs on your computer inside that workspace, under that workspace's dedicated account, using a coding-agent CLI (a "harness"). Routine drafting, sorting, coding, and research happen 24/7 without interruption. When an agent reaches a real-world action like sending an email, refunding a customer, or deleting files, Orchy pauses and asks for your sign-off in the dashboard.
+
+Orchy logs every completed task, tracks token costs, and displays real-time progress on a local dashboard at http://localhost:8008.
 
 <p align="center">
   <picture>
@@ -170,7 +198,7 @@ Orchy is a local AI-agent orchestrator. You tell Orchy what you need, by text or
 - [Getting started with One](#getting-started-with-one)
 - [Core ideas](#core-ideas)
 - [Supported harnesses](#supported-harnesses)
-  - [Sign-in and API keys](#sign-in-and-api-keys)
+  - [Sign-in and API keys (BYOK)](#sign-in-and-api-keys-byok)
 - [Troubleshooting](#troubleshooting)
 - [Project structure](#project-structure)
 - [Contributing](#contributing)
@@ -196,11 +224,11 @@ Orchy is a local AI-agent orchestrator. You tell Orchy what you need, by text or
 flowchart TD
     you(["You: text or voice"]) --> jev["Jev picks the workspace, agent and model"]
     jev --> agent["The agent works in that workspace,<br/>under the workspace's own account"]
-    agent --> one["One CLI runs its tool calls and actions<br/>in your apps: Gmail, Slack, Notion and 1000+ more"]
+    agent --> one["One CLI runs tool calls and actions<br/>in your apps: Gmail, Slack, Notion and 1000+ more"]
     agent --> mcp["External MCP servers you add<br/>in the dashboard's Connections"]
-    one --> ok["It stops for your OK on decisions:<br/>sending, posting, deleting, spending"]
+    one --> ok["Orchy pauses for your approval on decisions:<br/>sending, posting, deleting, spending"]
     mcp --> ok
-    ok --> done(["It reports back: LOGS.md,<br/>plus a message or voice"])
+    ok --> done(["It reports back: LOGS.md,<br/>plus dashboard notification or voice"])
 ```
 
 <details>
@@ -215,21 +243,21 @@ Jev picks the workspace, agent and model
    v
 The agent works in that workspace, under the workspace's own account
    |
-   +--> One CLI runs its tool calls and actions in your apps
+   +--> One CLI runs tool calls and actions in your apps
    |    (Gmail, Slack, Notion and 1000+ more)
    |
    +--> External MCP servers you add in the dashboard's Connections
    |
    v
-It stops for your OK on decisions: sending, posting, deleting, spending
+Orchy pauses for your approval on decisions: sending, posting, deleting, spending
    |
    v
-It reports back: LOGS.md, plus a message or voice
+It reports back: LOGS.md, plus dashboard notification or voice
 ```
 
 </details>
 
-Type a task on the home screen. Jev shows a routing card (workspace, agent, model) and sends it after a short countdown, or waits for you when it is unsure.
+Type a task on the home screen. Jev displays a routing card (workspace, agent, model) and dispatches it after a short countdown, or pauses for your review if confidence is low.
 
 <p align="center">
   <picture>
@@ -242,42 +270,42 @@ Type a task on the home screen. Jev shows a routing card (workspace, agent, mode
 
 ## What leaves your machine
 
-Orchy runs on your PC, but these services see some of your data when you use them:
+Orchy runs locally on your PC. These external services see parts of your data only when you activate them:
 
-- **The Jev provider** (TypeSafe, OpenRouter, Vercel AI Gateway or OpenCode Zen): each instruction you type, plus the names and descriptions of your workspaces and agents, so Jev can route it. Without a Jev key, routing stays on your PC.
-- **Your harness** (Claude Code, Codex and so on): everything the agent works on, under that workspace's own account, as it would if you ran the harness yourself.
-- **Model providers and routers** (for Aider, OpenCode or Hermes with API keys or routers): OpenRouter, Orca Router, your custom gateway, Anthropic, OpenAI, Google Gemini, DeepSeek, or Groq see the prompts and context you send. Ollama keeps everything local on your PC.
-- **One**: the app actions your agents run, under that workspace's One login.
-- **ElevenLabs** (only with voice on): your agents' names, roles and instructions (each gets a voice agent), what Orchy says aloud, and the audio of voice calls.
-- **Deepgram** (only with voice on): what Orchy says aloud, when it is the voice in use.
-- **Cloudflare**: client pages, if you put them online.
+- **The Jev provider** (TypeSafe, OpenRouter, Vercel AI Gateway or OpenCode Zen): each instruction you type, plus the names and descriptions of your workspaces and agents, so Jev can route accurately. Without a Jev key, routing stays on your PC.
+- **Your harness** (Claude Code, Codex and so on): everything the agent works on, under that workspace's own account, exactly as if you ran the harness yourself.
+- **Model providers and routers** (for Aider, OpenCode or Hermes with API keys or routers): OpenRouter, Orca Router, custom gateways, Anthropic, OpenAI, Google Gemini, DeepSeek, or Groq process the prompts and context you send. Ollama keeps everything local on your PC.
+- **One**: the app actions your agents execute, under that workspace's One login.
+- **ElevenLabs** (only with voice active): your agents' names, roles and instructions (each receives a voice agent), what Orchy speaks aloud, and the audio of voice calls.
+- **Deepgram** (only with voice active): what Orchy speaks aloud, when selected as the active voice.
+- **Cloudflare**: client pages, only if you publish them online.
 
 **Orchy does not send anything to its authors.**
 
 ## Security
 
-- **Local only.** The dashboard answers only its own origin on 127.0.0.1. It has no password login, so it must never be bound to another interface or put behind a tunnel, and it refuses Cloudflare traffic.
-- **Paired browsers.** Only a paired browser can make changes in Orchy (send tasks, answer approvals, change settings). See Pairing under [First run](#first-run).
-- **An approval gate on every harness.** Agents do routine work alone and stop for decisions: money, sending, calendar changes, deleting, sharing. The full rules are under [Approval gate and policy](docs/CONCEPTS.md#approval-gate-and-policy).
-- **Accounts never mix.** Every run is checked against the workspace's own harness login before it starts, and each workspace has its own One login.
-- **Every harness asks first.** Claude Code and Codex send their own approval requests to Orchy. Hermes, Antigravity and Cursor run through pre-tool hooks Orchy writes into each run. Aider, OpenCode and Custom CLI wait for your approval before starting any run. See [Supported harnesses](#supported-harnesses).
+- **Local only.** The dashboard answers only its own origin on 127.0.0.1. It has no password login, so it must never be bound to another interface or placed behind a tunnel, and it refuses Cloudflare traffic.
+- **Paired browsers.** Only a paired browser can make changes in Orchy (dispatching tasks, answering approvals, changing settings). See Pairing under [First run](#first-run).
+- **An approval gate on every harness.** Agents perform routine work autonomously and pause for decisions: money, sending messages, calendar modifications, deleting records, and sharing. Full rules live under [Approval gate and policy](docs/CONCEPTS.md#approval-gate-and-policy).
+- **Accounts never mix.** Every run is verified against the workspace's own harness login before it starts, and each workspace maintains its own One login.
+- **Every harness asks first.** Claude Code and Codex send their own approval requests to Orchy. Hermes, Antigravity and Cursor run through pre-tool hooks Orchy writes into each run. Aider, OpenCode and Custom CLI stop for whole-run approval before starting. See [Supported harnesses](#supported-harnesses).
 - **Never tunnel port 8008.** The dashboard refuses Cloudflare traffic. Only [client pages](#client-pages) (port 8009) go online, through a Cloudflare Tunnel with Cloudflare Access.
 
-Report security problems privately: see [SECURITY.md](docs/SECURITY.md).
+Report security vulnerabilities privately: see [SECURITY.md](docs/SECURITY.md).
 
 ## First run
 
-The dashboard's setup guide has seven steps:
+The dashboard setup guide walks you through seven clear steps:
 
 1. **You.** Tell Orchy your name and time zone.
-2. **Tools.** Orchy checks that Node, a harness CLI and the One CLI are installed.
-3. **Keys.** Add the optional [keys](#keys), or skip them.
-4. **First workspace.** Workspaces, then Add. Name it, say what it is for, pick its harness and account. Orchy creates the folder under `workspaces/`.
-5. **Sign in to One.** Workspaces, open the workspace, "Sign in to One". See [docs/ONE.md](docs/ONE.md).
-6. **First app.** Connections, the workspace, "Add app".
-7. **First agent.** Ask the AI Agent Builder for an agent and choose which apps it gets.
+2. **Tools.** Orchy verifies that Node, a harness CLI and the One CLI are installed.
+3. **Keys.** Add optional [keys](#keys-byok---manage-what-you-spend), or skip them.
+4. **First workspace.** Navigate to Workspaces, then select Add. Give it a name, define its purpose, and choose its harness and account. Orchy creates the folder under `workspaces/`.
+5. **Sign in to One.** Open the workspace and choose "Sign in to One". See [docs/ONE.md](docs/ONE.md).
+6. **First app.** Go to Connections, select the workspace, and choose "Add app".
+7. **First agent.** Ask the AI Agent Builder to create an agent and select its tool permissions.
 
-**Pairing.** Only a paired browser can make changes in Orchy (send tasks, answer approvals, change settings). Orchy pairs the browser it opens for you. Another browser shows a "Pair this browser" window: type the code from the terminal where Orchy is running, or make one on a paired browser in Settings → This browser. This keeps the agents running on your PC from making changes in your name.
+**Pairing.** Only a paired browser can make changes in Orchy (dispatching tasks, approving actions, changing settings). Orchy pairs the browser it opens for you automatically. Any other browser prompts with a "Pair this browser" dialog: enter the code from the terminal where Orchy is running, or generate one from a paired browser in Settings -> This browser. This prevents agents running on your machine from making unauthorized changes in your name.
 
 Then type a task on the home screen.
 
@@ -294,50 +322,50 @@ Then type a task on the home screen.
 
 Orchy works with [One](https://withone.ai).
 
-One connects agents to third-party apps. Orchy uses its CLI for every app connection. The short version is in [docs/ONE.md](docs/ONE.md). The same text is shown in the terminal and the dashboard.
+One connects agents to third-party business apps. Orchy uses its CLI for every app connection. The concise guide is in [docs/ONE.md](docs/ONE.md). The dashboard and terminal provide the same instructions.
 
 1. Create a One account at https://app.withone.ai/sign-in.
-2. Use one One organization per business or client. The organization switcher is at the top left of the One dashboard.
-3. In Orchy: Workspaces, open the workspace, "Sign in to One". It runs `one init --auth browser --project` in that workspace folder. Choose the organization this workspace should use when One asks. The login is saved for that folder only.
-4. Connected apps are listed on the "Connected Apps" page in the One dashboard (left sidebar). "Add new app" connects one.
-5. In Orchy: Connections, the workspace, "Add app". It runs `one connection add <app>` and opens the app's sign-in page.
-6. If an app is not available, switch it on in the One dashboard: Developers (bottom left), "Embeddable Auth" tab, search the tool, turn on "Visible". Full steps are in [docs/ONE.md](docs/ONE.md).
-7. The AI Agent Builder asks which connections each agent gets, Read or Full. Changes to agents need your approval.
+2. Use one One organization per business or client. The organization switcher sits at the top left of the One dashboard.
+3. In Orchy: open Workspaces, choose the workspace, and select "Sign in to One". It runs `one init --auth browser --project` inside that workspace folder. Select the organization this workspace belongs to when prompted. The login stays isolated to that folder.
+4. Connected apps appear on the "Connected Apps" page in the One dashboard (left sidebar). Select "Add new app" to link an integration.
+5. In Orchy: go to Connections, choose the workspace, and click "Add app". It executes `one connection add <app>` and displays the authentication page.
+6. If an app is hidden, enable it in the One dashboard: Developers (bottom left), "Embeddable Auth" tab, search the tool, and switch on "Visible". Full instructions are in [docs/ONE.md](docs/ONE.md).
+7. The AI Agent Builder asks which connections each agent receives (Read or Full). All agent modifications require your approval.
 
 ## Core ideas
 
-The short version. Every detail is in **[docs/CONCEPTS.md](docs/CONCEPTS.md)**.
+The quick reference. Detailed documentation is in **[docs/CONCEPTS.md](docs/CONCEPTS.md)**.
 
 | | Idea | In one line |
 |---|---|---|
-| 🗂️ | [Workspaces](docs/CONCEPTS.md#workspaces) | A folder in `workspaces/` for one business or client, with its own harness account, One login, agents and CLAUDE.md / AGENTS.md. Shown as "Acme Workspace". |
-| 🏢 | [Departments, agent homes and Resources](docs/CONCEPTS.md#departments-agent-homes-and-resources) | A workspace is laid out like a company: department folders, one home per agent with its `Tasks/`, and `Resources/` for every skill, MCP server copy and CLI note. |
-| 🤖 | [Agents](docs/CONCEPTS.md#agents) | A Markdown file (`.claude/agents/<name>.md`) with a name, a role, instructions and the apps it may use. |
-| 🛠️ | [AI Agent Builder](docs/CONCEPTS.md#ai-agent-builder) | Every workspace has one. It researches the role, writes new agents and asks which connections each gets. Changes need your approval. |
-| 🔑 | [MCP sign-in](docs/CONCEPTS.md#mcp-sign-in) | Remote MCP servers that sign in with an account get a Sign in button; the token stays in Orchy's data folder, never in a workspace. |
-| 👥 | [Department heads and delegation](docs/CONCEPTS.md#department-heads-and-delegation) | An agent with a `team:` list hands parts of a task to its team, one level deep, at most three at once. |
-| 🤝 | [Huddles](docs/CONCEPTS.md#huddles) | Two or more agents talk a task through and push back on each other. Nothing is built until you approve their agreement. |
-| 🧩 | [Missions](docs/CONCEPTS.md#missions) | One ask that needs several agents in a row, planned as 2 to 6 steps you can change, swap or drop before it starts. |
-| ✋ | [Approval gate and policy](docs/CONCEPTS.md#approval-gate-and-policy) | Every harness approval request goes through `gate.mjs` and `policy.mjs`: routine work runs, decisions wait for you. |
-| ⏳ | [Run queue and usage limits](docs/CONCEPTS.md#run-queue-and-usage-limits) | At most three agents per account at once by default; a run that hits a usage limit pauses and resumes by itself. |
-| 📡 | [Live run events](docs/CONCEPTS.md#live-run-events) | Every step is streamed to the dashboard and kept on disk, with secrets blanked first. |
-| 💲 | [Usage and cost](docs/CONCEPTS.md#usage-and-cost) | Tokens and cost per run, and a weekly review that suggests savings. |
-| 📁 | [Artifacts](docs/CONCEPTS.md#artifacts) | Every file an agent writes is registered, so you can open it in the dashboard. |
-| ✅ | [Orchy checks the result](docs/CONCEPTS.md#orchy-checks-the-result) | Before reporting, Orchy checks that "done" holds up. It flags, never re-runs on its own. |
-| 🔁 | [Recovery](docs/CONCEPTS.md#recovery) | Failed runs say why. Read-only runs that failed on the engine or network retry by themselves; anything else asks you. |
-| 📺 | [Live view](docs/CONCEPTS.md#live-view) | LIVE in the top bar: Activity, Work and Output columns. On a phone they become tabs. |
-| 🖼️ | [File viewer](docs/CONCEPTS.md#file-viewer) | One viewer for images, video, audio, PDFs, Markdown, code, tables, Word and slides. |
-| 🪟 | [One window at a time](docs/CONCEPTS.md#one-window-at-a-time) | Opening a page or an item takes the place of the one that's up. Decisions are never swapped away. |
-| 🕘 | [Scheduling](docs/CONCEPTS.md#scheduling) | `schedule: weekdays 9:00` in an agent's frontmatter runs it by itself while Orchy is running. |
-| 🧵 | [Sessions](docs/CONCEPTS.md#sessions) | Each conversation with Orchy has its own thread, memory and runs. |
-| 🌐 | [Client pages](#client-pages) | Share chosen agents with a client on their own page and sandbox. |
-| 🔧 | [Orchy fixing itself](docs/CONCEPTS.md#orchy-fixing-itself) | Tell Orchy what is broken; a "Fix Orchy" card always waits for your OK, and the report has an Undo. Pick the harness it runs on (Claude Code, Codex, Aider, OpenCode, Custom CLI, Hermes) in setup or Settings → Accounts. |
+| 🗂️ | [Workspaces](docs/CONCEPTS.md#workspaces) | An isolated folder in `workspaces/` for one business or client, with its own harness account, One login, agents and instruction files. |
+| 🏢 | [Departments, agent homes and Resources](docs/CONCEPTS.md#departments-agent-homes-and-resources) | A workspace structured like a real company: department folders, dedicated agent homes with `Tasks/`, and a shared `Resources/` directory for skills and references. |
+| 🤖 | [Agents](docs/CONCEPTS.md#agents) | A Markdown file (`.claude/agents/<name>.md`) defining a name, role, instructions, and permitted business apps. |
+| 🛠️ | [AI Agent Builder](docs/CONCEPTS.md#ai-agent-builder) | Built into every workspace. Researches roles, drafts agent configurations, and assigns tool permissions. All changes require your sign-off. |
+| 🔑 | [MCP sign-in](docs/CONCEPTS.md#mcp-sign-in) | Remote MCP servers that require authentication get a Sign in button; tokens remain securely in Orchy's data directory, never inside a workspace folder. |
+| 👥 | [Department heads and delegation](docs/CONCEPTS.md#department-heads-and-delegation) | Agents with a `team:` list delegate portions of a project to team members, one level deep, running at most three concurrent tasks. |
+| 🤝 | [Huddles](docs/CONCEPTS.md#huddles) | Multiple agents discuss a project, evaluate trade-offs, and reach consensus. Work begins only after you approve their agreed plan. |
+| 🧩 | [Missions](docs/CONCEPTS.md#missions) | Multi-step workflows coordinated across agents, planned as 2 to 6 stages that you can review, edit, or adjust before launch. |
+| ✋ | [Approval gate and policy](docs/CONCEPTS.md#approval-gate-and-policy) | Every tool call passes through `gate.mjs` and `policy.mjs`: routine research and drafts proceed, while decisions wait for your OK. |
+| ⏳ | [Run queue and usage limits](docs/CONCEPTS.md#run-queue-and-usage-limits) | Manages concurrency (default 3 agents per account); runs hitting rate limits pause and resume on their own. |
+| 📡 | [Live run events](docs/CONCEPTS.md#live-run-events) | Streams agent activity in real time to the dashboard and records execution logs with sensitive secrets redacted. |
+| 💲 | [Usage and cost](docs/CONCEPTS.md#usage-and-cost) | Tracks token consumption and costs per run, complete with a weekly review that suggests optimizations. |
+| 📁 | [Artifacts](docs/CONCEPTS.md#artifacts) | Every output file an agent creates is indexed and immediately previewable in the dashboard. |
+| ✅ | [Orchy checks the result](docs/CONCEPTS.md#orchy-checks-the-result) | Verifies completed tasks against requirements before logging success. Flags discrepancies without re-running on its own. |
+| 🔁 | [Recovery](docs/CONCEPTS.md#recovery) | Transparent error reporting. Read-only tasks that encounter network hiccups retry automatically; stateful operations prompt you first. |
+| 📺 | [Live view](docs/CONCEPTS.md#live-view) | The LIVE dashboard tab: three columns showing Activity, Work, and Output. Switches cleanly to tabs on mobile devices. |
+| 🖼️ | [File viewer](docs/CONCEPTS.md#file-viewer) | Unified in-dashboard viewer for images, video, audio, PDFs, Markdown, code, spreadsheets, Word documents, and presentations. |
+| 🪟 | [One window at a time](docs/CONCEPTS.md#one-window-at-a-time) | Focused interface where opening a view replaces the current panel. Pending approval requests are never covered up or dismissed. |
+| 🕘 | [Scheduling](docs/CONCEPTS.md#scheduling) | Add `schedule: weekdays 9:00` to an agent's frontmatter to run routine background operations automatically while Orchy runs. |
+| 🧵 | [Sessions](docs/CONCEPTS.md#sessions) | Separate conversations with Orchy retain distinct thread history, memory, and run logs. |
+| 🌐 | [Client pages](#client-pages) | Share specific agents with external clients in an isolated, sandboxed portal. |
+| 🔧 | [Orchy fixing itself](docs/CONCEPTS.md#orchy-fixing-itself) | Describe any issue to Orchy; a "Fix Orchy" proposal always waits for your review, and every patch includes an immediate Undo option. |
 
 ### Client pages
 
-Optional: share chosen agents with a client on their own page (port 8009), where they work in their own sandbox and never see the rest of Orchy.
+Optional: provide clients with access to designated agents through a separate page (port 8009), operating in an isolated sandbox without visibility into the rest of your Orchy workspace.
 
-Putting them online (Cloudflare Tunnel, Access, and R2 for video) is in [docs/CONCEPTS.md → Client pages](docs/CONCEPTS.md#client-pages-optional).
+Complete deployment instructions (Cloudflare Tunnel, Access, and Cloudflare R2 for media) are in [docs/CONCEPTS.md -> Client pages](docs/CONCEPTS.md#client-pages-optional).
 
 <p align="center">
   <img src="assets/images/readme/live-phone.png" alt="The Live view on a phone, with its columns as tabs" width="260">
@@ -352,32 +380,32 @@ Putting them online (Cloudflare Tunnel, Access, and R2 for video) is in [docs/CO
 | **Claude Code** (recommended) | `curl -fsSL https://claude.ai/install.sh \| bash`; Windows (PowerShell): `irm https://claude.ai/install.ps1 \| iex` | ✅ yes |
 | **Codex** | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh`; Windows: `powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 \| iex"` | ✅ yes |
 | **Hermes** | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash`; on Windows (PowerShell) `iex (irm https://hermes-agent.nousresearch.com/install.ps1)` | ✅ yes |
-| **Antigravity** (off by default) | `curl -fsSL https://antigravity.google/cli/install.sh \| bash`; on Windows (PowerShell) `irm https://antigravity.google/cli/install.ps1 \| iex`; then `ORCHY_ANTIGRAVITY=1` in `.env`. Google doesn't support running `agy` from another app on personal plans ([details](docs/HARNESSES.md#antigravity)) | ✅ yes |
+| **Antigravity** (off by default) | `curl -fsSL https://antigravity.google/cli/install.sh \| bash`; on Windows (PowerShell) `irm https://antigravity.google/cli/install.ps1 \| iex`; then `ORCHY_ANTIGRAVITY=1` in `.env`. Google does not support running `agy` from another app on personal plans ([details](docs/HARNESSES.md#antigravity)) | ✅ yes |
 | **Cursor** | `curl https://cursor.com/install -fsS \| bash`; on Windows (PowerShell) `irm 'https://cursor.com/install?win32=true' \| iex`; then sign in with `agent login`. No web search or web fetch in Orchy, and one sign-in for the whole computer, shared by every Cursor workspace ([details](docs/HARNESSES.md#cursor)) | ✅ yes |
 | **Aider** | `curl -LsSf https://aider.chat/install.sh \| sh`; Windows (PowerShell): `powershell -ExecutionPolicy ByPass -c "irm https://aider.chat/install.ps1 \| iex"` | ✅ yes |
 | **OpenCode** | `curl -fsSL https://opencode.ai/install \| bash`; Windows: `npm install -g opencode-ai` | ✅ yes |
 | **Custom CLI** | Configured via `customCommand` on the workspace or `CUSTOM_CLI_PATH` in `.env` | ✅ yes |
 
-"Gated" means risky actions ask Orchy first. Claude Code and Codex ask through their native approval tools; Hermes, Antigravity and Cursor run through pre-tool hooks; Aider, OpenCode and Custom CLI stop for whole-run approval before starting. Hermes and Cursor offer the models their sign-in lists, and take any model id you type. You don't have to type these commands: **Install** in the dashboard (Add workspace, or Set up Orchy → Tools) runs the right one for your computer in a terminal window, then the sign-in. A harness whose program is there but won't start shows as **won't start**, with the command that fixes it.
+"Gated" means risky actions ask Orchy first. Claude Code and Codex ask through their native approval tools; Hermes, Antigravity and Cursor run through pre-tool hooks; Aider, OpenCode and Custom CLI stop for whole-run approval before starting. Hermes and Cursor offer the models their sign-in lists, and accept any model id you type. You do not need to run these terminal commands manually: **Install** in the dashboard (Add workspace, or Set up Orchy -> Tools) runs the right installer for your system in a background window, followed by sign-in. A harness whose program exists but fails to start shows as **won't start**, displaying the exact fix command.
 
-Details, headless commands, config locations, the evidence behind each "gated" answer, [which instructions an agent run reads](docs/HARNESSES.md#which-instructions-an-agent-run-reads) and manual verification checklists are in [docs/HARNESSES.md](docs/HARNESSES.md).
+Configuration locations, headless options, gating validation, [which instructions an agent run reads](docs/HARNESSES.md#which-instructions-an-agent-run-reads), and manual verification checklists are detailed in [docs/HARNESSES.md](docs/HARNESSES.md).
 
-**Platforms:** Windows, macOS and Linux. Windows is the most tested (Hermes, Antigravity and Cursor were checked on Windows only); on macOS and Linux, report what breaks.
+**Platforms:** Windows, macOS, and Linux. Windows is the most tested (Hermes, Antigravity and Cursor were validated on Windows); please report any issues on macOS and Linux.
 
-### Sign-in and API keys
+### Sign-in and API keys (BYOK)
 
-Orchy supports two ways to run harnesses:
+Orchy supports two flexible ways to power your agent harnesses:
 
-- **Browser sign-ins (subscriptions):**
-  - **Claude Code:** `claude auth login` (your Claude plan).
-  - **Codex:** `codex login` (your ChatGPT account).
-  - **Hermes:** `hermes portal`, or `hermes auth add <provider> --type oauth`. Hermes workspaces can use this computer's sign-in or a profile's own sign-in.
-  - **Antigravity:** start `agy` once and sign in with your Google account (`ORCHY_ANTIGRAVITY=1` in `.env` turns it on).
+- **Browser sign-ins (Flat subscriptions):**
+  - **Claude Code:** `claude auth login` (uses your existing Claude subscription).
+  - **Codex:** `codex login` (uses your ChatGPT subscription).
+  - **Hermes:** `hermes portal`, or `hermes auth add <provider> --type oauth`. Workspaces can share the machine login or use dedicated profiles.
+  - **Antigravity:** start `agy` once and sign in with your Google account (`ORCHY_ANTIGRAVITY=1` in `.env` enables it).
   - **Cursor:** `agent login`.
   - **OpenCode:** `opencode auth login`.
-- **API keys and routers:**
-  - **Aider, OpenCode and Hermes** can run through API keys from direct providers (Anthropic, OpenAI, Gemini, DeepSeek, Groq), 3rd-party routers (OpenRouter, Orca Router, custom gateways), or local models via Ollama.
-  - Setup asks for your provider and checks keys live.
+- **API keys and routers (Pay-as-you-go or local):**
+  - **Aider, OpenCode and Hermes** connect via direct API keys (Anthropic, OpenAI, Gemini, DeepSeek, Groq), routers (OpenRouter, Orca Router, custom gateways), or local offline models through Ollama.
+  - Setup verifies your chosen provider and tests API keys live.
 
 ## Troubleshooting
 
@@ -385,39 +413,39 @@ Orchy supports two ways to run harnesses:
 npm run check
 ```
 
-This health check tests each workspace's accounts, the One CLI, Jev, voice, agents and client pages, and says what to fix. Do not remove the check.
+This diagnostic health check tests each workspace's credentials, the One CLI, Jev, voice services, agents, and client portals, reporting actionable fixes for any issues found.
 
 | Problem | What to do |
 |---|---|
-| Orchy will not start | Read the error in the terminal window it was started from. After Orchy restarted itself, it is in `orchestrator/data/server.err.log`. |
-| The dashboard says it can't make changes | The browser isn't paired: see Pairing under [First run](#first-run). |
-| A workspace says it is not signed in to One | Workspaces, the workspace, "Sign in to One". |
-| One shows **can't run on Node** | The One CLI is installed, but this Node release is one it refuses. Update Node with the command shown (or from nodejs.org), then restart Orchy: One runs on Orchy's own Node. |
-| A run is refused for an account mismatch | The harness profile for that workspace is logged into the wrong account: sign in again with the right one. |
-| A workspace "isn't logged in", but you signed in to the harness in a terminal | A plain terminal signs in the computer's profile, not the workspace's. A Hermes workspace set to "This computer's sign-in" (the default) uses it on its own; one set to "Its own sign-in" needs **Log in**. For a Claude Code or Codex workspace with its own profile, press **Log in** on the workspace: the window it opens signs in that workspace's profile. Cursor has one sign-in for the whole computer: run `agent login` in any terminal. Then press Re-check. |
-| A harness shows **won't start** | Its install didn't finish. Press **Install** to install it again, or run the command shown next to it. Then press Re-check. |
-| A router or API-driven harness fails | Check your API key and base URL in `.env` (or run `npm run setup` to test them). For local models, confirm Ollama is running at `OLLAMA_API_BASE`. |
-| Aider or OpenCode shows **won't start** | Check that Python or Node paths are in your PATH, or set `AIDER_CLI_PATH` or `OPENCODE_CLI_PATH` in `.env`. Then press Re-check. |
-| A Cursor task fails with "Orchy's .cursorignore is missing…" | Run `git checkout .cursorignore` in the Orchy folder. That file keeps Orchy's own instructions out of Cursor runs. |
+| Orchy will not start | Check the terminal output where Orchy started. If Orchy restarted itself, review `orchestrator/data/server.err.log`. |
+| The dashboard says it cannot make changes | The browser is not paired: see Pairing under [First run](#first-run). |
+| A workspace says it is not signed in to One | Go to Workspaces, select the workspace, and click "Sign in to One". |
+| One shows **can't run on Node** | The One CLI is installed, but the active Node version is rejected. Update Node using the suggested command (or from nodejs.org), then restart Orchy. |
+| A run is refused for an account mismatch | The harness profile for that workspace is signed into an unexpected account: sign in again using the assigned account. |
+| A workspace "isn't logged in", but you signed in via terminal | Standard terminal sign-ins apply to your user profile, not the isolated workspace profile. For Hermes set to "This computer's sign-in", it connects automatically; set to "Its own sign-in", click **Log in**. For Claude Code or Codex workspaces with custom profiles, click **Log in** on the workspace card to authenticate that profile. Cursor shares a single login: run `agent login` in any terminal. Then click Re-check. |
+| A harness shows **won't start** | The installation did not finish. Click **Install** to re-run the installer, or run the command displayed on screen. Then click Re-check. |
+| A router or API-driven harness fails | Verify your API key and base URL in `.env` (or run `npm run setup` to test them). For local models, confirm Ollama is active at `OLLAMA_API_BASE`. |
+| Aider or OpenCode shows **won't start** | Verify Python or Node are available in your PATH, or specify `AIDER_CLI_PATH` or `OPENCODE_CLI_PATH` in `.env`. Then click Re-check. |
+| A Cursor task fails with "Orchy's .cursorignore is missing…" | Run `git checkout .cursorignore` in the Orchy directory to restore the exclusion rules that prevent Cursor from reading Orchy internal instructions. |
 
 ## Project structure
 
 ```
 orchy-ai/
-├── orchestrator/   the server (127.0.0.1:8008), client pages (:8009), the gate, harness adapters, scripts
-├── dashboard/      the UI: plain ES modules, no build step
+├── orchestrator/   the server (127.0.0.1:8008), client pages (:8009), gate, harness adapters, scripts
+├── dashboard/      the UI: clean ES modules, no build step
 ├── scripts/        setup.mjs (npm run setup)
 ├── launchers/      double-click launchers for Windows, macOS and Linux
 ├── docs/           ONE.md, HARNESSES.md, CONCEPTS.md, ARCHITECTURE.md, SECURITY.md, CONTRIBUTING.md
-├── assets/         the logo and README images
-└── workspaces/     your workspaces (git-ignored)
+├── assets/         the logo and README illustrations
+└── workspaces/     your isolated workspaces (git-ignored)
 ```
 
-The full file map, with what each part does, is in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+The comprehensive architecture map, explaining each subsystem, is in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ## Contributing
 
-PRs are welcome. See [CONTRIBUTING.md](docs/CONTRIBUTING.md). Run `npm test` first (no network, no keys and no harness needed), and keep personal data out. Report security problems privately: see [SECURITY.md](docs/SECURITY.md).
+Pull requests are welcome. See [CONTRIBUTING.md](docs/CONTRIBUTING.md). Run `npm test` before submitting changes (requires no network, keys, or external harnesses), and ensure private credentials remain excluded. Report security findings privately: see [SECURITY.md](docs/SECURITY.md).
 
 ## License
 
